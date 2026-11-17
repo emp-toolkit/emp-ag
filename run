@@ -1,0 +1,3 @@
+#!/bin/bash
+# 3-party AG-MPC run on localhost — thin delegate to runN (the shared launcher).
+exec "$(dirname "$0")/runN" 3 "$@"

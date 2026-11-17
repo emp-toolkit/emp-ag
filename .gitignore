@@ -1,0 +1,15 @@
+# Build trees.
+build*/
+*/build*/
+*.a
+*.o
+.DS_Store
+# CTest scratch: normally under a build tree, but created in the source tree if
+# `ctest` runs from the source root.
+Testing/
+
+# Editor files.
+*.swp
+*~
+.idea/
+.vscode/

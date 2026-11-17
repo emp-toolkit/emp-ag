@@ -1,0 +1,27 @@
+#!/bin/bash
+# runN <nP> <binary> [args...] — an nP-party AG-MPC run on localhost (the shared launcher for run and the np-variant tests. Parties 1..nP-1 start staggered in the background; party nP runs in the
+# foreground. The exit code is the OR of ALL parties' exit codes (we wait on every backgrounded
+# party and fail if any is nonzero) — the correctness verdict of a functional test lives at
+# party 1 (the evaluator, always backgrounded), so a background-only failure MUST propagate or
+# the ctest gate is vacuous. The base port travels via EMP_PORT (read by peer_port(),
+# default 12345) and NetIOMP binds port+party per peer. Tests run sequentially (ctest, no
+# -j) and each runN waits for every party to exit before returning, so a single fixed port
+# is safe across back-to-back runs: the prior run's sockets are in TIME_WAIT, which
+# SO_REUSEADDR rebinds over (and netmp's bind retries briefly across the kernel's final
+# teardown window). Export EMP_PORT to run several instances at once; the stagger avoids a
+# thundering-herd bind race.
+nP="$1"; bin="$2"; shift 2
+export EMP_PORT="${EMP_PORT:-12345}"
+export EMP_N=$nP   # party-count-generic binaries (bench_100m) read it; fixed-nP tests ignore it.
+                   # Without this a 2-process run of an EMP_N-defaulted binary hangs in accept.
+pids=()
+for p in $(seq 1 $((nP - 1))); do
+  (sleep "0.$(printf '%02d' $(( (nP - p) * 5 )))"; "$bin" "$p" "$@") &
+  pids+=($!)
+done
+"$bin" "$nP" "$@"
+rc=$?
+for pid in "${pids[@]}"; do
+  wait "$pid" || rc=1
+done
+exit $rc
