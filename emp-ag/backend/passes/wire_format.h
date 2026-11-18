@@ -32,9 +32,9 @@ constexpr int garble_window_cap(int num_ands) {
   return num_ands < 1 ? 1 : (num_ands < hi ? num_ands : hi);
 }
 
-// The half-gate hash's gid layout -- which (seed, gid) each (sender, gate,
-// destination) hashes under, hence its keys and tweaks -- is the other half of this
-// contract; it lives with its kernel in crypto/halfgate.h (HalfGateHash / hash_gid).
+// The half-gate hash's layout -- which (seed, gid) each (sender, gate, destination,
+// input) hashes under, hence its keys and tweaks -- is the other half of this
+// contract; it lives with its kernel in crypto/halfgate.h (HalfGateHash).
 
 // Flat index of row 0 of the 3-row (G/S) record for destination `dest` (in [2, nP])
 // at window-local gate `loc` in the aggregated eval buffer (EvalChunk::Agg and the

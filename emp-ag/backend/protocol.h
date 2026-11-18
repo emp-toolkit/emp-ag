@@ -177,14 +177,14 @@ private:
   // signatures below.
   using ComputeCtx = emp::ag::ComputeCtx<nP>;
 
-  // The half-gate hash seed (MITCCRH start_point) is not drawn on a round of its own. It
-  // is piggybacked off the per-chunk post-commitment triple coin: TriplePool::draw_coins
-  // squeezes one extra domain-separated block from that coin into fpre->halfgate_seed_,
-  // and draw_and_seed seeds ctx.mitc with it after compute_and_shares. That coin is globally
+  // The half-gate hash seed is not drawn on a round of its own. It is piggybacked off
+  // the per-chunk post-commitment triple coin: TriplePool::draw_coins squeezes one extra
+  // domain-separated block from that coin into fpre->halfgate_seed_, and draw_and_seed
+  // copies it into ctx.halfgate_seed after compute_and_shares. That coin is globally
   // agreed (FS pair at nP==2 / commit-reveal at nP>2), so the evaluator's re-hash matches
-  // every garbler; being fresh per chunk, the hash's (start_point, gid) -- gid per
-  // crypto/halfgate.h hash_gid(sender, gate) + dest -- never repeats across chunks under
-  // the fixed long-lived Delta.
+  // every garbler; being fresh per chunk, the hash's (start point, gid) -- one stream per
+  // sender, crypto/halfgate.h -- never repeats across chunks under the fixed long-lived
+  // Delta.
 
   // One-round all-to-all authenticated open. targets[t] (t in 1..nP) is the
   // list of wire indices into `base` to open to party t (empty => t reconstructs nothing). Every
@@ -233,7 +233,8 @@ private:
 
   // xor_share / zero_share are free templates in backend/shares.h and SlotGateMixin in
   // backend/passes/pass.h (so the passes can reach them without friendship);
-  // the half-gate hash gid layout (HalfGateHash / hash_gid) is in backend/crypto/halfgate.h.
+  // the half-gate hash layout (HalfGateHash, one stream per sender) is in
+  // backend/crypto/halfgate.h.
 
   // The gate passes (DrawBeaverPass / GarblePass / StreamEvaluatePass and the output-check
   // MaskWitnessPass) and the step-method bodies live in the phase files tail-included

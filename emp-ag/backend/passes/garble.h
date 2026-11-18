@@ -6,12 +6,12 @@
 // (garble_and_ship), including the nP>=3 garbler-row aggregation ring. The
 // on-wire byte-order contract this pass produces is defined in
 // passes/wire_format.h (kGarbleChunk / garble_window_cap / agg_row_index /
-// GarbleChunk) and crypto/halfgate.h (hash_gid); the evaluator that consumes it is
-// passes/evaluate.h. Tail-included by protocol.h.
+// GarbleChunk) and crypto/halfgate.h (the half-gate hash streams); the evaluator
+// that consumes it is passes/evaluate.h. Tail-included by protocol.h.
 //
 #include "emp-ag/backend/protocol.h"
 #include "emp-ag/backend/passes/wire_format.h"   // GarbleChunk, garble_window_cap, agg_row_index
-#include "emp-ag/backend/crypto/halfgate.h"      // self_halfgate_row, hash_gid
+#include "emp-ag/backend/crypto/halfgate.h"      // self_halfgate_row, HalfGateHash
 #include "emp-ag/backend/crypto/spdz.h"          // spdz_mac_share
 #include "emp-ag/backend/runtime.h"              // chunk_pipe
 #include <thread>
@@ -47,8 +47,11 @@ struct GarblePass : SlotGateMixin<GarblePass<nP, Party>> {
   uint32_t wid;
   int ai = 0;
   int c0_ = -1, c1_ = -1;         // const dedup (active iff ctx.dedup_consts)
+  HalfGateHash<nP> hash_;         // this garbler's half-gate hash stream (crypto/halfgate.h)
   GarblePass(AGMPCProtocol<nP> *p, ComputeCtx<nP> &c, chunk_pipe<GarbleChunk> &pp, int cap_)
-      : P(p), ctx(c), pipe(pp), cap(cap_), wid((uint32_t)c.num_in) {}
+      : P(p), ctx(c), pipe(pp), cap(cap_), wid((uint32_t)c.num_in) {
+    hash_.setS(halfgate_stream_start(c.halfgate_seed, Party));
+  }
 #ifdef AG_PROFILE
   uint64_t g_bp_ns = 0;   // garble walk blocked on a full pipe (drain/ring behind)
 #endif
@@ -108,13 +111,10 @@ struct GarblePass : SlotGateMixin<GarblePass<nP, Party>> {
       buf[4 * k + 2] = ml_b0;
       buf[4 * k + 3] = ml_b1;
     }
-    // The nP-1 destination hashes are the lanes of one call positioned at
-    // hash_gid(Party, ai_): the class keys them by bucket, tweaks each by its gid and
-    // re-expands the key schedule only when the bucket changes (crypto/halfgate.h).
-    // The evaluator positions its per-source instance at the same gids, so the
-    // re-derived hashes match.
-    ctx.mitc.renew_ks(hash_gid<nP>(Party, ai_));
-    ctx.mitc.template hash_cir<nP - 1, 4>(buf);
+    // Hash both halves of every destination, each half under the next gid of this
+    // garbler's stream (crypto/halfgate.h). The evaluator advances its stream
+    // for this garbler gate by gate in the same order, so the re-derived hashes match.
+    halfgate_hash_garbler<nP>(hash_, buf);
     const AShareBundle<nP> &wb_in0 = ctx.WIRE(in0);
     const AShareBundle<nP> &wb_in1 = ctx.WIRE(in1);
     const AShareBundle<nP> &wb_out = ctx.WIRE(out);
@@ -163,10 +163,11 @@ struct GarblePass : SlotGateMixin<GarblePass<nP, Party>> {
 //   G[2γ..)     = (G_{γ,0}^i, G_{γ,1}^i)
 //   S[j][3γ..)  = (S_{γ,0}^{i,j}, S_{γ,1}^{i,j}, S_{γ,2}^{i,j}), j∈[2,nP], j≠i
 //   b[γ]        = LSB1(m_{γ,0}^2)  (party 2 only)
-// Half-gate hash: MITCCRH (eprint 2019/1168) over the gid lanes of crypto/halfgate.h
-// -- lane d of gate γ from sender i hashes under gid hash_gid(i, γ) + (d-2), key
-// start_point ⊕ (gid >> ReuseShift), tweak T(gid) in the cipher input. d == sender
-// is the self lane feeding G_{γ,*}; d ≠ sender feeds S_{γ,*}^{sender,d}.
+// Half-gate hash: MITCCRH (eprint 2019/1168), one stream per sender i
+// (crypto/halfgate.h) -- each gate takes the next gids of that stream, two per
+// destination d (one per input), key start_point ⊕ (gid >> ReuseShift), tweak T(gid) in
+// the cipher input. d == sender is the self pair feeding G_{γ,*}; d ≠ sender feeds
+// S_{γ,*}^{sender,d}.
 template <int nP>
 template <class Source>
 void AGMPCProtocol<nP>::garble_and_ship(ComputeCtx &ctx, Source &source) {

@@ -5,13 +5,13 @@
 // StreamEvaluatePass<nP> that fuses garbled-row reception with evaluation, and
 // the AGMPCProtocol<nP> method body that drives it (stream_evaluate). It
 // consumes the byte stream whose contract is defined in passes/wire_format.h
-// (EvalChunk / garble_window_cap / agg_row_index) and crypto/halfgate.h (hash_gid),
-// produced
+// (EvalChunk / garble_window_cap / agg_row_index) and crypto/halfgate.h (the
+// half-gate hash streams), produced
 // by the garbler in passes/garble.h. Tail-included by protocol.h.
 //
 #include "emp-ag/backend/protocol.h"
 #include "emp-ag/backend/passes/wire_format.h"   // EvalChunk, garble_window_cap, agg_row_index
-#include "emp-ag/backend/crypto/halfgate.h"      // HalfGateHash, hash_gid
+#include "emp-ag/backend/crypto/halfgate.h"      // HalfGateHash, halfgate_stream_start
 #include "emp-ag/backend/crypto/spdz.h"          // collapse_cgamma_from_records
 #include "emp-ag/backend/runtime.h"              // chunk_pipe
 
@@ -50,11 +50,9 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP>> {
   bool stored_ = false;
   int loc = 0;
   BlockVec mr_;   // (nP+1)^2 per-gate witness scratch (heap: quadratic in nP)
-  // Per-SOURCE hash instances (crypto/halfgate.h: HalfGateHash / hash_gid), so each
-  // source keeps its cached key schedule across the gates of a key bucket, like the
-  // garbler's single instance. One shared instance cannot: the s-loop would
-  // reposition it nP-1 times per gate and re-expand the schedule every time. The
-  // hashes are the garblers' (same seed, same gids) -- this is pure schedule caching.
+  // One half-gate hash stream per SOURCE (crypto/halfgate.h): stream s-2 mirrors
+  // garbler s's own stream (same start point, same gids, advanced gate by gate in the
+  // same order), so the hashes are the garblers'.
   HalfGateHash<nP> mitc_src_[nP - 1];
 #ifdef AG_PROFILE
   // Stage decomposition of the eval span: walk-starve (gate walk blocked on window
@@ -83,9 +81,10 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP>> {
       stored_ = true;
       cur = stored;
     }
-    // Same per-chunk half-gate seed as ctx.mitc (set by draw_and_seed before this
-    // pass is constructed): the per-source keys must equal the garblers'.
-    for (int s = 0; s < nP - 1; ++s) mitc_src_[s].setS(ctx.mitc.start_point());
+    // Each source's stream starts where that garbler's does: the chunk's half-gate seed
+    // (set by draw_and_seed before this pass is constructed) with the sender folded in.
+    for (int s = 2; s <= nP; ++s)
+      mitc_src_[s - 2].setS(halfgate_stream_start(ctx.halfgate_seed, s));
   }
 
   // begin(): launch the receiver coordinator (the SINGLE producer -> the chunk_pipe
@@ -200,11 +199,9 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP>> {
       const block *r = tgr + 3 * (i - 2);
       Mr(1, i) = r[2] ^ (r[0] & mLa) ^ (r[1] & mLb);
     }
-    // Per source, the nP-1 destination hashes are the lanes of one call positioned at
-    // hash_gid(s, ai_) -- the gids the garblers hashed under, so the re-derived hashes
-    // match (crypto/halfgate.h). Each source owns its instance so the cached key
-    // schedule survives the s-loop; the class re-expands it only when the bucket
-    // changes.
+    // Per source, hash P1's two active labels for every destination under the next
+    // gids of that source's stream -- the gids the garbler hashed them under, so the
+    // re-derived hashes match (crypto/halfgate.h).
     block self_Ha[nP + 1], self_Hb[nP + 1];
     for (int s = 2; s <= nP; ++s) {
       block buf[(nP - 1) * 2];
@@ -213,8 +210,7 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP>> {
         buf[2 * k]     = ctx.EVAL(s, in0);
         buf[2 * k + 1] = ctx.EVAL(s, in1);
       }
-      mitc_src_[s - 2].renew_ks(hash_gid<nP>(s, ai_));
-      mitc_src_[s - 2].template hash_cir<nP - 1, 2>(buf);
+      halfgate_hash_evaluator<nP>(mitc_src_[s - 2], buf);
       for (int d = 2; d <= nP; ++d) {
         int k = d - 2;
         if (d == s) {
