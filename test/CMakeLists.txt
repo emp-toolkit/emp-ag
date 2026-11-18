@@ -59,6 +59,7 @@ add_test_case(laand_window_test)           # exact bit windows, independent code
 add_test_case(feq_test)                    # nonce-only F_eq wire count and adversarial openings
 set_tests_properties(feq_test PROPERTIES TIMEOUT 15)
 add_test_case(ev_records_equiv)            # P1 draw-time record extraction == live-bundle kernels
+add_test_case(halfgate_hash_test)          # each AND half under its own gid; evaluator streams match
 
 # 2-party session tests on AGMPCSession<2>: the ChunkedSession base + typed value
 # surface are shared with the n-party path, so these pin the nP==2 instantiation

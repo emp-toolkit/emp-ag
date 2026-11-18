@@ -8,7 +8,6 @@
 // context type; AGMPCProtocol re-exports it as `AGMPCProtocol<nP>::ComputeCtx`.
 //
 #include "emp-ag/backend/shares.h"            // AShareBundle, AShareBundleVec (-> block, BlockVec)
-#include "emp-ag/backend/crypto/halfgate.h"   // HalfGateHash (MITCCRH + its gid layout)
 #include <vector>
 
 namespace emp::ag {
@@ -64,7 +63,7 @@ struct ComputeCtx {
   BlockVec cgamma_mu;                  // P1: finalized per-AND witness
   BlockVec cgamma_s0, cgamma_s1, cgamma_s2;  // garblers: Lambda-affine records
   int SLOT(int w) const { return phys_identity ? w : phys[w]; }
-  HalfGateHash<nP> mitc;                  // half-gate hash (garble / evaluate); gids per crypto/halfgate.h
+  block halfgate_seed = zero_block;       // the passes' half-gate hash streams start from it
   AShareBundle<nP> &WIRE(int w) { return wire_slot[SLOT(w)]; }
   block &LABEL(int w) { return label_slot[SLOT(w)]; }
   block &EVAL(int j, int w) { return eval_slot[j][SLOT(w)]; }

@@ -161,11 +161,11 @@ void AGMPCProtocol<nP>::draw_and_seed(ComputeCtx &ctx, Source &source) {
       }
     });
   }
-  // Seed the half-gate hash from the triple-generation coin (piggybacked inside
+  // The half-gate hash seed comes from the triple-generation coin (piggybacked inside
   // compute_and_shares -> TriplePool::draw_coins). Garbler and evaluator derive it from
   // the same globally-agreed coin, so their per-gate keys agree. Meaningful only when
-  // there are ANDs: with none, compute_and_shares is skipped and ctx.mitc is never used.
-  if (num_ands > 0) ctx.mitc.setS(fpre->halfgate_seed_);
+  // there are ANDs: with none, compute_and_shares is skipped and nothing is hashed.
+  if (num_ands > 0) ctx.halfgate_seed = fpre->halfgate_seed_;
 #ifdef AG_PROFILE
   if (party == 1) {
     uint64_t all = (uint64_t)(io->count() - _all0), cot = g_ag_cot_bytes - _cot0,

@@ -238,10 +238,11 @@ public:
   AuthSharePool<nP> abit;
   block Delta;
   PRG prg;
-  // Half-gate hash seed (MITCCRH start_point), piggybacked off the per-chunk
-  // post-commitment bucket coin in BucketPolicy::draw_coins (one extra domain-separated
-  // squeeze, no dedicated coin round). AGMPCProtocol::draw_and_seed reads it to seed
-  // ctx.mitc after compute_and_shares; refreshed on every compute_and_shares that has ANDs.
+  // Half-gate hash seed (every sender's MITCCRH stream starts from it), piggybacked off
+  // the per-chunk post-commitment bucket coin in BucketPolicy::draw_coins (one extra
+  // domain-separated squeeze, no dedicated coin round). AGMPCProtocol::draw_and_seed
+  // copies it into ctx.halfgate_seed after compute_and_shares; refreshed on every
+  // compute_and_shares that has ANDs.
   block halfgate_seed_ = zero_block;
   // Batched LaAND alpha-check stash (nP>=3): each layer's windowed RLC vector +
   // its FZero u_zero are accumulated here across all B layers of a bucket; the ONE
@@ -407,7 +408,7 @@ public:
 
       // Sender half-gate row transfer for AND-index range [lo,hi) under lane `lane`, on ch.
       auto laand_send = [this, &tKEY, &phi, hg_chunk, gb, gw](NetIOMP<nP> *ch, int peer, block seed, int lo, int hi, int lane) {
-        MITCCRH<8> mitc;
+        MITCCRH<> mitc;
         mitc.setS(seed ^ makeBlock(0, (uint64_t)lane));   // lane in the free low 64 of the key
         block pad[16];
         const int len = hi - lo;
@@ -445,7 +446,7 @@ public:
 
       // Receiver: recompute tMACphi[peer][k] for k in [lo,hi) from the shipped rows on ch.
       auto laand_recv = [this, &tMAC, &tKEY, &tMACphi, any_peer, L, hg_chunk, gb, gw](NetIOMP<nP> *ch, int peer, block seed, int lo, int hi, int lane) {
-        MITCCRH<8> mitc;
+        MITCCRH<> mitc;
         mitc.setS(seed ^ makeBlock(0, (uint64_t)lane));   // lane in the free low 64 of the key
         block pad[16];
         const int len = hi - lo;
@@ -674,7 +675,7 @@ public:
           for (int layer = 0; layer < B; ++layer) {
             BlockVec *mac = layer_mac(layer);
             BlockVec *key = layer_key(layer);
-            MITCCRH<8> mitc;
+            MITCCRH<> mitc;
             mitc.setS(layer_seed[layer] ^ makeBlock(0, (uint64_t)lane));
             for (int st = lo; st < hi; st += hg_chunk) {
               const int ed = std::min(st + hg_chunk, hi);
@@ -710,7 +711,7 @@ public:
           for (int layer = 0; layer < B; ++layer) {
             BlockVec *mac = layer_mac(layer);
             BlockVec *key = layer_key(layer);
-            MITCCRH<8> mitc;
+            MITCCRH<> mitc;
             mitc.setS(layer_seed[layer] ^ makeBlock(0, (uint64_t)lane));
             for (int st = lo; st < hi; st += hg_chunk) {
               const int ed = std::min(st + hg_chunk, hi);
@@ -906,7 +907,7 @@ public:
       // Piggyback the half-gate hash seed off this ONE post-commitment coin: a single
       // extra domain-separated squeeze, no new round and no dedicated seed coin. Every
       // party folds the SAME coin here, so the evaluator's half-gate re-hash matches
-      // each garbler. Consumed by AGMPCProtocol::draw_and_seed via ctx.mitc.setS.
+      // each garbler. Consumed by AGMPCProtocol::draw_and_seed via ctx.halfgate_seed.
       tp->halfgate_seed_ = fs_coin("AGMPC halfgate seed", c, zero_block);
       return c;
     }
