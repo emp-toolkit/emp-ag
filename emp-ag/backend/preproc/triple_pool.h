@@ -430,13 +430,17 @@ public:
             }
           }
 #ifdef EMP_AG_TEST_FLIP_LAAND
-          // TEST-ONLY (never in production): a malicious party corrupts ONE shipped leaky-AND
-          // row (party 2's row to party 1), so P1's tKEYphi diverges. The leaky-AND consistency
-          // check (the batched windowed-alpha RLC) must abort during
-          // preprocessing. It must be a SINGLE row: flipping symmetrically at every sender would
-          // cancel in the XOR-combined tKEYphi at nP>=3 (each receiver gets the same delta from
-          // all peers), a false-negative that hides the fault.
-          if (ci == 0 && ed > st && party == 2 && peer == 1 && lane == 0) gbuf[0] ^= 0x1;
+          // TEST-ONLY (never in production): a malicious party 2 flips bit 0 of EVERY leaky-AND
+          // row it ships to party 1, so P1's tKEYphi diverges. The leaky-AND consistency check
+          // (the batched windowed-alpha RLC) must abort during preprocessing. Every row, because
+          // P1 folds a row in only when its own selector bit for that AND is 1: a single faulty
+          // row is masked away half the time, while with every row faulty the fault stays hidden
+          // only if all B*L of P1's selectors are 0. Only ONE sender flips: P1 folds every
+          // sender's row under the same selector bit, so if all nP-1 senders flipped, the copies
+          // would cancel in the XOR-combined tKEYphi whenever nP-1 is even (nP = 3 here), a
+          // false negative that hides the fault.
+          if (party == 2 && peer == 1)
+            for (int r = 0; r < ed - st; ++r) gbuf[(size_t)r * gb] ^= 0x1;
 #endif
           ag::pack_laand_rows(packed.data(), gbuf.data(), ed - st, gw);
           ch->send_data(peer, packed.data(), ag::laand_row_wire_bytes(ed - st, gw));

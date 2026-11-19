@@ -10,8 +10,8 @@
 //   EMP_AG_TEST_FLIP_B (nP==2) -- a malicious garbler flips one transmitted designated bit b
 //     -> wrong Lambda_gamma; c_gamma is the sole 2-party malicious-garbler guard.
 //   EMP_AG_TEST_FLIP_LAAND -- a malicious party corrupts a derived two-party leaky-AND
-//     value, or a shipped row at nP>=3 -> the consistency check aborts during PREPROCESSING
-//     (abort message contains "LaAND").
+//     value, or every row party 2 ships to party 1 at nP>=3 -> the consistency check aborts
+//     during PREPROCESSING (abort message contains "LaAND").
 //   EMP_AG_TEST_FLIP_LAAND_HIGH -- corrupt the highest retained check coordinate,
 //     including the final partial byte at ssp=39/40. Must abort in preprocessing.
 // A wrong public value -> the c_gamma MACCheck aborts (FLIP_LAAND aborts earlier, in preproc).
