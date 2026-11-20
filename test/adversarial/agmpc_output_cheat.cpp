@@ -14,6 +14,11 @@
 //     during PREPROCESSING (abort message contains "LaAND").
 //   EMP_AG_TEST_FLIP_LAAND_HIGH -- corrupt the highest retained check coordinate,
 //     including the final partial byte at ssp=39/40. Must abort in preprocessing.
+//   EMP_AG_TEST_FLIP_D / EMP_AG_TEST_FLIP_XY -- a malicious party 2 flips its share of one
+//     opened bucket d-bit / Beaver x and sends it to everyone, keeping it itself, so every
+//     party computes from the same wrong value; the open check must abort in preprocessing
+//     (abort message contains "open check"). Built with the default open checker and,
+//     via EMP_AG_OPEN_CHECK_PAIRWISE / _SYMMETRIC, with the other one.
 // A wrong public value -> the c_gamma MACCheck aborts (FLIP_LAAND aborts earlier, in preproc).
 // (The input-Lambda equivocation hook EMP_AG_TEST_FLIP_INPUT_LAMBDA is exercised by the sibling
 // agmpc_input_equiv.cpp.)

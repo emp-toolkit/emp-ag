@@ -206,6 +206,55 @@ void check_shared_zero(NetIOMP<nP> *io, ThreadPool *pool, PRG *prg, int party,
   echo.finalize();                                       // transcript agreement
 }
 
+// check_shared_zero without the echo: commitments in one round, openings in the next,
+// pairwise, so two rounds instead of three. Each party sums the openings it received.
+// A cheater that sends different openings to different parties can make some honest
+// parties abort while others continue, but only when every honest m_i is already
+// right: an honest party sends one opening to everyone, so a wrong honest share shows
+// up in every honest sum. Aborts as check_shared_zero does.
+template <int nP>
+void check_shared_zero_p2p(NetIOMP<nP> *io, ThreadPool *pool, PRG *prg, int party,
+                           const block &m_i, block session_id, const char *purpose,
+                           const char *fail_msg, const char *commit_fail_msg) {
+  struct OpenT { block m, r; };
+  struct DigestT { char d[FsHash::DIGEST_SIZE]; };
+  OpenT mine;
+  mine.m = m_i;
+  prg->random_block(&mine.r, 1);
+  DigestT com_mine;
+  role_bound_commitment(com_mine.d, session_id, purpose, party,
+                        &mine, sizeof(OpenT));              // r keeps it hiding
+  DigestT com_view[nP + 1];
+  OpenT open_view[nP + 1];
+  // One pairwise round: my value to every peer, every peer's value into view[p].
+  auto exchange = [&](const void *my_v, void *view, size_t bytes) {
+    vector<future<void>> res;
+    for (int p = 1; p <= nP; ++p) if (p != party) {
+      res.push_back(pool->enqueue([io, my_v, bytes, p]() {
+        io->send_data(p, my_v, bytes);
+        io->flush(p);
+      }));
+      res.push_back(pool->enqueue([io, view, bytes, p]() {
+        io->recv_data(p, (char *)view + (size_t)p * bytes, bytes);
+      }));
+    }
+    joinNclean(res);
+  };
+  exchange(&com_mine, com_view, sizeof(DigestT));        // round 1: commitments
+  exchange(&mine, open_view, sizeof(OpenT));             // round 2: openings
+
+  block sum = m_i;
+  for (int p = 1; p <= nP; ++p) if (p != party) {
+    DigestT chk;
+    role_bound_commitment(chk.d, session_id, purpose, p,
+                          &open_view[p], sizeof(OpenT));
+    expecting(memcmp(chk.d, com_view[p].d, FsHash::DIGEST_SIZE) == 0,
+              commit_fail_msg);
+    sum = sum ^ open_view[p].m;
+  }
+  expecting(cmpBlock(&sum, &zero_block, 1), fail_msg);
+}
+
 // DEBUG-ONLY MAC-consistency check. WARNING: broadcasts each party's Delta in the CLEAR (line
 // below) -- a malicious party could then forge any MAC and defeat the c_gamma MACCheck. The
 // DEFINITIONS below are compiled ONLY under EMP_AG_DEBUG_CHECKS, so a production build cannot

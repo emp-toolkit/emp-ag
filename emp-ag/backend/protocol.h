@@ -62,7 +62,11 @@ public:
 
   // Reused per-chunk pass scratch (grow-only; persists across chunks via this
   // long-lived protocol object).
-  std::vector<unsigned char> bp_abit_, bp_bbit_;   // DrawBeaverPass original share bits
+  // DrawBeaverPass: every AND's operand mask shares -- the share bits, and the MACs and
+  // keys per peer or the mu_i blocks, as the open check needs (passes/draw_beaver.h).
+  std::vector<unsigned char> bp_abit_, bp_bbit_;
+  BlockVec bp_amac_[nP + 1], bp_akey_[nP + 1], bp_bmac_[nP + 1], bp_bkey_[nP + 1];
+  BlockVec bp_amu_, bp_bmu_;
   // The ordinary fused path swaps these grow-only buffers into its stack
   // ComputeCtx and back at the call boundary. Prepared jobs keep their own
   // context-resident copies across phases. This keeps the fused path's steady
