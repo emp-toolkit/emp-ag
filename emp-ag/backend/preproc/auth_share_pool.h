@@ -66,11 +66,13 @@ using OTExt = emp::OTExtension;
 //
 // Two small implementation choices:
 //
-// (1) The F_mCOT extension is ext_len = length + tail tuples per peer,
-//     where tail = csp on the first call and 0 afterwards. Positions
-//     [0, length) are the output aShares; the [length, ext_len) csp s-tuples
-//     are consumed by check1's gadget packing (Δ-consistency, run once per
-//     session — the global keys are fixed, so one check covers every batch).
+// (1) The F_mCOT extension is ext_len = length + pad + tail tuples per peer.
+//     Positions [0, length) are the output aShares. At nP>2 the next
+//     pad = kCheck2Pad tuples are check2's hiding shares, minted on every call
+//     and dropped once check2 has run (see check2). The last tail = csp
+//     s-tuples, minted on the first call only, are consumed by check1's gadget
+//     packing (Δ-consistency, run once per session — the global keys are
+//     fixed, so one check covers every batch).
 //
 // (2) FZero is implemented via pairwise seed-and-expand under
 //     the ideal-cipher assumption on the AES-based PRG; see check1.
@@ -81,8 +83,9 @@ using OTExt = emp::OTExtension;
 //     Δ-consistency on the first call) then check2 (universal-hash MAC check, nP>2
 //     only), seeded by an internal post-commitment sampleRandom.
 //   - draw(n, out) — one-shot convenience: compute() into the reusable draw
-//     scratch, transposed into caller's AoS bundles. At nP>2 the csp = 128
-//     sacrificial bits are minted only on the first call (the one-time Δ-check).
+//     scratch, transposed into caller's AoS bundles. At nP>2 every call also
+//     mints check2's kCheck2Pad hiding shares, and the first call check1's
+//     csp = 128 gadget tail; neither reaches the output.
 //   - maybe_flush_cot_check() — flush the deferred long-lived-COT consistency check
 //     before a reveal (no-op when nothing was minted since the last flush).
 template <int nP>
@@ -142,6 +145,9 @@ class AuthSharePool {
 	// later batch. Set true after the first process_phase1 runs the check.
 	bool delta_checked_ = false;
 
+	// check2's hiding shares per call at nP>2: one per bit of the 128-bit value
+	// it broadcasts (see check2).
+	static constexpr int kCheck2Pad = 128;
 	// check2 coefficient buffer: grow-only scratch reused across calls.
 	BlockVec check2_coeff;
 	BlockVec draw_mac_[nP + 1], draw_key_[nP + 1];   // reused draw() scratch
@@ -481,22 +487,29 @@ class AuthSharePool {
 	}
 
 	// The full Π_aShare. On entry MAC[i]/KEY[i] may have any size; compute() grows them
-	// to length + csp for the COT + gadget-tail check, then shrinks back to length
-	// (preserving capacity). The output share x^me_k is implicit in
+	// for check2's hiding shares (nP>2) and check1's gadget tail (first call), then
+	// shrinks back to length (preserving capacity). The output share x^me_k is implicit in
 	// bit0(MAC[any non-self peer][k]) — no separate share buffer. Two phases:
 	// process_phase1 (COT extension + the one-time check1) then check2 (universal-hash
 	// MAC check, nP>2 only).
 	void compute(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) {
-		process_phase1(MAC, KEY, length);
+		constexpr int pad = (nP > 2) ? kCheck2Pad : 0;
+		expecting((int64_t)length + pad <= INT_MAX, "auth_share: padded length overflow");
+		process_phase1(MAC, KEY, length + pad);
 
 		// check2 verifies the per-peer MACs agree across peers — only
 		// meaningful for nP>2. At nP=2 there is a single peer, so it is vacuous and the
 		// deferred COT consistency check (flush_cot_check before reveal) provides
 		// malicious security, as in KRRW. The seed is sampled after MAC/KEY are
-		// committed so the adversary can't adapt to it.
+		// committed so the adversary can't adapt to it. check2 covers the hiding
+		// shares after [0, length); they are never used again.
 		if constexpr (nP > 2) {
 			block seed = sampleRandom<nP>(io, &prg, pool, party, session_id);
 			check2(seed, MAC, KEY, length);
+			for (int i = 1; i <= nP; ++i) if (i != party) {
+				MAC[i].resize(length);
+				KEY[i].resize(length);
+			}
 		}
 
 #ifdef EMP_AG_DEBUG_CHECKS
@@ -589,20 +602,33 @@ class AuthSharePool {
 		}
 	}
 
-	// check2: one-shot universal-hash MAC consistency over
-	// the whole [0, length) batch with the collectively-sampled `seed`. Folds
-	// w^me = Σ_k coeff[k]·bit0(MAC[any_peer][k]) and the per-peer Mw[peer] = Σ coeff·MAC,
-	// Kw[peer] = Σ coeff·KEY; broadcasts bw via FBC, exchanges Mw with each peer, and
-	// verifies M_me[w^peer] = K_me[w^peer] ⊕ w^peer · Δ_me. Aborts on cheating;
-	// echo.finalize() also confirms the all_bcast transcripts agreed across parties.
-	// `seed` must be drawn AFTER MAC/KEY are committed so the adversary
-	// can't adapt to it.
+	// check2: one-shot universal-hash MAC consistency over the whole batch with
+	// the collectively-sampled `seed`. Folds w^me = Σ_k coeff[k]·bit0(MAC[any_peer][k])
+	// and the per-peer Mw[peer] = Σ coeff·MAC, Kw[peer] = Σ coeff·KEY; broadcasts bw
+	// via FBC, exchanges Mw with each peer, and verifies
+	// M_me[w^peer] = K_me[w^peer] ⊕ w^peer · Δ_me. Because bw is broadcast, every peer
+	// checks the same value, so a party must hold the same bits toward every peer.
+	// Aborts on cheating; echo.finalize() also confirms the all_bcast transcripts
+	// agreed across parties. `seed` must be drawn AFTER MAC/KEY are committed so the
+	// adversary can't adapt to it.
+	//
+	// bw is public, and the XOR of all parties' bw is Σ_k coeff[k]·x_k: 128 GF(2)-linear
+	// equations on the shared bits, e.g. on input masks whose Λ = λ ⊕ input is public.
+	// So the fold also covers the kCheck2Pad hiding shares at [length, length + pad),
+	// with coefficients X^0..X^127 (the gadget powers; X^k is block bit k, as in
+	// check1's packing). Their contribution to bw is the party's own 128 hiding bits,
+	// a uniform one-time pad, so bw is uniform and independent of the outputs. An
+	// inconsistency confined to the hiding shares shifts a peer's sum by Σ X^k over a
+	// nonempty set, which is never zero, so it is always caught; one that touches the
+	// outputs is caught except with probability 2^-128, as their coefficients are
+	// uniform and drawn after the shares.
 	void check2(block seed, BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) {
-		// coeff: grow-only scratch reused across calls — resize(length) reuses the
+		const int n = length + kCheck2Pad;   // outputs + hiding shares
+		// coeff: grow-only scratch reused across calls — resize(n) reuses the
 		// capacity instead of re-faulting. The CTR expansion is range-split via
 		// fork_at (bit-identical to one sequential random_block: position c of the
 		// stream is position c regardless of who produces it).
-		check2_coeff.resize(length);
+		check2_coeff.resize(n);
 		PRG prg2(&seed);
 		{
 			block *coeff = check2_coeff.data();
@@ -610,6 +636,8 @@ class AuthSharePool {
 				PRG p = prg2.fork_at((uint64_t)lo);
 				p.random_block(coeff + lo, hi - lo);
 			});
+			for (int k = 0; k < kCheck2Pad; ++k)
+				coeff[length + k] = (k < 64) ? makeBlock(0, 1ULL << k) : makeBlock(1ULL << (k - 64), 0);
 		}
 
 		int any_peer = (party == 1) ? 2 : 1;
@@ -624,14 +652,14 @@ class AuthSharePool {
 			// are Σ coeff·(), and GF add == XOR, so XOR-reducing the per-range partials
 			// yields the full sums.
 			const int W = std::max(1, (int)pool->size());
-			const int width = (length + W - 1) / W;
-			const int nr = width > 0 ? (length + width - 1) / width : 1;
+			const int width = (n + W - 1) / W;
+			const int nr = (n + width - 1) / width;
 			std::vector<block> pMw((size_t)nr * (nP + 1), zero_block);
 			std::vector<block> pKw((size_t)nr * (nP + 1), zero_block);
 			std::vector<block> pbw((size_t)nr, zero_block);
 			vector<future<void>> fold_res;
 			for (int r = 0; r < nr; ++r) {
-				const int lo = r * width, hi = std::min(lo + width, length);
+				const int lo = r * width, hi = std::min(lo + width, n);
 				fold_res.push_back(pool->enqueue([this, &pMw, &pKw, &pbw, &MAC, &KEY, r, lo, hi, any_peer]() {
 					for (int i = 1; i <= nP; ++i) if (i != party) {
 						vector_inn_prdt_sum_red(&pMw[(size_t)r * (nP + 1) + i], check2_coeff.data() + lo, MAC[i].data() + lo, hi - lo);
