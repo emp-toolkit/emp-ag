@@ -14,7 +14,7 @@
 #include "emp-ot/ot_extension/softspoken/softspoken.h"
 #include "emp-ag/backend/preproc/buffer_ot.h"   // BufferOT (one base OT per unordered pair)
 #include "emp-ag/backend/crypto/open_check.h"   // SymmetricOpenCheck (settle_check2)
-#include "emp-tool/runtime/crypto/ccrh.h"        // CCRH (COT->ROT for the derived base OTs)
+#include "emp-tool/runtime/crypto/mitccrh.h"     // MITCCRH (COT->ROT for the derived base OTs)
 #include "emp-ag/backend/shares.h"
 #include <algorithm>
 #include <climits>
@@ -356,10 +356,19 @@ class AuthSharePool {
 	}
 
 	// Bootstrap one direction per unordered pair with its normal public-key base
-	// OT, then derive the reverse direction's 128 base OTs from CCR-hashed COTs.
-	// The higher-numbered party is the primary sender. Both directions consume the
-	// same 128-output prefix so every local receiver stream remains at an identical
-	// offset across peers, preserving the shared-choice invariant for nP > 2.
+	// OT, then derive the reverse direction's 128 base OTs from its first 128 COTs.
+	// The higher-numbered party is the primary sender. The prefix is check()ed
+	// before anything is derived from it. In the reverse direction the primary
+	// receiver becomes the sender, the party that verifies the reverse bootstrap
+	// and the reverse consistency fold. Derived from an unchecked prefix, those
+	// messages would let a cheating primary receiver test guesses of the primary
+	// sender's Delta offline, with no abort, and then repair its own primary fold
+	// before that check ran. The derivation hashes prefix row i under gid i of a
+	// MITCCRH stream started from the reverse direction's sid: H(K_i) and
+	// H(K_i ^ Delta) for the primary sender, H(M_i) for the receiver. Both
+	// directions draw and check the same 128-COT prefix, so every receiver of a
+	// party sits at the same session and cursor, preserving the shared-choice
+	// invariant for nP > 2.
 	void dedup_bootstrap_pairs_(const bool* delta_me, const block& choice_seed,
 			BaseOtKind base_ot_kind, int64_t planned_sender_cots,
 			int64_t planned_receiver_cots) {
@@ -410,6 +419,7 @@ class AuthSharePool {
 					else                          abit1[peer]->begin();
 					ch_send->flush();
 					abit1[peer]->next_n(primary[(size_t)peer].data(), K); ch_send->flush();
+					abit1[peer]->check(); ch_send->flush();   // certify the prefix
 				} else {
 					// Lower party: primary receiver.
 					abit2[peer] = make_cot_extension_(
@@ -420,14 +430,22 @@ class AuthSharePool {
 					if (planned_receiver_cots >= 0) abit2[peer]->begin(planned_receiver_cots);
 					else                            abit2[peer]->begin();
 					ch_recv->flush();
+#ifdef EMP_AG_TEST_TAMPER_PREFIX
+					// TEST-ONLY (never in production): party 1 flips one bit of the first
+					// prefix correction it sends to party 2. Party 2's check of the prefix
+					// must abort before anything is derived from it.
+					if (party == 1 && peer == 2) static_cast<TamperNetIO *>(ch_recv)->arm();
+#endif
 					abit2[peer]->next_n(primary[(size_t)peer].data(), K); ch_recv->flush();
+					abit2[peer]->check(); ch_recv->flush();
 				}
 			}));
 		}
 		joinNclean(res);
 
-		// Phase 2: use each primary transcript to bootstrap its reverse direction,
-		// then consume the matching prefix that keeps all receiver cursors aligned.
+		// Phase 2: derive each reverse direction's base OTs from its checked primary
+		// prefix, then draw and check the matching prefix that keeps every receiver
+		// at the same session and cursor.
 		res.clear();
 		for (int peer : peer_order(party, nP)) {
 			res.push_back(pool->enqueue([this, peer, delta_me, &choice_seed,
@@ -436,14 +454,24 @@ class AuthSharePool {
 				const bool me_smaller = party < peer;
 				NetIO* ch_send = io->get(peer, /*swap=*/!me_smaller);
 				NetIO* ch_recv = io->get(peer, /*swap=*/me_smaller);
-				emp::CCRH ccrh;
 				BlockVec reverse_prefix((size_t)K);
+				MITCCRH<> hash;
+				hash.setS(RO("emp-ag:reverse-base-ot", reverse_sid[(size_t)peer]).squeeze_block());
+				static_assert(K % 8 == 0, "the derivation hashes the prefix 8 rows per call");
 				if (!me_smaller) {
 					std::vector<block> m0((size_t)K), m1((size_t)K);
-					for (int64_t i = 0; i < K; ++i) {
-						m0[(size_t)i] = ccrh.H(primary[(size_t)peer][(size_t)i]);
-						m1[(size_t)i] = ccrh.H(
-							primary[(size_t)peer][(size_t)i] ^ abit1[peer]->Delta);
+					const block D = abit1[peer]->Delta;
+					for (int64_t i = 0; i < K; i += 8) {
+						block pad[16];
+						for (int j = 0; j < 8; ++j) {
+							pad[2 * j] = primary[(size_t)peer][(size_t)(i + j)];
+							pad[2 * j + 1] = pad[2 * j] ^ D;
+						}
+						hash.hash<8, 2>(pad);
+						for (int j = 0; j < 8; ++j) {
+							m0[(size_t)(i + j)] = pad[2 * j];
+							m1[(size_t)(i + j)] = pad[2 * j + 1];
+						}
 					}
 					abit2[peer] = make_cot_extension_(
 						BOB, ch_recv,
@@ -455,12 +483,18 @@ class AuthSharePool {
 					else                            abit2[peer]->begin();
 					ch_recv->flush();
 					abit2[peer]->next_n(reverse_prefix.data(), K); ch_recv->flush();
+					abit2[peer]->check(); ch_recv->flush();
 				} else {
 					std::vector<uint8_t> c((size_t)K);
 					std::vector<block> mc((size_t)K);
-					for (int64_t i = 0; i < K; ++i) {
-						c[(size_t)i] = emp::getLSB(primary[(size_t)peer][(size_t)i]) ? 1 : 0;
-						mc[(size_t)i] = ccrh.H(primary[(size_t)peer][(size_t)i]);
+					for (int64_t i = 0; i < K; i += 8) {
+						block pad[8];
+						for (int j = 0; j < 8; ++j) {
+							pad[j] = primary[(size_t)peer][(size_t)(i + j)];
+							c[(size_t)(i + j)] = emp::getLSB(pad[j]) ? 1 : 0;
+						}
+						hash.hash<8, 1>(pad);
+						for (int j = 0; j < 8; ++j) mc[(size_t)(i + j)] = pad[j];
 					}
 					abit1[peer] = make_cot_extension_(
 						ALICE, ch_send,
@@ -472,6 +506,7 @@ class AuthSharePool {
 					else                          abit1[peer]->begin();
 					ch_send->flush();
 					abit1[peer]->next_n(reverse_prefix.data(), K); ch_send->flush();
+					abit1[peer]->check(); ch_send->flush();
 				}
 			}));
 		}

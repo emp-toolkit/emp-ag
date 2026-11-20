@@ -23,6 +23,10 @@
 //     value bw than everyone else. The parties' views of the opening then differ, which
 //     the zero test inside the symmetric open check catches (abort message contains
 //     "open check"), or the one run on its own after the pairwise check ("cheat aShare").
+//   EMP_AG_TEST_TAMPER_PREFIX -- party 1 flips one bit of the first correction it sends to
+//     party 2 inside the 128-COT bootstrap prefix (backend/netmp.h's TamperNetIO). Party 2's
+//     check of the prefix must abort during setup, before the reverse direction's base OTs
+//     are derived from it ("SoftSpoken subspace VOLE check failed").
 // A wrong public value -> the c_gamma MACCheck aborts (FLIP_LAAND aborts earlier, in preproc).
 // (The input-Lambda equivocation hook EMP_AG_TEST_FLIP_INPUT_LAMBDA is exercised by the sibling
 // agmpc_input_equiv.cpp; the aShare consistency check on a circuit with no AND, by

@@ -6,8 +6,8 @@
 # file in the same commit, stating why); anything else is a regression.
 
 == p1 ==
-peer 2 ios  send=b4ca831c36b3faad0cc39087eba2cdd9 recv=4a365f4b1875c12881338660cab783d5
-peer 2 ios2 send=a0d9ade091d2eab9f6c97ebfcd7a45a3 recv=50c85c306111f22e77da1573bb8c3aca
+peer 2 ios  send=94a429d93fda4cbfc056aa9a7fcf2a0b recv=4a365f4b1875c12881338660cab783d5
+peer 2 ios2 send=a0d9ade091d2eab9f6c97ebfcd7a45a3 recv=96de36dc3afcfbc6afb72f4b262f39cf
 == p2 ==
-peer 1 ios  send=4a365f4b1875c12881338660cab783d5 recv=b4ca831c36b3faad0cc39087eba2cdd9
-peer 1 ios2 send=50c85c306111f22e77da1573bb8c3aca recv=a0d9ade091d2eab9f6c97ebfcd7a45a3
+peer 1 ios  send=4a365f4b1875c12881338660cab783d5 recv=94a429d93fda4cbfc056aa9a7fcf2a0b
+peer 1 ios2 send=96de36dc3afcfbc6afb72f4b262f39cf recv=a0d9ade091d2eab9f6c97ebfcd7a45a3

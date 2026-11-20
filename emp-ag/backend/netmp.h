@@ -20,6 +20,33 @@
 
 namespace emp {
 
+#ifdef EMP_AG_TEST_TAMPER_PREFIX
+// TEST-ONLY (never in production): a mesh channel that flips one bit of the first
+// message it sends after arm(). The bootstrap-prefix test arms it to corrupt a COT
+// correction on the wire.
+class TamperNetIO : public NetIO {
+ public:
+  using NetIO::NetIO;
+  void arm() { armed_ = true; }
+
+ protected:
+  void send_data_internal(const void *data, int64_t len) override {
+    if (!armed_ || len <= 0) return NetIO::send_data_internal(data, len);
+    armed_ = false;
+    std::vector<unsigned char> flipped((const unsigned char *)data,
+                                       (const unsigned char *)data + len);
+    flipped[0] ^= 1;
+    NetIO::send_data_internal(flipped.data(), len);
+  }
+
+ private:
+  bool armed_ = false;
+};
+using MeshNetIO = TamperNetIO;
+#else
+using MeshNetIO = NetIO;
+#endif
+
 template <int nP>
 inline constexpr bool valid_netmp_party(int party) {
   return party >= 1 && party <= nP;
@@ -128,7 +155,7 @@ inline void netmp_setup(int party, int port, const char *const *ip, int n_meshes
     connectors.emplace_back([&, p] {
       for (int m = 0; m < n_meshes; ++m) {
         int sock = connect_to(p, (uint16_t)m);
-        dialed[m][p] = new NetIO(sock, true);
+        dialed[m][p] = new MeshNetIO(sock, true);
       }
     });
   }
@@ -164,7 +191,7 @@ inline void netmp_setup(int party, int port, const char *const *ip, int n_meshes
       fprintf(stderr, "netiomp handshake: duplicate connection from peer %d mesh %d\n",
               peer, tag); exit(1);
     }
-    accepted[tag][peer] = new NetIO(fd, true);
+    accepted[tag][peer] = new MeshNetIO(fd, true);
   }
   for (auto &t : connectors) t.join();
 

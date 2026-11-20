@@ -105,8 +105,9 @@ cmake -S emp-ag -B emp-ag/build \
 | `EMP_AG_INSTALL`        | `ON` when top-level | Generate install / `find_package(emp-ag)` export rules. |
 
 For every selected backend, each unordered party pair runs one public-key base
-OT. The reverse COT direction derives its base OTs from a CCR-hashed 128-COT
-prefix of the canonical direction; this is unconditional for every `nP`.
+OT. The reverse COT direction derives its base OTs from a 128-COT prefix of the
+canonical direction, consistency-checked before the derivation and hashed under
+a tweak per row; this is unconditional for every `nP`.
 `AGMPCSession` uses `BaseOtKind::CSW` by default. The argument after
 `session_id` can select another base OT (e.g. the post-quantum `BMM`); every
 party must select the same base OT.

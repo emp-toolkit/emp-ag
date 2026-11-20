@@ -65,6 +65,15 @@ add_np_variant(agmpc_share_split_choice_np3 agmpc_share_consistency.cpp 3 DEFS C
 add_np_variant(agmpc_share_flip_bw_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_FLIP_BW PASS_RE "cheat aShare")
 add_np_variant(agmpc_share_two_world_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_SPLIT_CHOICE EMP_AG_TEST_TWO_WORLD PASS_RE "cheat aShare")
 add_np_variant(agmpc_share_two_world_np4 agmpc_share_consistency.cpp 4 DEFS CONSISTENCY_NP=4 EMP_AG_TEST_SPLIT_CHOICE EMP_AG_TEST_TWO_WORLD PASS_RE "cheat aShare")
+# TAMPER_PREFIX: party 1, the primary COT receiver toward party 2, flips one bit of the
+# first correction of the 128-COT bootstrap prefix on the wire. Party 2 must abort in its
+# check of that prefix, before the reverse direction's base OTs are derived from it. Without
+# that check, party 1's own reverse PPRF check fails first and party 2 never checks, so the
+# regex distinguishes the two; SoftSpoken only (IKNP has no such earlier failure).
+if(EMP_AG_OT_BACKEND STREQUAL "SoftSpoken")
+  add_np_variant(agmpc_cheat_prefix_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_TEST_TAMPER_PREFIX PASS_RE "SoftSpoken subspace VOLE check failed")
+  add_np_variant(agmpc_cheat_prefix_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_TAMPER_PREFIX PASS_RE "SoftSpoken subspace VOLE check failed")
+endif()
 
 # FLIP_AGG_MID (nP>=4): a MIDDLE aggregation-ring node (not head/tail) corrupts a row -> the tail
 # forwards it -> the c_gamma MACCheck aborts. Complements the tail-only FLIP_AGG and is the
