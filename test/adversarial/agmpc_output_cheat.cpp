@@ -19,9 +19,14 @@
 //     party computes from the same wrong value; the open check must abort in preprocessing
 //     (abort message contains "open check"). Built with the default open checker and,
 //     via EMP_AG_OPEN_CHECK_PAIRWISE / _SYMMETRIC, with the other one.
+//   EMP_AG_TEST_FLIP_BW (nP>=3) -- party 2 sends party 3 a different aShare consistency
+//     value bw than everyone else. The parties' views of the opening then differ, which
+//     the zero test inside the symmetric open check catches (abort message contains
+//     "open check"), or the one run on its own after the pairwise check ("cheat aShare").
 // A wrong public value -> the c_gamma MACCheck aborts (FLIP_LAAND aborts earlier, in preproc).
 // (The input-Lambda equivocation hook EMP_AG_TEST_FLIP_INPUT_LAMBDA is exercised by the sibling
-// agmpc_input_equiv.cpp.)
+// agmpc_input_equiv.cpp; the aShare consistency check on a circuit with no AND, by
+// agmpc_share_consistency.cpp.)
 //
 // expecting() prints the fail message and exits, so this test is
 // registered with ctest PASS_REGULAR_EXPRESSION "cheat in c_gamma MACCheck": it PASSES iff

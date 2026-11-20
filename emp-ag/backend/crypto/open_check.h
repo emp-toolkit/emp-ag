@@ -38,7 +38,14 @@
 //   with probability about 2^-128. Residuals are folded as the caller computes them
 //   after seal(), so nothing is stored per value; one gfmul per opened bit per party
 //   at any nP. Rounds: the coin (none at nP == 2, two above) and check_result()'s
-//   commit-then-open zero test (two).
+//   commit-then-open zero test (two). absorb() adds shares of zero that other checks
+//   computed (the aShare consistency check's residuals) to the same zero test, with a
+//   digest of the values those checks opened without an echo; the parties must agree
+//   on it, and its comparison rides with the commitments.
+//
+// Both checkers verify, per receiver, that the bit a party sent it matches that party's
+// MAC toward it. That the bits a party sent different receivers agree comes from the
+// aShare consistency check: a party holds the same share toward every peer.
 //
 // DefaultOpenCheck is the pairwise checker at nP == 2 and the symmetric one above.
 // EMP_AG_OPEN_CHECK_PAIRWISE or EMP_AG_OPEN_CHECK_SYMMETRIC forces one at every nP;
@@ -63,6 +70,8 @@ class PairwiseOpenCheck {
 public:
   // Needs each opened value's MAC and key per peer, not just its SPDZ collapse.
   static constexpr bool kPerPeerOperands = true;
+  // No zero test to share: other shares of zero are settled separately.
+  static constexpr bool kAbsorbsZeroShares = false;
 
   PairwiseOpenCheck(NetIOMP<nP> *io, ThreadPool *pool, int party, block Delta,
                     block session_id, PRG * /*prg*/, NetIOMPGroup<nP> * /*grp*/)
@@ -193,11 +202,21 @@ class SymmetricOpenCheck {
 public:
   // Needs only each opened value's SPDZ collapse mu_i, not its MACs per peer.
   static constexpr bool kPerPeerOperands = false;
+  // Its zero test can cover other shares of zero (absorb()).
+  static constexpr bool kAbsorbsZeroShares = true;
 
+  // `purpose` separates this check's coin and commitments from every other use;
+  // fail_msg, commit_fail_msg and agree_fail_msg are the abort messages of its zero
+  // test (a nonzero sum, a commitment mismatch, disagreeing absorbed views).
   SymmetricOpenCheck(NetIOMP<nP> *io, ThreadPool *pool, int party, block Delta,
-                     block session_id, PRG *prg, NetIOMPGroup<nP> *grp)
+                     block session_id, PRG *prg, NetIOMPGroup<nP> *grp,
+                     const char *purpose = "emp-ag:open-check",
+                     const char *fail_msg = "open check: opened values or absorbed shares do not match their MACs",
+                     const char *commit_fail_msg = "open check: commit-open mismatch",
+                     const char *agree_fail_msg = "open check: parties saw different values opened without an echo")
       : io_(io), pool_(pool), party_(party), Delta_(Delta), session_id_(session_id),
-        prg_(prg), grp_(grp) {}
+        prg_(prg), grp_(grp), purpose_(purpose), fail_msg_(fail_msg),
+        commit_fail_msg_(commit_fail_msg), agree_fail_msg_(agree_fail_msg) {}
 
   // A run of opened values: value k of run j gets coefficient c_{j,k} = AES_K(j, k).
   struct Run { uint64_t index = 0; };
@@ -213,12 +232,43 @@ public:
     if (!pending_) return;
     block coin;
     if constexpr (nP == 2)
-      coin = fs_coin_pair_group<nP>(io_, grp_, party_ == 1 ? 2 : 1, "emp-ag:open-check",
-                                    session_id_);
+      coin = fs_coin_pair_group<nP>(io_, grp_, party_ == 1 ? 2 : 1, purpose_, session_id_);
     else
       coin = sampleRandom<nP>(io_, prg_, pool_, party_, session_id_);
     AES_set_encrypt_key(coin, &key_);
     sealed_ = true;
+  }
+
+  // Add shares of zero computed elsewhere, one block per party each, to this check's
+  // zero test: the c-th share absorbed since the last check_result() gets coefficient
+  // AES_K(2^64 - 1, c), a counter no run reaches. Each share's error must be fixed
+  // before the coin, so call this after seal() (with nothing begun, absorb() draws the
+  // coin itself) and before check_result(). The coefficients are what make one test
+  // cover several shares: in a plain XOR, a share whose error was chosen after another's
+  // coefficients were known could cancel it. `view` (optional, FsHash::DIGEST_SIZE
+  // bytes) digests values the shares' check opened without an echo; check_result()
+  // aborts unless every party absorbed the same views.
+  void absorb(const std::vector<block> &zero_shares, const char *view = nullptr) {
+    if (zero_shares.empty()) return;
+    if (!sealed_) {
+      pending_ = true;
+      seal();
+    }
+    block lo = zero_block, hi = zero_block;
+    for (size_t c = 0; c < zero_shares.size(); ++c) {
+      block g = makeBlock(~0ULL, absorbed_++), l, h;
+      AES_ecb_encrypt_blks(&g, 1, &key_);
+      mul128(g, zero_shares[c], &l, &h);
+      lo = lo ^ l;
+      hi = hi ^ h;
+    }
+    std::lock_guard<std::mutex> lock(mu_);
+    lo_ = lo_ ^ lo;
+    hi_ = hi_ ^ hi;
+    if (view != nullptr) {
+      views_.put(view, FsHash::DIGEST_SIZE);
+      has_views_ = true;
+    }
   }
 
   // The residual r_i of one value from its parts: own_xor_v is this party's share XOR
@@ -300,25 +350,30 @@ public:
     const block m = reduce(lo_, hi_);
     lo_ = hi_ = zero_block;
     pending_ = sealed_ = false;
+    char agree[FsHash::DIGEST_SIZE];   // the absorbed views, which every party must share
+    const bool has_views = has_views_;
+    if (has_views) views_.digest(agree);   // and resets
+    has_views_ = false;
+    absorbed_ = 0;
     if constexpr (nP == 2) {
-      // XOR_i m_i = 0 <=> m_1 == m_2: the symmetric F_eq on H(m_i).
+      // XOR_i m_i = 0 <=> m_1 == m_2: the symmetric F_eq on H(m_i), with the views.
       char dme[FsHash::DIGEST_SIZE];
-      FsHash::hash_once(dme, &m, sizeof(block));
+      FsHash hm;
+      hm.put(&m, sizeof(block));
+      if (has_views) hm.put(agree, FsHash::DIGEST_SIZE);
+      hm.digest(dme);
       const int peer = (party_ == 1) ? 2 : 1;
       NetIO *sch = (party_ < peer) ? io_->ios[peer] : io_->ios2[peer];
       NetIO *rch = (peer < party_) ? io_->ios[peer] : io_->ios2[peer];
-      FeqSymmetric2PC eq = feq_prepare_symmetric_2pc(
-          prg_, session_id_, "emp-ag:open-check", party_, dme);
+      FeqSymmetric2PC eq = feq_prepare_symmetric_2pc(prg_, session_id_, purpose_, party_, dme);
       sch->send_data(eq.commitment, FsHash::DIGEST_SIZE);
       sch->flush();
       rch->recv_data(eq.peer_commitment, FsHash::DIGEST_SIZE);
-      feq_finish_symmetric_2pc(sch, rch, session_id_, "emp-ag:open-check", party_, eq,
-                               "open check: opened values do not match their MACs");
+      feq_finish_symmetric_2pc(sch, rch, session_id_, purpose_, party_, eq, fail_msg_);
     } else {
-      check_shared_zero_p2p<nP>(io_, pool_, prg_, party_, m, session_id_,
-                                "emp-ag:open-check",
-                                "open check: opened values do not match their MACs",
-                                "open check: commit-open mismatch");
+      check_shared_zero_p2p<nP>(io_, pool_, prg_, party_, m, session_id_, purpose_,
+                                fail_msg_, commit_fail_msg_,
+                                has_views ? agree : nullptr, agree_fail_msg_);
     }
   }
 
@@ -330,11 +385,15 @@ private:
   block session_id_;
   PRG *prg_;
   NetIOMPGroup<nP> *grp_;
+  const char *purpose_, *fail_msg_, *commit_fail_msg_, *agree_fail_msg_;
   AES_KEY key_;            // the coin K, set by seal()
   uint64_t runs_ = 0;      // runs started; a run's index enters its coefficients
   bool pending_ = false;   // something recorded since the last check_result()
   bool sealed_ = false;    // the coin for the pending runs is drawn
   block lo_ = zero_block, hi_ = zero_block;   // folded residuals, unreduced
+  uint64_t absorbed_ = 0;  // shares absorbed since the last check_result()
+  FsHash views_;           // their views' digests, in absorb order
+  bool has_views_ = false;
   std::mutex mu_;
 };
 

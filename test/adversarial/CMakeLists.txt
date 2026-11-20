@@ -51,6 +51,20 @@ add_np_variant(agmpc_cheat_d_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_N
 add_np_variant(agmpc_cheat_xy_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_TEST_FLIP_XY EMP_AG_OPEN_CHECK_SYMMETRIC PASS_RE "open check")
 add_np_variant(agmpc_cheat_d_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_D EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "open check")
 add_np_variant(agmpc_cheat_xy_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_XY EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "open check")
+# aShare consistency (check2, nP>=3): its residuals and views are tested by the next zero
+# test -- the symmetric open check's, or one of their own after the pairwise check and
+# before a reveal. FLIP_BW: party 2 sends party 3 a different consistency value, caught by
+# the agreement on the views. SPLIT_CHOICE: party 2's choice bits differ between peers,
+# every COT valid, caught by the residuals. TWO_WORLD + SPLIT_CHOICE: party 2 also sends
+# each peer the value its bits toward that peer give, so every residual cancels and only
+# the agreement on the views catches it. agmpc_share_consistency.cpp has no AND, so only
+# the settle before the reveal can catch any of these.
+add_np_variant(agmpc_cheat_bw_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_BW PASS_RE "open check")
+add_np_variant(agmpc_cheat_bw_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_BW EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "cheat aShare")
+add_np_variant(agmpc_share_split_choice_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_SPLIT_CHOICE PASS_RE "cheat aShare")
+add_np_variant(agmpc_share_flip_bw_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_FLIP_BW PASS_RE "cheat aShare")
+add_np_variant(agmpc_share_two_world_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_SPLIT_CHOICE EMP_AG_TEST_TWO_WORLD PASS_RE "cheat aShare")
+add_np_variant(agmpc_share_two_world_np4 agmpc_share_consistency.cpp 4 DEFS CONSISTENCY_NP=4 EMP_AG_TEST_SPLIT_CHOICE EMP_AG_TEST_TWO_WORLD PASS_RE "cheat aShare")
 
 # FLIP_AGG_MID (nP>=4): a MIDDLE aggregation-ring node (not head/tail) corrupts a row -> the tail
 # forwards it -> the c_gamma MACCheck aborts. Complements the tail-only FLIP_AGG and is the
