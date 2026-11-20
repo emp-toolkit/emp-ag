@@ -141,6 +141,7 @@ class AGMPCEngine {
     // No correlation check, base OT, or triple traffic is allowed to leak into
     // the later online phase.  This is a no-op if the backend is already clean.
     mpc->fpre->abit.maybe_flush_cot_check();
+    mpc->fpre->abit.settle_check2();
     total_ands += (uint64_t)st.num_ands;
     return material;
   }

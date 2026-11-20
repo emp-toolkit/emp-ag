@@ -1271,13 +1271,20 @@ public:
     // x and y are shares of λ_α ⊕ a and λ_β ⊕ b, authenticated by the XOR of those
     // MACs (keys). Every open of this call is in now: the open check's runs start and
     // its coin is drawn (the symmetric check's; the pairwise one has none). The
-    // symmetric check then folds the d-bits; the σ fold below folds x and y.
+    // symmetric check then folds the d-bits; the σ fold below folds x and y. Its zero
+    // test also covers the aShare consistency residuals of every share minted since
+    // the last one (this call's layers, the draw walk, the inputs); with the pairwise
+    // check they are settled on their own below.
     typename OpenCheck::Run run_d{};
     if constexpr (!OpenCheck::kPerPeerOperands)
       run_d = open_check_.begin((int64_t)(B - 1) * L);
     const typename OpenCheck::Run run_x = open_check_.begin(L);
     const typename OpenCheck::Run run_y = open_check_.begin(L);
     open_check_.seal();
+    if constexpr (OpenCheck::kAbsorbsZeroShares) {
+      const auto pending = abit.take_pending_check2();
+      open_check_.absorb(pending.residuals, pending.view);
+    }
     if constexpr (!OpenCheck::kPerPeerOperands) fold_d_residuals_(run_d, L, B);
 
     out_sigma.resize(L);
@@ -1333,6 +1340,7 @@ public:
     });
     // Settle every open of this call -- the d-vector and x, y -- before σ is returned.
     open_check_.check_result();
+    if constexpr (!OpenCheck::kAbsorbsZeroShares) abit.settle_check2();
 #ifdef AG_PROFILE
     g_ag_tp_open_ns += agmpc_now_ns() - _tp_o0;
     if (party == 1) {

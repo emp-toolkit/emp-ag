@@ -212,43 +212,58 @@ void check_shared_zero(NetIOMP<nP> *io, ThreadPool *pool, PRG *prg, int party,
 // parties abort while others continue, but only when every honest m_i is already
 // right: an honest party sends one opening to everyone, so a wrong honest share shows
 // up in every honest sum. Aborts as check_shared_zero does.
+//
+// `agree` (optional, FsHash::DIGEST_SIZE bytes) is a digest of values every party must
+// have seen identically, such as values each party sent its peers with no echo. It
+// rides with the commitments, and a party whose peer reports a different digest aborts
+// with agree_fail_msg before anything is opened. Two honest parties compare over their
+// own channel, so a cheater that sent them different values is caught, at the cost of
+// no round of its own.
 template <int nP>
 void check_shared_zero_p2p(NetIOMP<nP> *io, ThreadPool *pool, PRG *prg, int party,
                            const block &m_i, block session_id, const char *purpose,
-                           const char *fail_msg, const char *commit_fail_msg) {
+                           const char *fail_msg, const char *commit_fail_msg,
+                           const char *agree = nullptr,
+                           const char *agree_fail_msg = nullptr) {
   struct OpenT { block m, r; };
   struct DigestT { char d[FsHash::DIGEST_SIZE]; };
+  struct Round1T { DigestT com, agree; };   // the agreement digest only when there is one
   OpenT mine;
   mine.m = m_i;
   prg->random_block(&mine.r, 1);
-  DigestT com_mine;
-  role_bound_commitment(com_mine.d, session_id, purpose, party,
+  Round1T r1_mine;
+  role_bound_commitment(r1_mine.com.d, session_id, purpose, party,
                         &mine, sizeof(OpenT));              // r keeps it hiding
-  DigestT com_view[nP + 1];
+  if (agree != nullptr) memcpy(r1_mine.agree.d, agree, FsHash::DIGEST_SIZE);
+  const size_t r1_bytes = agree != nullptr ? sizeof(Round1T) : sizeof(DigestT);
+  Round1T r1_view[nP + 1];
   OpenT open_view[nP + 1];
-  // One pairwise round: my value to every peer, every peer's value into view[p].
-  auto exchange = [&](const void *my_v, void *view, size_t bytes) {
+  // One pairwise round: `bytes` of my value to every peer, every peer's into view[p].
+  auto exchange = [&](const void *my_v, void *view, size_t bytes, size_t stride) {
     vector<future<void>> res;
     for (int p = 1; p <= nP; ++p) if (p != party) {
       res.push_back(pool->enqueue([io, my_v, bytes, p]() {
         io->send_data(p, my_v, bytes);
         io->flush(p);
       }));
-      res.push_back(pool->enqueue([io, view, bytes, p]() {
-        io->recv_data(p, (char *)view + (size_t)p * bytes, bytes);
+      res.push_back(pool->enqueue([io, view, bytes, stride, p]() {
+        io->recv_data(p, (char *)view + (size_t)p * stride, bytes);
       }));
     }
     joinNclean(res);
   };
-  exchange(&com_mine, com_view, sizeof(DigestT));        // round 1: commitments
-  exchange(&mine, open_view, sizeof(OpenT));             // round 2: openings
+  exchange(&r1_mine, r1_view, r1_bytes, sizeof(Round1T));     // round 1: commitments
+  if (agree != nullptr)
+    for (int p = 1; p <= nP; ++p) if (p != party)
+      expecting(memcmp(r1_view[p].agree.d, agree, FsHash::DIGEST_SIZE) == 0, agree_fail_msg);
+  exchange(&mine, open_view, sizeof(OpenT), sizeof(OpenT));   // round 2: openings
 
   block sum = m_i;
   for (int p = 1; p <= nP; ++p) if (p != party) {
     DigestT chk;
     role_bound_commitment(chk.d, session_id, purpose, p,
                           &open_view[p], sizeof(OpenT));
-    expecting(memcmp(chk.d, com_view[p].d, FsHash::DIGEST_SIZE) == 0,
+    expecting(memcmp(chk.d, r1_view[p].com.d, FsHash::DIGEST_SIZE) == 0,
               commit_fail_msg);
     sum = sum ^ open_view[p].m;
   }

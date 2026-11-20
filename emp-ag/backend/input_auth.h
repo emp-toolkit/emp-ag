@@ -45,6 +45,9 @@ std::vector<SecureWires<nP>> AGMPCProtocol<nP>::process_inputs(
   // Authenticated λ-shares (Π_aShare), drawn in one batch. The pool
   // stores AoS-by-wire, so draw is a single memcpy into sw.wire_bundle.
   // Each share-bit λ_w^i is implicit in bit0(sw.wire_bundle[w].mac(0)).
+  // The draw's share-consistency residual stays pending: the open below
+  // publishes only Λ_w = λ_w ⊕ x_w, which the owner's own share masks whatever
+  // bits the other parties hold, and the next open check or decode settles it.
   fpre->abit.draw(n_total, sw.wire_bundle);
   fpre->abit.maybe_flush_cot_check();
 
@@ -238,9 +241,10 @@ void AGMPCProtocol<nP>::bind_prepared_inputs_(
   }
 
   // This is the first reveal of any correlation minted for the job.  prepare()
-  // normally leaves the check clean already; the guard keeps this boundary safe
-  // however the material was produced and is wire-free on the clean path.
+  // normally leaves the checks clean already; the guards keep this boundary safe
+  // however the material was produced and are wire-free on the clean path.
   fpre->abit.maybe_flush_cot_check();
+  fpre->abit.settle_check2();
   std::vector<unsigned char> opened =
       open_to_targets(opened_base.data(), open_targets);
   for (int w = 0; w < n; ++w) {
@@ -343,7 +347,14 @@ std::vector<unsigned char> AGMPCProtocol<nP>::open_to_targets(
     BlockVec macs(m);
     int slot = peer_slot(party, t);
     for (int j = 0; j < m; ++j) {
+#ifdef EMP_AG_TEST_TWO_WORLD
+      // TEST-ONLY (never in production): party 2 sends each target the bit it holds
+      // toward that target (with EMP_AG_TEST_SPLIT_CHOICE those differ), so every
+      // target's MAC check passes.
+      tx[t][j] = (unsigned char)getLSB(base[targets[t][j]].mac(party == 2 ? slot : 0));
+#else
       tx[t][j] = (unsigned char)getLSB(base[targets[t][j]].mac(0));
+#endif
       macs[j] = base[targets[t][j]].mac(slot);
     }
     FsHash::hash_once(txd[t].data(), macs.data(), (size_t)m * sizeof(block));
@@ -416,6 +427,7 @@ std::vector<bool> AGMPCProtocol<nP>::decode(const SecureWires<nP> &wires,
   // party reconstructs this open, or PUBLIC = all).
   AG_PHASE_BEGIN();
   fpre->abit.maybe_flush_cot_check();
+  fpre->abit.settle_check2();
   // Reveal via a MAC-checked open of the wire masks. Every reconstructing party
   // verifies each peer's lambda-share against its OWN (c_gamma-authenticated) keys and forms
   // y_w = Λ_w ⊕ ⊕_p λ_w^p locally -- not trusting P1 to reconstruct and broadcast raw bits. Also
