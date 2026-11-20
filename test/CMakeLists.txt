@@ -55,6 +55,7 @@ add_test_case_with_run(agmpc_compose)
 # bit1(+_p Delta_p)=1 is checked by a static_assert next to the pinning in
 # backend/preproc/auth_share_pool.h.
 add_test_case(bucketing_test)              # bucket_size matches the n-party leakage bound
+add_test_case(cut_and_choose_bound_test)   # cut-and-choose parameters vs exact small-batch bounds
 add_test_case(laand_window_test)           # exact bit windows, independent codec oracle
 add_test_case(feq_test)                    # nonce-only F_eq wire count and adversarial openings
 set_tests_properties(feq_test PROPERTIES TIMEOUT 15)
@@ -83,6 +84,22 @@ add_np_variant(agmpc_golden_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4)
 add_np_variant(agmpc_golden_symmetric_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2 EMP_AG_OPEN_CHECK_SYMMETRIC)
 add_np_variant(agmpc_golden_pairwise_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_OPEN_CHECK_PAIRWISE)
 add_np_variant(agmpc_golden_pairwise_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 EMP_AG_OPEN_CHECK_PAIRWISE)
+
+# Cut-and-choose triples (backend/preproc/cut_and_choose_triples.h). The generator alone,
+# white-box (check_MAC sends Delta: EMP_AG_DEBUG_CHECKS), across batches and the bank, under
+# each checker; then the golden matrix with every session's triples from it, which covers
+# the Beaver step and the per-call half-gate seed.
+add_np_variant(agmpc_cut_and_choose_np2 agmpc_cut_and_choose.cpp 2 DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS)
+add_np_variant(agmpc_cut_and_choose_np3 agmpc_cut_and_choose.cpp 3 DEFS CNC_NP=3 EMP_AG_DEBUG_CHECKS)
+add_np_variant(agmpc_cut_and_choose_np4 agmpc_cut_and_choose.cpp 4 DEFS CNC_NP=4 EMP_AG_DEBUG_CHECKS)
+add_np_variant(agmpc_cut_and_choose_symmetric_np2 agmpc_cut_and_choose.cpp 2
+               DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS EMP_AG_OPEN_CHECK_SYMMETRIC)
+add_np_variant(agmpc_cut_and_choose_pairwise_np3 agmpc_cut_and_choose.cpp 3
+               DEFS CNC_NP=3 EMP_AG_DEBUG_CHECKS EMP_AG_OPEN_CHECK_PAIRWISE)
+add_np_variant(agmpc_golden_cnc_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2 EMP_AG_CUT_AND_CHOOSE_BATCH=16384)
+add_np_variant(agmpc_golden_cnc_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_CUT_AND_CHOOSE_BATCH=16384)
+add_np_variant(agmpc_golden_cnc_pairwise_np3 agmpc_golden_snapshot.cpp 3
+               DEFS GOLDEN_NP=3 EMP_AG_CUT_AND_CHOOSE_BATCH=16384 EMP_AG_OPEN_CHECK_PAIRWISE)
 
 # Pure-linear (zero AND gates) revealed to a GARBLER: covers the num_ands==0
 # garbler-MASK propagation (a garbler sets its fabric MASK only in the output-check walk,

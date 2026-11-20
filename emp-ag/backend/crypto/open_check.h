@@ -41,7 +41,8 @@
 //   commit-then-open zero test (two). absorb() adds shares of zero that other checks
 //   computed (the aShare consistency check's residuals) to the same zero test, with a
 //   digest of the values those checks opened without an echo; the parties must agree
-//   on it, and its comparison rides with the commitments.
+//   on it, and its comparison rides with the commitments. agree() adds such a digest
+//   alone.
 //
 // Both checkers verify, per receiver, that the bit a party sent it matches that party's
 // MAC toward it. That the bits a party sent different receivers agree comes from the
@@ -73,9 +74,11 @@ public:
   // No zero test to share: other shares of zero are settled separately.
   static constexpr bool kAbsorbsZeroShares = false;
 
+  // fail_msg is the abort message of a tag mismatch.
   PairwiseOpenCheck(NetIOMP<nP> *io, ThreadPool *pool, int party, block Delta,
-                    block session_id, PRG * /*prg*/, NetIOMPGroup<nP> * /*grp*/)
-      : io_(io), pool_(pool), party_(party), Delta_(Delta) {
+                    block session_id, PRG * /*prg*/, NetIOMPGroup<nP> * /*grp*/,
+                    const char *fail_msg = "open check: MAC tag mismatch")
+      : io_(io), pool_(pool), party_(party), Delta_(Delta), fail_msg_(fail_msg) {
     AES_set_encrypt_key(RO("emp-ag:open-check", session_id).squeeze_block(), &aes_);
     for (int p = 0; p <= nP; ++p) sent_[p] = expected_[p] = zero_block;
   }
@@ -182,7 +185,7 @@ public:
       good = good && cmpBlock(&got[peer], &expected_[peer], 1);
     for (int p = 0; p <= nP; ++p) sent_[p] = expected_[p] = zero_block;
     pending_ = false;
-    expecting(good, "open check: MAC tag mismatch");
+    expecting(good, fail_msg_);
   }
 
 private:
@@ -190,6 +193,7 @@ private:
   ThreadPool *pool_;
   int party_;
   block Delta_;
+  const char *fail_msg_;
   AES_KEY aes_;
   uint64_t pos_ = 0;       // position of the next value; never reused
   bool pending_ = false;   // something recorded since the last check_result()
@@ -269,6 +273,17 @@ public:
       views_.put(view, FsHash::DIGEST_SIZE);
       has_views_ = true;
     }
+  }
+
+  // Add a view, as absorb() does, with no share of zero of its own.
+  void agree(const char *view) {
+    if (!sealed_) {
+      pending_ = true;
+      seal();
+    }
+    std::lock_guard<std::mutex> lock(mu_);
+    views_.put(view, FsHash::DIGEST_SIZE);
+    has_views_ = true;
   }
 
   // The residual r_i of one value from its parts: own_xor_v is this party's share XOR

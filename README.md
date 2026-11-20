@@ -112,6 +112,14 @@ a tweak per row; this is unconditional for every `nP`.
 `session_id` can select another base OT (e.g. the post-quantum `BMM`); every
 party must select the same base OT.
 
+The AND triples behind each chunk come, by default, from half-gate leaky ANDs
+bucketed per chunk. `TriplePool::use_cut_and_choose(batch)`, or compiling with
+`-DEMP_AG_CUT_AND_CHOOSE_BATCH=<batch>`, serves them instead from a bank of
+cut-and-choose triples (`backend/preproc/cut_and_choose_triples.h`), generated
+`batch` at a time and checked before use. This sends fewer bytes per triple when
+COTs are cheap (`Ferret`) and batches are large, at the cost of more computation
+and of memory proportional to the batch. Every party must make the same choice.
+
 ## Consuming from another CMake project
 
 ```cmake

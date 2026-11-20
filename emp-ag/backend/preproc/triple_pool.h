@@ -1,6 +1,7 @@
 #ifndef EMP_AG_BACKEND_PREPROC_TRIPLE_POOL_H__
 #define EMP_AG_BACKEND_PREPROC_TRIPLE_POOL_H__
 #include "emp-ag/backend/preproc/auth_share_pool.h"
+#include "emp-ag/backend/preproc/cut_and_choose_triples.h"
 #include "emp-ag/backend/crypto/fs_hash.h"  // FsHash (FS/check digests)
 #include "emp-ag/backend/crypto/feq.h"     // fs_coin_pair, symmetric F_eq
 #include "emp-ag/backend/crypto/fzero.h"   // fzero_xor
@@ -243,6 +244,12 @@ struct BeaverOperands {
 // generation or bucketing. Both opens of a call -- the bucket d-vector and the
 // Beaver x/y -- go through OpenCheck (crypto/open_check.h), settled once before
 // compute_and_shares returns.
+//
+// use_cut_and_choose() replaces the leaky ANDs and their bucketing with a bank of
+// cut-and-choose triples (preproc/cut_and_choose_triples.h), generated in large batches
+// and checked before they are banked; the Beaver step is the same. The half-gate hash
+// seed then comes from a coin of its own per call. EMP_AG_CUT_AND_CHOOSE_BATCH selects it
+// at construction, with that batch size.
 template <int nP, class OpenCheck = DefaultOpenCheck<nP>>
 class TriplePool {
 public:
@@ -292,6 +299,7 @@ public:
   // mesh. L_lanes = the shared lane count.
   NetIOMPGroup<nP> *grp = nullptr;
   int L_lanes = 1;
+  std::unique_ptr<CutAndChooseTriples<nP, OpenCheck>> cnc_;   // see use_cut_and_choose
   TriplePool(NetIOMP<nP> *io, ThreadPool *pool, int party, int ssp = 40,
              NetIOMPGroup<nP> *grp_in = nullptr,
              block session_id_in = zero_block,
@@ -304,7 +312,22 @@ public:
              planned_sender_cots, planned_receiver_cots),
         Delta(abit.Delta),
         open_check_(io, pool, party, abit.Delta, session_id_in, &prg, grp_in),
-        grp(grp_in), L_lanes(grp_in ? std::max(1, grp_in->size()) : 1) {}
+        grp(grp_in), L_lanes(grp_in ? std::max(1, grp_in->size()) : 1) {
+#ifdef EMP_AG_CUT_AND_CHOOSE_BATCH
+    use_cut_and_choose(EMP_AG_CUT_AND_CHOOSE_BATCH);
+#endif
+  }
+
+  // Serve compute_and_shares from cut-and-choose triples, generated `batch` at a time.
+  // Every party switches at the same point, before the call it should first serve.
+  // Once per session: a second generator would restart the session's error budget.
+  void use_cut_and_choose(int64_t batch) {
+    expecting(!cnc_, "triple_pool: cut-and-choose is already enabled");
+    cnc_ = std::make_unique<CutAndChooseTriples<nP, OpenCheck>>(io, pool, party, abit,
+                                                                session_id, ssp, batch, grp);
+  }
+  // The cut-and-choose generator, or null when the leaky ANDs are bucketed per call.
+  const CutAndChooseTriples<nP, OpenCheck> *cut_and_choose() const { return cnc_.get(); }
 
   // The mesh carrying lane t (lane 0 == io == grp->mesh(0)); see AuthSharePool.
   NetIOMP<nP> *lane_mesh(int t) { return (t == 0) ? io : &grp->mesh(t); }
@@ -1219,7 +1242,10 @@ public:
   // The output wire masks are drawn separately by draw_and_seed (one aShare/AND).
   void compute_and_shares(const BeaverOperands<nP> &ops, int length,
                           AShareBundleVec<nP> &out_sigma) {
-    const int B = validate_batch_length(length);
+    // B: the bucket size of the per-call leaky ANDs, or 1 (no d-bits to open) when the
+    // triples come from the cut-and-choose bank.
+    const int B_leaky = validate_batch_length(length);
+    const int B = cnc_ ? 1 : B_leaky;
     out_sigma.clear();
     if (length == 0) return;
     const int L = length;
@@ -1230,7 +1256,19 @@ public:
     g_ag_tp_acheck_ns = g_ag_tp_bkt_ns = g_ag_tp_open_ns = 0;
 #endif
 
-    generate_independent_triples(L, B);
+    if (cnc_) {
+      cnc_->take(L, bkt_accMAC_, bkt_accKEY_);
+      // The half-gate hash seed, fresh for this call and agreed by every party, as
+      // draw_coins gives it on the other path.
+      block c;
+      if constexpr (nP == 2)
+        c = fs_coin_pair_group<nP>(io, grp, any_peer, "AGMPC halfgate coin", session_id);
+      else
+        c = sampleRandom<nP>(io, &prg, pool, party, session_id);
+      halfgate_seed_ = fs_coin("AGMPC halfgate seed", c, zero_block);
+    } else {
+      generate_independent_triples(L, B);
+    }
     BlockVec(&accMAC)[nP + 1] = bkt_accMAC_;
     BlockVec(&accKEY)[nP + 1] = bkt_accKEY_;
 

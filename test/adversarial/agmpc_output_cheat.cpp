@@ -27,6 +27,11 @@
 //     party 2 inside the 128-COT bootstrap prefix (backend/netmp.h's TamperNetIO). Party 2's
 //     check of the prefix must abort during setup, before the reverse direction's base OTs
 //     are derived from it ("SoftSpoken subspace VOLE check failed").
+//   EMP_AG_TEST_CNC_* (with EMP_AG_CUT_AND_CHOOSE_BATCH) -- the cut-and-choose triple
+//     generator: a wrong product correction (FLIP_PRODUCT), z ^ r opening (FLIP_ZR) or
+//     sacrifice difference (FLIP_OPEN), sent to everyone; a z ^ r opening (SPLIT_ZR) or, as
+//     a king, an opened value (KING_SPLIT) sent to party 3 alone. Each must abort while the
+//     triples are generated (backend/preproc/cut_and_choose_triples.h).
 // A wrong public value -> the c_gamma MACCheck aborts (FLIP_LAAND aborts earlier, in preproc).
 // (The input-Lambda equivocation hook EMP_AG_TEST_FLIP_INPUT_LAMBDA is exercised by the sibling
 // agmpc_input_equiv.cpp; the aShare consistency check on a circuit with no AND, by
