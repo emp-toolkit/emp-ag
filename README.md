@@ -277,7 +277,12 @@ uses the authenticated-garbling framework of **WRK17b** with the
 `F_eq` consistency check. For every AND, preprocessing generates `B`
 independent random triples, combines them by cyclic-shift bucketing, and then
 uses ordinary Beaver correction to compute the product of the circuit's
-input masks. The circuit output receives a separate fresh authenticated mask.
+input masks. The values opened on the way, the bucket differences and the
+Beaver `x`, `y`, are checked against their MACs before the product is used:
+by default with a pairwise AES tag at `nP = 2` (the batched opening of
+[TinyTable](https://eprint.iacr.org/2016/695)) and a symmetric
+random-linear-combination check at `nP >= 3`. The circuit output receives a
+separate fresh authenticated mask.
 This costs `3B+1` COTs per AND per direction per peer, excluding input masks
 and session overhead. Circuit masks are never used as leaky-AND operands:
 successful selective-failure guesses must concern the independent triples,
@@ -304,6 +309,7 @@ root (`<emp-ag/...>`):
   `state.h`, `runtime.h`, `netmp.h`.
 - **`backend/crypto/`** — pure primitives: `halfgate.h` (the half-gate row
   kernels + tweak), `spdz.h` (the SPDZ `c_gamma` collapse + RLC helpers),
+  `open_check.h` (checking opened authenticated bits: pairwise and symmetric),
   `feq.h` / `fzero.h`, `protocols.h`, `bucketing.h`.
 - **`backend/passes/`** — the circuit walks: `draw_beaver.h`, `garble.h`
   (garble + ship + the `nP >= 3` aggregation ring), `evaluate.h` (streaming

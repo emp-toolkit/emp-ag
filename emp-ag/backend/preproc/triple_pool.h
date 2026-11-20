@@ -5,6 +5,7 @@
 #include "emp-ag/backend/crypto/feq.h"     // fs_coin_pair, symmetric F_eq
 #include "emp-ag/backend/crypto/fzero.h"   // fzero_xor
 #include "emp-ag/backend/crypto/laand_window.h"
+#include "emp-ag/backend/crypto/open_check.h"  // DefaultOpenCheck (d and x/y opens)
 #include "emp-ag/backend/crypto/protocols.h"   // sampleRandom
 #include "emp-ag/backend/netmp.h"
 #include "emp-ag/backend/profiling.h"
@@ -197,6 +198,17 @@ inline void accumulate_leaky_and_window_bytes(FsHash &feq,
   feq.put(dg.data(), dg.size());
 }
 
+// The AND gates' input-mask shares as the draw walk captured them, a for the first
+// input's mask and b for the second's: this party's share bits always, and what the
+// open check needs (OpenCheck::kPerPeerOperands) -- either, one array per peer, this
+// party's MAC (under peer's key) and key (on peer's share), or the SPDZ collapse mu_i.
+template <int nP>
+struct BeaverOperands {
+  const unsigned char *a_bit = nullptr, *b_bit = nullptr;
+  const block *a_mac[nP + 1] = {}, *a_key[nP + 1] = {};
+  const block *b_mac[nP + 1] = {}, *b_key[nP + 1] = {};
+  const block *a_mu = nullptr, *b_mu = nullptr;
+};
 
 // Π_LaAND followed by Π_Prep bucketing: AND-triple generation via half-gate
 // garbled-AND + phi-based triple check, then circular-shift bucketing to remove
@@ -220,16 +232,21 @@ inline void accumulate_leaky_and_window_bytes(FsHash &feq,
 // (3) The B-1 sequential OpenToAll calls of the bucket combine (one per
 //     non-first leaky triple in each bucket) are batched into a single
 //     all-to-all exchange of the full d-vector, dropping the bucket
-//     combine to one round.
+//     combine to one round. The opened d-vector is checked against its MACs by
+//     the open check, together with the Beaver x/y, before compute_and_shares
+//     returns.
 //
 // This is the per-call triple / AND-share generator (no pool): compute_and_shares
 // first generates B independent leaky triples per AND and buckets them into one
 // authenticated random triple. Only then does it open the Beaver differences to
 // the circuit masks and produce σ = λ_α∧λ_β. No circuit mask enters leaky-AND
-// generation or bucketing.
-template <int nP>
+// generation or bucketing. Both opens of a call -- the bucket d-vector and the
+// Beaver x/y -- go through OpenCheck (crypto/open_check.h), settled once before
+// compute_and_shares returns.
+template <int nP, class OpenCheck = DefaultOpenCheck<nP>>
 class TriplePool {
 public:
+  using open_check_t = OpenCheck;
   ThreadPool *pool;
   int party;
   int ssp;              // statistical security parameter (default 40)
@@ -238,6 +255,7 @@ public:
   AuthSharePool<nP> abit;
   block Delta;
   PRG prg;
+  OpenCheck open_check_;   // checks the d and x/y opens against their MACs
   // Half-gate hash seed (every sender's MITCCRH stream starts from it), piggybacked off
   // the per-chunk post-commitment bucket coin in BucketPolicy::draw_coins (one extra
   // domain-separated squeeze, no dedicated coin round). AGMPCProtocol::draw_and_seed
@@ -258,6 +276,7 @@ public:
   BlockVec bkt_accMAC_[nP + 1], bkt_accKEY_[nP + 1];
   std::vector<std::vector<BlockVec>> bkt_sac_macs_, bkt_sac_keys_;
   std::vector<unsigned char> bkt_bd_[nP + 1];
+  std::vector<int> bkt_shift_;   // each layer's cyclic shift, kept for the open check
   // produce_leaky_ands_halfgate scratch (per-layer, B x per chunk; grow-only). All
   // assigned/explicitly-zeroed before read except z_u (XOR-accumulated by fzero_xor
   // -> caller re-zeros via std::fill each call). + the per-chunk RLC challenge phi_cat
@@ -284,6 +303,7 @@ public:
         abit(io, pool, party, nullptr, grp_in, session_id_in, base_ot_kind,
              planned_sender_cots, planned_receiver_cots),
         Delta(abit.Delta),
+        open_check_(io, pool, party, abit.Delta, session_id_in, &prg, grp_in),
         grp(grp_in), L_lanes(grp_in ? std::max(1, grp_in->size()) : 1) {}
 
   // The mesh carrying lane t (lane 0 == io == grp->mesh(0)); see AuthSharePool.
@@ -858,16 +878,21 @@ public:
     int L, B, any_peer;
     FsHash *feq;
     std::vector<std::vector<BlockVec>> &sac_macs, &sac_keys;  // tp's reused [B][nP+1]
-    std::vector<unsigned char> (&d)[nP + 1];                  // tp's reused (B-1)*L
+    // tp's reused (B-1)*L d-vectors: d[p] is party p's shares as sent, d[0] the
+    // combined public d (the parties' shares stay intact for the open check).
+    std::vector<unsigned char> (&d)[nP + 1];
     FeqSymmetric2PC feq2;                                     // nP==2 only
+    std::vector<int> &shift_;   // tp's: layer k's cyclic shift, for checking its d-bits
+    typename OpenCheck::Run d_run_{};   // pairwise check: its run over all (B-1)*L d-bits
 
     BucketPolicy(TriplePool *tp, BlockVec *accMAC, BlockVec *accKEY, int L, int B,
                  FsHash &feq, int any_peer)
         : tp(tp), accMAC(accMAC), accKEY(accKEY), L(L), B(B), any_peer(any_peer),
           feq(&feq), sac_macs(tp->bkt_sac_macs_), sac_keys(tp->bkt_sac_keys_),
-          d(tp->bkt_bd_) {
+          d(tp->bkt_bd_), shift_(tp->bkt_shift_) {
+      shift_.assign(B, 0);
       if ((int)sac_macs.size() < B) { sac_macs.resize(B); sac_keys.resize(B); }
-      for (int p = 1; p <= nP; ++p)
+      for (int p = 0; p <= nP; ++p)
         if (d[p].size() < (size_t)(B - 1) * L) d[p].resize((size_t)(B - 1) * L);
     }
 
@@ -936,14 +961,30 @@ public:
       joinNclean(fres);
     }
     void fold_pre_and_dbit(int k, int sh) {
+      shift_[k] = sh;
+      if constexpr (OpenCheck::kPerPeerOperands)
+        if (k == 1) d_run_ = tp->open_check_.begin((int64_t)(B - 1) * L);
       unsigned char *dk = d[tp->party].data() + (size_t)(k - 1) * L;
       fold_ranges_(L, [this, k, sh, dk](int peer, int i0, int i1) {
         ag::bucket_fold_pre_ac(accMAC[peer].data(), accKEY[peer].data(),
                                sac_macs[k][peer].data(), sac_keys[k][peer].data(), L,
                                sh, i0, i1);
-        if (peer == any_peer)
+        if constexpr (OpenCheck::kPerPeerOperands) {
+          // One load of the two b-region MACs gives both the d-bit (their bit 0) and
+          // this party's open-check tag on it to peer.
+          auto lane = tp->open_check_.lane(d_run_);
+          const block *am = accMAC[peer].data() + L, *lm = sac_macs[k][peer].data() + L;
+          const int64_t base = (int64_t)(k - 1) * L;
+          for (int i = i0; i < i1; ++i) {
+            const block m = am[i] ^ lm[ag::bucket_fold_src(i, L, sh)];
+            if (peer == any_peer) dk[i] = (unsigned char)getLSB(m);
+            lane.sent(peer, base + i, m);
+          }
+          tp->open_check_.merge(lane);
+        } else if (peer == any_peer) {
           ag::bucket_fold_dbit(accMAC[any_peer].data(), sac_macs[k][any_peer].data(),
                                L, sh, dk, i0, i1);
+        }
       });
     }
     // ONE all-to-all mesh exchange of the full (B-1)*L d-vector + cross-peer fold.
@@ -957,6 +998,12 @@ public:
       }
 #ifdef AG_PROFILE
       uint64_t _b0 = agmpc_now_ns();
+#endif
+#ifdef EMP_AG_TEST_FLIP_D
+      // TEST-ONLY (never in production): a malicious party 2 flips its share of the
+      // first d-bit and sends the flipped share to everyone, keeping it itself, so every
+      // party combines the same wrong d. The open check must abort.
+      if (tp->party == 2 && BLd > 0) d[tp->party][0] ^= 1;
 #endif
       // Lane-split the d-vector transfer across the group meshes: it is a plain
       // bit-vector (no keying, no coin reads it), and the XOR-combine below runs on the
@@ -975,33 +1022,41 @@ public:
             if (ch == tp->io)
               ch->recv_data(peer, feq2.peer_commitment, FsHash::DIGEST_SIZE);
         });
-      // Combined public d = XOR over all parties. Plain range split (NOT
-      // fold_ranges_: that is peer-major and would re-apply the whole p-loop
-      // once per peer, cancelling the XOR). d[1] ranges are disjoint across
-      // tasks; every d[p] is read-only here.
-      {
-        const int step = (BLd + (int)tp->pool->size() - 1) / (int)tp->pool->size();
-        vector<future<void>> cres;
-        for (int j0 = 0; j0 < BLd; j0 += step) {
-          const int j1 = std::min(j0 + step, BLd);
-          cres.push_back(tp->pool->enqueue([this, j0, j1]() {
-            for (int p = 2; p <= nP; ++p)
-              for (int j = j0; j < j1; ++j)
-                d[1][j] = d[1][j] != d[p][j];
-          }));
+      // Combined public d = XOR over all parties, into d[0]; every d[p] stays as sent,
+      // for the open check. Layer k's d-bit at position i is a share of
+      // b_acc[i] ^ b_k[src], authenticated by the XOR of those two MACs (keys). The
+      // pairwise check took this party's tags in fold_pre_and_dbit and takes the
+      // peers' in fold_post; the symmetric check folds the d-bits after its coin, in
+      // compute_and_shares. Plain range split (NOT fold_ranges_, which is peer-major);
+      // d[0] ranges are disjoint across tasks.
+      ag::parallel_for(tp->pool, BLd, [this](int j0, int j1) {
+        for (int j = j0; j < j1; ++j) {
+          unsigned char v = 0;
+          for (int p = 1; p <= nP; ++p) v ^= d[p][j];
+          d[0][j] = v;
         }
-        joinNclean(cres);
-      }
+      });
 #ifdef AG_PROFILE
       g_ag_tp_bkt_ns += agmpc_now_ns() - _b0;
 #endif
     }
     void fold_post(int k, int sh) {
-      const unsigned char *dk = d[1].data() + (size_t)(k - 1) * L;
+      const unsigned char *dk = d[0].data() + (size_t)(k - 1) * L;
       fold_ranges_(L, [this, k, sh, dk](int peer, int i0, int i1) {
         ag::bucket_fold_post(accMAC[peer].data(), accKEY[peer].data(),
                              sac_macs[k][peer].data(), sac_keys[k][peer].data(), L, sh,
                              dk, i0, i1);
+        if constexpr (OpenCheck::kPerPeerOperands) {
+          // The tag peer owes this party on its d shares, from this party's keys on
+          // the two b-regions and the bits peer sent.
+          auto lane = tp->open_check_.lane(d_run_);
+          const block *ak = accKEY[peer].data() + L, *lk = sac_keys[k][peer].data() + L;
+          const unsigned char *pb = d[peer].data() + (size_t)(k - 1) * L;
+          const int64_t base = (int64_t)(k - 1) * L;
+          for (int i = i0; i < i1; ++i)
+            lane.expected(peer, base + i, ak[i] ^ lk[ag::bucket_fold_src(i, L, sh)], pb[i]);
+          tp->open_check_.merge(lane);
+        }
       });
     }
     // nP>=3: ONE batched RLC zero-sum over all B layers' stashed windowed alpha
@@ -1130,13 +1185,40 @@ private:
     ag::run_bucketing_core(pol, B, L);
   }
 
+  // Symmetric open check: fold each d-bit's residual from this party's MACs and keys
+  // on the two b-regions it combines, its own share and the combined d (bkt_bd_[0]).
+  // Runs after seal(); the b-regions are untouched since the d exchange.
+  void fold_d_residuals_(const typename OpenCheck::Run &run, int L, int B) {
+    BlockVec(&accMAC)[nP + 1] = bkt_accMAC_;
+    BlockVec(&accKEY)[nP + 1] = bkt_accKEY_;
+    for (int k = 1; k < B; ++k) {
+      const int sh = bkt_shift_[k];
+      const size_t off = (size_t)(k - 1) * L;
+      const BlockVec *lm = bkt_sac_macs_[k].data(), *lk = bkt_sac_keys_[k].data();
+      ag::parallel_for(pool, L, [&, sh, off, lm, lk](int i0, int i1) {
+        auto lane = open_check_.lane(run);
+        for (int i = i0; i < i1; ++i) {
+          const size_t j = off + (size_t)i;
+          const int src = ag::bucket_fold_src(i, L, sh);
+          block s = zero_block;
+          for (int peer = 1; peer <= nP; ++peer) if (peer != party)
+            s = s ^ accMAC[peer][L + i] ^ lm[peer][L + src] ^ accKEY[peer][L + i] ^
+                lk[peer][L + src];
+          lane.put((int64_t)j, open_check_.residual(bkt_bd_[party][j] ^ bkt_bd_[0][j], s));
+        }
+        open_check_.merge(lane);
+      });
+    }
+  }
+
 public:
-  // Standard Beaver use of independently generated, bucketed random triples.
-  // a_bit/b_bit are the real per-AND circuit-mask share bits captured by the
-  // draw walk. They are read only after triple generation and its checks finish.
+  // Standard Beaver use of independently generated, bucketed random triples. ops
+  // holds the real per-AND circuit-mask shares (MAC and key per peer) captured by
+  // the draw walk. They are read only after triple generation and its checks finish,
+  // to open x = λ_α ⊕ a and y = λ_β ⊕ b and to check those opens against their MACs.
   // The output wire masks are drawn separately by draw_and_seed (one aShare/AND).
-  void compute_and_shares(const unsigned char *a_bit, const unsigned char *b_bit,
-                          int length, AShareBundleVec<nP> &out_sigma) {
+  void compute_and_shares(const BeaverOperands<nP> &ops, int length,
+                          AShareBundleVec<nP> &out_sigma) {
     const int B = validate_batch_length(length);
     out_sigma.clear();
     if (length == 0) return;
@@ -1163,10 +1245,16 @@ public:
     }
     ag::parallel_for(pool, L, [&](int lo, int hi) {
       for (int i = lo; i < hi; ++i) {
-        x[party][i] = (unsigned char)(a_bit[i] ^ getLSB(accMAC[any_peer][i]));
-        y[party][i] = (unsigned char)(b_bit[i] ^ getLSB(accMAC[any_peer][L + i]));
+        x[party][i] = (unsigned char)(ops.a_bit[i] ^ getLSB(accMAC[any_peer][i]));
+        y[party][i] = (unsigned char)(ops.b_bit[i] ^ getLSB(accMAC[any_peer][L + i]));
       }
     });
+#ifdef EMP_AG_TEST_FLIP_XY
+    // TEST-ONLY (never in production): a malicious party 2 flips its share of the first
+    // x and sends it to everyone, keeping it itself, so every party forms the same
+    // wrong x and a validly authenticated σ ⊕ λ_β. The open check must abort.
+    if (party == 2) x[party][0] ^= 1;
+#endif
     // Lane-split the Beaver x/y open (after run_bucketing_core, so no coin or check
     // reads it; the combine below runs on the assembled x[]/y[]). Both x and y ride
     // the same slice on each mesh, so P1's window cannot desync.
@@ -1180,32 +1268,58 @@ public:
         ch->recv_bool(peer, (bool *)(x[peer].data() + lo), hi - lo);
         ch->recv_bool(peer, (bool *)(y[peer].data() + lo), hi - lo);
       });
-    // x[1]/y[1] combine (disjoint i ranges; each x[p]/y[p] read-only).
-    ag::parallel_for(pool, L, [&](int lo, int hi) {
-      for (int p = 2; p <= nP; ++p)
-        for (int i = lo; i < hi; ++i) {
-          x[1][i] = x[1][i] ^ x[p][i];
-          y[1][i] = y[1][i] ^ y[p][i];
-        }
-    });
+    // x and y are shares of λ_α ⊕ a and λ_β ⊕ b, authenticated by the XOR of those
+    // MACs (keys). Every open of this call is in now: the open check's runs start and
+    // its coin is drawn (the symmetric check's; the pairwise one has none). The
+    // symmetric check then folds the d-bits; the σ fold below folds x and y.
+    typename OpenCheck::Run run_d{};
+    if constexpr (!OpenCheck::kPerPeerOperands)
+      run_d = open_check_.begin((int64_t)(B - 1) * L);
+    const typename OpenCheck::Run run_x = open_check_.begin(L);
+    const typename OpenCheck::Run run_y = open_check_.begin(L);
+    open_check_.seal();
+    if constexpr (!OpenCheck::kPerPeerOperands) fold_d_residuals_(run_d, L, B);
 
     out_sigma.resize(L);
     block dxor = Delta ^ bit0_mask;
-    // Branchless Beaver fold, width-split: out_sigma[i] is disjoint per i, and
-    // every read (accMAC/accKEY/x/y) is done.
+    // Branchless Beaver fold, width-split (out_sigma[i] is disjoint per i), fused with
+    // the combine of x and y and with their open check: every MAC and key of the
+    // triple's a and b is loaded once for both. x[p]/y[p] stay as each party sent them.
     ag::parallel_for(pool, L, [&](int lo, int hi) {
+      auto lane_x = open_check_.lane(run_x), lane_y = open_check_.lane(run_y);
       for (int i = lo; i < hi; ++i) {
-        bool xb = x[1][i], yb = y[1][i];
+        unsigned char xv = 0, yv = 0;
+        for (int p = 1; p <= nP; ++p) { xv ^= x[p][i]; yv ^= y[p][i]; }
         // mask each addend by select_mask rather than branching on the two random
         // public selectors.
-        const block mx = select_mask[xb], my = select_mask[yb];
+        const block mx = select_mask[xv], my = select_mask[yv];
         AShareBundle<nP> &sb = out_sigma[i];
+        [[maybe_unused]] block sum_a = zero_block, sum_b = zero_block;
         for (int peer = 1; peer <= nP; ++peer) if (peer != party) {
-          int slot = peer_slot(party, peer);
-          sb.mac(slot) = accMAC[peer][2 * L + i] ^ (accMAC[peer][L + i] & mx) ^ (accMAC[peer][i] & my);
-          sb.key(slot) = accKEY[peer][2 * L + i] ^ (accKEY[peer][L + i] & mx) ^ (accKEY[peer][i] & my);
+          const int slot = peer_slot(party, peer);
+          const block am = accMAC[peer][i], bm = accMAC[peer][L + i];
+          const block ak = accKEY[peer][i], bk = accKEY[peer][L + i];
+          sb.mac(slot) = accMAC[peer][2 * L + i] ^ (bm & mx) ^ (am & my);
+          sb.key(slot) = accKEY[peer][2 * L + i] ^ (bk & mx) ^ (ak & my);
+          if constexpr (OpenCheck::kPerPeerOperands) {
+            lane_x.sent(peer, i, ops.a_mac[peer][i] ^ am);
+            lane_x.expected(peer, i, ops.a_key[peer][i] ^ ak, x[peer][i]);
+            lane_y.sent(peer, i, ops.b_mac[peer][i] ^ bm);
+            lane_y.expected(peer, i, ops.b_key[peer][i] ^ bk, y[peer][i]);
+          } else {
+            sum_a = sum_a ^ am ^ ak;
+            sum_b = sum_b ^ bm ^ bk;
+          }
         }
-        if (xb && yb) {
+        if constexpr (!OpenCheck::kPerPeerOperands) {
+          // mu_i(x) = mu_i(λ_α) ^ own_a * Δ_i ^ sum_a, so the residual adds the
+          // captured mu_i(λ_α) to the triple's part; y likewise.
+          lane_x.put(i, ops.a_mu[i] ^ open_check_.residual(
+                                          (unsigned char)getLSB(accMAC[any_peer][i]) ^ xv, sum_a));
+          lane_y.put(i, ops.b_mu[i] ^ open_check_.residual(
+                                          (unsigned char)getLSB(accMAC[any_peer][L + i]) ^ yv, sum_b));
+        }
+        if (xv && yv) {
           if (party != 1) {
             sb.key(peer_slot(party, 1)) = sb.key(peer_slot(party, 1)) ^ dxor;
           } else {
@@ -1214,7 +1328,11 @@ public:
           }
         }
       }
+      open_check_.merge(lane_x);
+      open_check_.merge(lane_y);
     });
+    // Settle every open of this call -- the d-vector and x, y -- before σ is returned.
+    open_check_.check_result();
 #ifdef AG_PROFILE
     g_ag_tp_open_ns += agmpc_now_ns() - _tp_o0;
     if (party == 1) {

@@ -78,6 +78,11 @@ add_test_case(agmpc_flush_plan)            # session::plan_flush DCE/compaction/
 add_np_variant(agmpc_golden_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2)
 add_np_variant(agmpc_golden_np3 agmpc_golden_snapshot.cpp 3  DEFS GOLDEN_NP=3)
 add_np_variant(agmpc_golden_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4)
+# The same matrix under the open checker that is not the default for the party count
+# (crypto/open_check.h: pairwise at nP=2, symmetric above).
+add_np_variant(agmpc_golden_symmetric_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2 EMP_AG_OPEN_CHECK_SYMMETRIC)
+add_np_variant(agmpc_golden_pairwise_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_OPEN_CHECK_PAIRWISE)
+add_np_variant(agmpc_golden_pairwise_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 EMP_AG_OPEN_CHECK_PAIRWISE)
 
 # Pure-linear (zero AND gates) revealed to a GARBLER: covers the num_ands==0
 # garbler-MASK propagation (a garbler sets its fabric MASK only in the output-check walk,

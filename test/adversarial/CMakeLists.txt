@@ -38,6 +38,20 @@ add_np_variant(agmpc_cheat_laand_high_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP
 add_np_variant(agmpc_cheat_laand_high_39_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 CHEAT_SSP=39 EMP_AG_TEST_FLIP_LAAND_HIGH PASS_RE "LaAND")
 add_np_variant(agmpc_cheat_laand_high_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_LAAND_HIGH PASS_RE "LaAND")
 
+# FLIP_D / FLIP_XY: a malicious party flips its share of one opened bucket d-bit / Beaver x
+# and sends it to everyone, keeping it itself. Every party then derives the same validly
+# authenticated but wrong sigma, which the c_gamma MACCheck cannot see, so the open check
+# (crypto/open_check.h) must abort. Each runs under the default checker (pairwise at nP=2,
+# symmetric above) and under the other one.
+add_np_variant(agmpc_cheat_d_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_TEST_FLIP_D PASS_RE "open check")
+add_np_variant(agmpc_cheat_d_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_D PASS_RE "open check")
+add_np_variant(agmpc_cheat_xy_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_TEST_FLIP_XY PASS_RE "open check")
+add_np_variant(agmpc_cheat_xy_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_XY PASS_RE "open check")
+add_np_variant(agmpc_cheat_d_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_TEST_FLIP_D EMP_AG_OPEN_CHECK_SYMMETRIC PASS_RE "open check")
+add_np_variant(agmpc_cheat_xy_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_TEST_FLIP_XY EMP_AG_OPEN_CHECK_SYMMETRIC PASS_RE "open check")
+add_np_variant(agmpc_cheat_d_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_D EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "open check")
+add_np_variant(agmpc_cheat_xy_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_XY EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "open check")
+
 # FLIP_AGG_MID (nP>=4): a MIDDLE aggregation-ring node (not head/tail) corrupts a row -> the tail
 # forwards it -> the c_gamma MACCheck aborts. Complements the tail-only FLIP_AGG and is the
 # suite's only nP=4 adversarial case.
