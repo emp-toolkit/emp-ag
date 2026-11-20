@@ -13,8 +13,8 @@
 
 namespace emp::ag {
 
-template <int nP>
-std::vector<SecureWires<nP>> AGMPCProtocol<nP>::process_inputs(
+template <int nP, class Cfg>
+std::vector<SecureWires<nP>> AGMPCProtocol<nP, Cfg>::process_inputs(
     const std::vector<int> &owners,
     const std::vector<std::vector<bool>> &bits_per_owner) {
   AG_PHASE_BEGIN();
@@ -102,8 +102,8 @@ std::vector<SecureWires<nP>> AGMPCProtocol<nP>::process_inputs(
   return result;
 }
 
-template <int nP>
-SecureWires<nP> AGMPCProtocol<nP>::process_input(const bool *inputs, int n,
+template <int nP, class Cfg>
+SecureWires<nP> AGMPCProtocol<nP, Cfg>::process_input(const bool *inputs, int n,
                                                 int owner) {
   std::vector<int> owners{owner};
   std::vector<std::vector<bool>> bits(1);
@@ -118,8 +118,8 @@ SecureWires<nP> AGMPCProtocol<nP>::process_input(const bool *inputs, int n,
 // inputs are already fixed by an authenticated public open and are deliberately
 // omitted.  The echo still covers the complete Lambda vector whenever at least one
 // owner broadcast occurs, so mixed staged/persistent binding has one agreed view.
-template <int nP>
-void AGMPCProtocol<nP>::broadcast_input_masks_(
+template <int nP, class Cfg>
+void AGMPCProtocol<nP, Cfg>::broadcast_input_masks_(
     SecureWires<nP> &sw, const std::vector<std::vector<int>> &wires_of) {
   bool any = false;
   for (int t = 1; t <= nP; ++t) any = any || !wires_of[t].empty();
@@ -179,8 +179,8 @@ void AGMPCProtocol<nP>::broadcast_input_masks_(
 // garbling-label pair for every circuit input, but do not name an owner, open a
 // mask, or select an evaluator label.  Lambda/eval_label are zero placeholders
 // solely so the ordinary slot loader can seed the offline circuit walks.
-template <int nP>
-SecureWires<nP> AGMPCProtocol<nP>::make_prepared_inputs_(int n) {
+template <int nP, class Cfg>
+SecureWires<nP> AGMPCProtocol<nP, Cfg>::make_prepared_inputs_(int n) {
   expecting(n >= 0, "make_prepared_inputs: negative input width");
   SecureWires<nP> sw;
   sw.Lambda.assign((size_t)n, 0);
@@ -205,8 +205,8 @@ SecureWires<nP> AGMPCProtocol<nP>::make_prepared_inputs_(int n) {
 // Both cases end in the same prepared target representation.  Owner broadcasts
 // are batched and echoed once, then all selected target labels are exchanged in
 // one input-label message per garbler.
-template <int nP>
-void AGMPCProtocol<nP>::bind_prepared_inputs_(
+template <int nP, class Cfg>
+void AGMPCProtocol<nP, Cfg>::bind_prepared_inputs_(
     SecureWires<nP> &target, const PreparedInputBinding<nP> &binding) {
   const int n = (int)binding.size();
   expecting(target.size() == (size_t)n && target.wire_bundle.size() == (size_t)n,
@@ -264,8 +264,8 @@ void AGMPCProtocol<nP>::bind_prepared_inputs_(
 
 // Input-label exchange, shared with adopt_authenticated_input: garblers (Pi, i>=2)
 // ship m_{w,Λ_w} = label0[w] ⊕ Λ_w·Δ to the evaluator P1, who stores eval_label.
-template <int nP>
-void AGMPCProtocol<nP>::exchange_input_labels_(SecureWires<nP> &sw, int n_total) {
+template <int nP, class Cfg>
+void AGMPCProtocol<nP, Cfg>::exchange_input_labels_(SecureWires<nP> &sw, int n_total) {
   if (party != 1) {
     BlockVec tmp(n_total);
     for (int i = 0; i < n_total; ++i)
@@ -294,8 +294,8 @@ void AGMPCProtocol<nP>::exchange_input_labels_(SecureWires<nP> &sw, int n_total)
 // caller must supply bundles authenticated under this protocol instance's existing
 // global keys/Delta; cross-session material is not translated. Only the
 // garbling-label exchange runs.
-template <int nP>
-SecureWires<nP> AGMPCProtocol<nP>::adopt_authenticated_input(
+template <int nP, class Cfg>
+SecureWires<nP> AGMPCProtocol<nP, Cfg>::adopt_authenticated_input(
     const AShareBundle<nP> *bundles, int n) {
   SecureWires<nP> sw;
   sw.Lambda.assign((size_t)n, 0);                       // Λ = 0
@@ -308,8 +308,8 @@ SecureWires<nP> AGMPCProtocol<nP>::adopt_authenticated_input(
 
 // Copy each input SecureWires bundle into wire indices [0, num_in) in order;
 // inputs occupy slots [0, num_in). SecureWires is AoS, so this is a pure memcpy.
-template <int nP>
-void AGMPCProtocol<nP>::load_inputs(ComputeCtx &ctx, const SecureWires<nP> *const *inputs,
+template <int nP, class Cfg>
+void AGMPCProtocol<nP, Cfg>::load_inputs(ComputeCtx &ctx, const SecureWires<nP> *const *inputs,
                            int n_inputs) {
   size_t off = 0;
   for (int b = 0; b < n_inputs; ++b) {
@@ -334,8 +334,8 @@ void AGMPCProtocol<nP>::load_inputs(ComputeCtx &ctx, const SecureWires<nP> *cons
 // target verifies every peer (key ^ bit·Δ) and reconstructs λ_w = ⊕_p λ_w^p. Returns the bits
 // for targets[self] (empty if self is not a target). One message per directed pair -> the
 // per-channel transcript is deterministic and a party sees only shares of wires opened TO IT.
-template <int nP>
-std::vector<unsigned char> AGMPCProtocol<nP>::open_to_targets(
+template <int nP, class Cfg>
+std::vector<unsigned char> AGMPCProtocol<nP, Cfg>::open_to_targets(
     const AShareBundle<nP> *base, const std::vector<std::vector<int>> &targets) {
   std::vector<std::vector<unsigned char>> tx(nP + 1);   // share bits I send to target t
   std::vector<std::vector<char>> txd(nP + 1);           // MAC digest I send to target t
@@ -413,8 +413,8 @@ std::vector<unsigned char> AGMPCProtocol<nP>::open_to_targets(
   return lam;
 }
 
-template <int nP>
-std::vector<bool> AGMPCProtocol<nP>::decode(const SecureWires<nP> &wires,
+template <int nP, class Cfg>
+std::vector<bool> AGMPCProtocol<nP, Cfg>::decode(const SecureWires<nP> &wires,
                                          int recipient) {
   int n = (int)wires.size();
   // Validate `recipient` here too, not only at the frontend (agmpc_session.h): decode() is a
@@ -422,9 +422,10 @@ std::vector<bool> AGMPCProtocol<nP>::decode(const SecureWires<nP> &wires,
   // `targets[recipient]` below out of bounds (OOB vector write / UB).
   expecting(recipient == PUBLIC || (recipient >= 1 && recipient <= nP),
             "AGMPCProtocol::decode: recipient must be a party id in [1, nP] or PUBLIC");
-  // Any party may decode: the symmetric SPDZ c_gamma MACCheck (passes/mask_witness.h)
-  // certifies every party's output, so `recipient` is a pure delivery choice (which
-  // party reconstructs this open, or PUBLIC = all).
+  // Any party may decode: every party holds checked Lambda for the outputs (the symmetric
+  // SPDZ c_gamma MACCheck under Auth::KRRW; P1's per-gate checks and the garblers' check
+  // of the delivered output Lambda under Auth::WRK), so `recipient` is a pure delivery
+  // choice (which party reconstructs this open, or PUBLIC = all).
   AG_PHASE_BEGIN();
   fpre->abit.maybe_flush_cot_check();
   fpre->abit.settle_check2();
@@ -453,8 +454,8 @@ std::vector<bool> AGMPCProtocol<nP>::decode(const SecureWires<nP> &wires,
 // Gather output SecureWires by explicit wire id; outputs are pinned to permanent
 // slots and need not be contiguous or at the tail. Member definition, so ComputeCtx
 // resolves in class scope.
-template <int nP>
-SecureWires<nP> AGMPCProtocol<nP>::gather_outputs(ComputeCtx &ctx,
+template <int nP, class Cfg>
+SecureWires<nP> AGMPCProtocol<nP, Cfg>::gather_outputs(ComputeCtx &ctx,
                                          const std::vector<int> &output_ids) {
   SecureWires<nP> out;
   int n3 = (int)output_ids.size();
@@ -474,6 +475,49 @@ SecureWires<nP> AGMPCProtocol<nP>::gather_outputs(ComputeCtx &ctx,
     }
   }
   return out;
+}
+
+// Auth::WRK: after evaluation only P1 knows the masked values Lambda of AND-derived
+// wires. P1 sends each garbler the outputs' Lambda and a hash of that garbler's active
+// labels on them; the garbler rebuilds those labels from its 0-labels and checks the
+// hash. Changing a bit would take the garbler's label for the other value, hence its
+// Delta.
+template <int nP, class Cfg>
+void AGMPCProtocol<nP, Cfg>::deliver_output_masks_(SecureWires<nP> &out) {
+  const int n = (int)out.size();
+  if (n == 0) return;
+  char h[FsHash::DIGEST_SIZE];
+  if (party == 1) {
+    for (int i = 2; i <= nP; ++i) {
+      FsHash::hash_once(h, out.eval_label[i].data(), (size_t)n * sizeof(block));
+#ifdef EMP_AG_TEST_FLIP_DELIVERED_LAMBDA
+      // TEST-ONLY (never in production): P1 sends garbler 2 the first output's Lambda
+      // flipped, with the honest hash. Garbler 2's check must fail.
+      if (i == 2) {
+        std::vector<unsigned char> bad(out.Lambda);
+        bad[0] ^= 1;
+        io->send_bool(i, (const bool *)bad.data(), n);
+        io->send_data(i, h, FsHash::DIGEST_SIZE);
+        io->flush(i);
+        continue;
+      }
+#endif
+      io->send_bool(i, (const bool *)out.Lambda.data(), n);
+      io->send_data(i, h, FsHash::DIGEST_SIZE);
+      io->flush(i);
+    }
+    return;
+  }
+  std::vector<unsigned char> lam((size_t)n);
+  io->recv_bool(1, (bool *)lam.data(), n);
+  io->recv_data(1, h, FsHash::DIGEST_SIZE);
+  BlockVec active((size_t)n);
+  for (int k = 0; k < n; ++k) active[k] = out.label0[k] ^ (select_mask[lam[k] & 1] & Delta);
+  char expect[FsHash::DIGEST_SIZE];
+  FsHash::hash_once(expect, active.data(), (size_t)n * sizeof(block));
+  expecting(memcmp(expect, h, FsHash::DIGEST_SIZE) == 0,
+            "WRK: P1's output masks do not match its labels");
+  out.Lambda = std::move(lam);
 }
 
 }  // namespace emp::ag

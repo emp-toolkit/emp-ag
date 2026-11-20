@@ -85,6 +85,31 @@ add_np_variant(agmpc_golden_symmetric_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDE
 add_np_variant(agmpc_golden_pairwise_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_OPEN_CHECK_PAIRWISE)
 add_np_variant(agmpc_golden_pairwise_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 EMP_AG_OPEN_CHECK_PAIRWISE)
 
+# Garbling options (backend/garble_config.h): the golden matrix and prepared runs under each
+# option that is not the default.
+add_np_variant(agmpc_golden_direct_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_GARBLE_DELIVERY=DIRECT)
+add_np_variant(agmpc_golden_direct_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 EMP_AG_GARBLE_DELIVERY=DIRECT)
+add_np_variant(agmpc_prepared_direct_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3 EMP_AG_GARBLE_DELIVERY=DIRECT)
+add_np_variant(agmpc_golden_wrk_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2 EMP_AG_GARBLE_AUTH=WRK)
+add_np_variant(agmpc_golden_wrk_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_GARBLE_AUTH=WRK)
+add_np_variant(agmpc_golden_wrk_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 EMP_AG_GARBLE_AUTH=WRK)
+add_np_variant(agmpc_golden_wrk_direct_np3 agmpc_golden_snapshot.cpp 3
+               DEFS GOLDEN_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT)
+add_np_variant(agmpc_golden_wrk_direct_np4 agmpc_golden_snapshot.cpp 4
+               DEFS GOLDEN_NP=4 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT)
+add_np_variant(agmpc_prepared_wrk_np2 agmpc_prepared.cpp 2 DEFS PREP_NP=2 EMP_AG_GARBLE_AUTH=WRK)
+add_np_variant(agmpc_prepared_wrk_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3 EMP_AG_GARBLE_AUTH=WRK)
+add_np_variant(agmpc_linear_wrk_np3 agmpc_linear.cpp 3 DEFS LIN_NP=3 EMP_AG_GARBLE_AUTH=WRK)
+# Three-party runs that chain (an AND-derived output of one run is an input of the next,
+# revealed to every party), compose and reuse wires, under WRK and under direct delivery.
+foreach(_t agmpc_chain agmpc_reactive agmpc_compose agmpc_wire_reuse agmpc_artifact)
+    add_np_variant(${_t}_wrk ${_t}.cpp 3 DEFS EMP_AG_GARBLE_AUTH=WRK)
+endforeach()
+foreach(_t agmpc_chain agmpc_reactive)
+    add_np_variant(${_t}_direct ${_t}.cpp 3 DEFS EMP_AG_GARBLE_DELIVERY=DIRECT)
+    add_np_variant(${_t}_wrk_direct ${_t}.cpp 3 DEFS EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT)
+endforeach()
+
 # Cut-and-choose triples (backend/preproc/cut_and_choose_triples.h). The generator alone,
 # white-box (check_MAC sends Delta: EMP_AG_DEBUG_CHECKS), across batches and the bank, under
 # each checker; then the golden matrix with every session's triples from it, which covers

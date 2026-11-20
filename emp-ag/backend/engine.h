@@ -10,8 +10,8 @@
 // Every pass is the SAME definition over the SAME gate stream, so the transcript is
 // identical across passes AND across the three source kinds.
 //
-// finish_ runs the SAME four walks at every nP (draw+seed -> garble/eval -> open_and_masks
-// -> output_check); there is no nP branch in the engine. The nP==2 specializations live
+// finish_ runs the SAME walks at every nP (draw+seed -> garble/eval, then under Auth::KRRW
+// open_and_masks -> output_check); there is no nP branch in the engine. The nP==2 specializations live
 // INSIDE the passes/protocol as `if constexpr (nP == 2)` fast paths: the one-garbler garble
 // path, no garbler-row aggregation ring (P1 receives garbler 2 directly), the streamlined
 // two-party leaky-AND, and the c_gamma zero-check via symmetric F_eq instead of EchoBC.
@@ -56,10 +56,10 @@ inline int64_t agmpc_count_ands(const circuit::BooleanProgram &p) {
 // AGMPCEngine<nP> — runs a BooleanProgram / ComposePlan / live body source through
 // the authenticated-garbling passes over an AGMPCProtocol<nP>.
 // ===========================================================================
-template <int nP>
+template <int nP, class Cfg>
 class AGMPCEngine {
  public:
-  using ComputeCtx = typename AGMPCProtocol<nP>::ComputeCtx;
+  using ComputeCtx = typename AGMPCProtocol<nP, Cfg>::ComputeCtx;
   using Wires      = SecureWires<nP>;
   using Material   = PreparedMaterial<nP>;
   using Binding    = PreparedInputBinding<nP>;
@@ -69,10 +69,10 @@ class AGMPCEngine {
     Wires outputs;
   };
 
-  AGMPCProtocol<nP> *mpc = nullptr;
+  AGMPCProtocol<nP, Cfg> *mpc = nullptr;
   uint64_t total_ands = 0;   // garbled ANDs across every run (post-DCE), all strategies
 
-  explicit AGMPCEngine(AGMPCProtocol<nP> *m) : mpc(m) {}
+  explicit AGMPCEngine(AGMPCProtocol<nP, Cfg> *m) : mpc(m) {}
 
   // Owner/value-independent offline preparation for one immutable typed circuit.
   // The returned material is intentionally backend-only; AGMPCSession wraps it in
@@ -166,12 +166,20 @@ class AGMPCEngine {
       if (mpc->party == 1)
         mpc->evaluate_prepared(st, source, std::move(material.rows));
       AG_PHASE("prepared-eval");
-      mpc->open_and_masks(st, source);
-      AG_PHASE("open_and_masks");
-      mpc->output_check(st, source);
-      AG_PHASE("output_check[SPDZ]");
+      if constexpr (Cfg::auth == Auth::KRRW) {
+        mpc->open_and_masks(st, source);
+        AG_PHASE("open_and_masks");
+        mpc->output_check(st, source);
+        AG_PHASE("output_check[SPDZ]");
+      }
+      if constexpr (Cfg::auth == Auth::WRK)   // P1 checked every gate during evaluation
+        if (st.num_ands == 0) mpc->linear_masks_(st, source);
       result.outputs = gather_prepared_outputs_(material);
       AG_PHASE("gather_outputs");
+      if constexpr (Cfg::auth == Auth::WRK) {
+        if (st.num_ands > 0) mpc->deliver_output_masks_(result.outputs);
+        AG_PHASE("deliver_output_masks");
+      }
     });
     material.program.reset();
     return result;
@@ -601,13 +609,21 @@ class AGMPCEngine {
     if (mpc->party == 1) mpc->stream_evaluate(st, source);    // evaluator
     else                 mpc->garble_and_ship(st, source);    // garbler
     AG_PHASE("garble/eval");
-    mpc->open_and_masks(st, source); // open + EARLY-broadcast Lambda_AND (pipelining)
-    AG_PHASE("open_and_masks");
-    mpc->output_check(st, source);   // symmetric SPDZ c_gamma MACCheck (passes/mask_witness.h)
-    AG_PHASE("output_check[SPDZ]");
+    if constexpr (Cfg::auth == Auth::KRRW) {
+      mpc->open_and_masks(st, source); // open + EARLY-broadcast Lambda_AND (pipelining)
+      AG_PHASE("open_and_masks");
+      mpc->output_check(st, source);   // symmetric SPDZ c_gamma MACCheck (passes/mask_witness.h)
+      AG_PHASE("output_check[SPDZ]");
+    }
     std::vector<int> oi(out_ids.begin(), out_ids.end());
+    if constexpr (Cfg::auth == Auth::WRK)   // P1 checked every gate during evaluation
+      if (st.num_ands == 0) mpc->linear_masks_(st, source);
     Wires out = mpc->gather_outputs(st, oi);
     AG_PHASE("gather_outputs");
+    if constexpr (Cfg::auth == Auth::WRK) {
+      if (st.num_ands > 0) mpc->deliver_output_masks_(out);
+      AG_PHASE("deliver_output_masks");
+    }
     total_ands += (uint64_t)st.num_ands;
     return out;
   }

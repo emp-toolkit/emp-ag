@@ -1,6 +1,7 @@
 #ifndef EMP_AG_BACKEND_PROTOCOL_H__
 #define EMP_AG_BACKEND_PROTOCOL_H__
 #include "emp-ag/backend/crypto/protocols.h"   // sampleRandom
+#include "emp-ag/backend/garble_config.h"      // GarbleConfig, bind_garble_config
 #include "emp-ag/backend/preproc/auth_share_pool.h"
 #include "emp-ag/backend/preproc/triple_pool.h"
 #include "emp-ag/backend/state.h"            // emp::ag::ComputeCtx<nP>
@@ -25,12 +26,16 @@ namespace emp::ag {
 
 template <int nP> struct EvalChunk;
 
-template <int nP> class AGMPCEngine;  // the engine; friended for ComputeCtx + per-step access
+// The engine; friended for ComputeCtx + per-step access.
+template <int nP, class Cfg = GarbleConfig<>> class AGMPCEngine;
 
 // Multi-party authenticated garbling protocol Π_MPC. The half-gate construction:
 // every Pi (i ≥ 2) sends 2 ciphertexts G_{γ,0/1}^i and 3 ciphertexts
-// per cross peer S_{γ,0/1/2}^{i,j}; P2 additionally sends b_γ; P1
-// recovers Λ_γ = b_γ ⊕ LSB1(m_{γ,Λ_γ}^2). The bit-1 Δ convention
+// per cross peer S_{γ,0/1/2}^{i,j}. Cfg (backend/garble_config.h) picks how P1's Λ_γ is
+// authenticated. KRRW: P2 additionally sends b_γ, P1 recovers
+// Λ_γ = b_γ ⊕ LSB1(m_{γ,Λ_γ}^2), and a check after evaluation certifies it. WRK: every
+// Pi also sends 3 truncated ciphertexts toward P1, from which P1 decodes and checks
+// Λ_γ at the gate. The bit-1 Δ convention
 // is set in preproc/auth_share_pool.h: bit1(Δ_j) = 1 for j ≠ 1 and
 // bit1(Δ_1) = nP mod 2. Bit 0 is reserved for share-value encoding.
 //
@@ -45,7 +50,7 @@ template <int nP> class AGMPCEngine;  // the engine; friended for ComputeCtx + p
 // aShares/triples on demand from TriplePool and its inner AuthSharePool, which
 // mint fresh material per call (neither keeps a pool).
 
-template <int nP>
+template <int nP, class Cfg = GarbleConfig<>>
 class AGMPCProtocol {
   static_assert(nP >= 2, "AGMPC requires at least 2 parties");
 public:
@@ -76,8 +81,9 @@ public:
   BlockVec normal_cgamma_s0_scratch_, normal_cgamma_s1_scratch_;
   BlockVec normal_cgamma_s2_scratch_;
   // Output goes to every party (F_MPC delivers y^i to each P_i): the symmetric SPDZ
-  // c_gamma MACCheck (passes/mask_witness.h) certifies every party, so decode is not
-  // gated on a declared recipient. `decode(wires, recipient)` only chooses who
+  // c_gamma MACCheck (passes/mask_witness.h) certifies every party under Auth::KRRW;
+  // under Auth::WRK, P1 checks every gate and each garbler the outputs' Lambda against
+  // its labels (garble_config.h). Either way decode is not gated on a declared recipient. `decode(wires, recipient)` only chooses who
   // reconstructs a given open; that is a delivery choice made at reveal time, not
   // security state.
 
@@ -101,6 +107,8 @@ public:
     // Every party contributes to a fresh id through the commit-then-open coin,
     // so none of them picks it.
     session_id = session_id_ ? *session_id_ : sampleRandom<nP>(io_, &prg, pool_, party_);
+    // Parties that disagree on the garbling options then disagree on the id, and setup fails.
+    session_id = bind_garble_config<nP, Cfg>(session_id);
     fpre = new TriplePool<nP>(io_, pool_, party_, ssp_, grp, session_id,
                               base_ot_kind, planned_sender_cots,
                               planned_receiver_cots);
@@ -120,10 +128,10 @@ public:
   // GarblePass compute overlaps its send (a drain thread ships each chunk while
   // the pass fills the next). A chunk carries up to garble_window_cap(num_ands)
   // ANDs: this garbler's 2 G rows per AND, its cross-peer S rows (one BlockVec
-  // per dest j != party, 3 rows per AND), and (P2 only) one designated b bit per
-  // AND. Sender (garble_and_ship) and receiver (StreamEvaluatePass) walk
-  // identical chunk boundaries derived from garble_window_cap(num_ands)
-  // (passes/wire_format.h).
+  // per dest j != party, 3 rows per AND), and by Auth one designated b bit per AND
+  // (KRRW, P2 only) or 3 rows toward P1 per AND (WRK). Sender (garble_and_ship,
+  // passes/garble_transport.h) and receiver (StreamEvaluatePass) walk identical chunk
+  // boundaries derived from garble_window_cap(num_ands) (passes/wire_format.h).
 
 
   // ====== Public API ======
@@ -173,7 +181,7 @@ public:
   std::vector<bool> decode(const SecureWires<nP> &wires, int recipient);
 
 private:
-  template <int> friend class AGMPCEngine;  // the engine drives ComputeCtx + the per-step methods
+  template <int, class> friend class AGMPCEngine;  // the engine drives ComputeCtx + the per-step methods
 
   // The per-call scratch context lives in backend/state.h so the passes and
   // step-method bodies can live in their own phase files; this alias exposes it as
@@ -234,6 +242,12 @@ private:
   template <class Source> void output_check(ComputeCtx &ctx, Source &source);     // SPDZ c_gamma MACCheck
   SecureWires<nP> gather_outputs(ComputeCtx &ctx,
                                  const std::vector<int> &output_ids);
+  // Auth::WRK only. P1 checks every gate while evaluating, but the garblers still need
+  // the outputs' Lambda: with no AND gate they follow from the inputs (linear_masks_,
+  // passes/mask_witness.h, no traffic); otherwise P1 hands them over
+  // (deliver_output_masks_, input_auth.h).
+  template <class Source> void linear_masks_(ComputeCtx &ctx, Source &source);
+  void deliver_output_masks_(SecureWires<nP> &out);
 
   // xor_share / zero_share are free templates in backend/shares.h and SlotGateMixin in
   // backend/passes/pass.h (so the passes can reach them without friendship);

@@ -79,12 +79,62 @@ endif()
 # forwards it -> the c_gamma MACCheck aborts. Complements the tail-only FLIP_AGG and is the
 # suite's only nP=4 adversarial case.
 add_np_variant(agmpc_cheat_agg_mid_np4 agmpc_output_cheat.cpp 4 DEFS CHEAT_NP=4 EMP_AG_TEST_FLIP_AGG_MID PASS_RE "cheat in c_gamma MACCheck")
+# FLIP_DIRECT (nP>=3, direct delivery): the last garbler corrupts a row it sends P1 directly ->
+# wrong Lambda_gamma -> the c_gamma MACCheck aborts, in streaming and prepared runs.
+add_np_variant(agmpc_cheat_direct_np3 agmpc_output_cheat.cpp 3
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_DELIVERY=DIRECT EMP_AG_TEST_FLIP_DIRECT PASS_RE "cheat in c_gamma MACCheck")
+add_np_variant(agmpc_cheat_direct_np4 agmpc_output_cheat.cpp 4
+               DEFS CHEAT_NP=4 EMP_AG_GARBLE_DELIVERY=DIRECT EMP_AG_TEST_FLIP_DIRECT PASS_RE "cheat in c_gamma MACCheck")
+# Auth::WRK, where P1 checks every gate itself. FLIP_P1_ROW: a garbler (the last, or party 2
+# with EMP_AG_TEST_FLIP_PARTY=2) flips a bit of its unconditional row toward P1, so P1's check
+# of that gate fails. FLIP_G (nP=2), FLIP_AGG / FLIP_AGG_MID (ring) and FLIP_DIRECT corrupt
+# half-gate or cross rows instead: P1 recovers a wrong label, which fails the garbler's check
+# of the output masks P1 hands it or, with CHEAT_DEPTH2, P1's own check of the next gate.
+# FLIP_DELIVERED_LAMBDA: P1 hands garbler 2 a flipped output mask.
+add_np_variant(agmpc_cheat_wrk_p1row_np2 agmpc_output_cheat.cpp 2
+               DEFS CHEAT_NP=2 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_P1_ROW PASS_RE "WRK: a garbled gate failed")
+add_np_variant(agmpc_cheat_wrk_p1row_np3 agmpc_output_cheat.cpp 3
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_P1_ROW PASS_RE "WRK: a garbled gate failed")
+add_np_variant(agmpc_cheat_wrk_p1row_direct_np3 agmpc_output_cheat.cpp 3
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT EMP_AG_TEST_FLIP_P1_ROW
+               PASS_RE "WRK: a garbled gate failed")
+add_np_variant(agmpc_cheat_wrk_p1row_party2_np3 agmpc_output_cheat.cpp 3
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_P1_ROW EMP_AG_TEST_FLIP_PARTY=2
+               PASS_RE "WRK: a garbled gate failed")
+add_np_variant(agmpc_cheat_wrk_p1row_party2_direct_np3 agmpc_output_cheat.cpp 3
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT EMP_AG_TEST_FLIP_P1_ROW
+                    EMP_AG_TEST_FLIP_PARTY=2 PASS_RE "WRK: a garbled gate failed")
+add_np_variant(agmpc_cheat_wrk_g_np2 agmpc_output_cheat.cpp 2
+               DEFS CHEAT_NP=2 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_G PASS_RE "WRK: P1's output masks")
+add_np_variant(agmpc_cheat_wrk_g_depth2_np2 agmpc_output_cheat.cpp 2
+               DEFS CHEAT_NP=2 CHEAT_DEPTH2 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_G
+               PASS_RE "WRK: a garbled gate failed")
+add_np_variant(agmpc_cheat_wrk_agg_np3 agmpc_output_cheat.cpp 3
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_AGG PASS_RE "WRK: P1's output masks")
+add_np_variant(agmpc_cheat_wrk_agg_depth2_np3 agmpc_output_cheat.cpp 3
+               DEFS CHEAT_NP=3 CHEAT_DEPTH2 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_AGG
+               PASS_RE "WRK: a garbled gate failed")
+add_np_variant(agmpc_cheat_wrk_agg_mid_np4 agmpc_output_cheat.cpp 4
+               DEFS CHEAT_NP=4 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_AGG_MID PASS_RE "WRK: P1's output masks")
+add_np_variant(agmpc_cheat_wrk_direct_np3 agmpc_output_cheat.cpp 3
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT EMP_AG_TEST_FLIP_DIRECT
+               PASS_RE "WRK: P1's output masks")
+add_np_variant(agmpc_cheat_wrk_lambda_np2 agmpc_output_cheat.cpp 2
+               DEFS CHEAT_NP=2 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_DELIVERED_LAMBDA
+               PASS_RE "WRK: P1's output masks")
+add_np_variant(agmpc_cheat_wrk_lambda_np3 agmpc_output_cheat.cpp 3
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_DELIVERED_LAMBDA
+               PASS_RE "WRK: P1's output masks")
+add_np_variant(agmpc_prepared_cheat_wrk_p1row_np3 agmpc_prepared_cheat.cpp 3
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_P1_ROW PASS_RE "WRK: a garbled gate failed")
 
 # The same integrity boundaries after an offline/online split: the row fault is
 # delivered and stored during prepare(), then detected only after online binding;
 # the zero-AND input split is still caught by the shared Lambda echo.
 add_np_variant(agmpc_prepared_cheat_b_np2 agmpc_prepared_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_TEST_FLIP_B PASS_RE "cheat in c_gamma MACCheck")
 add_np_variant(agmpc_prepared_cheat_agg_np3 agmpc_prepared_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_AGG PASS_RE "cheat in c_gamma MACCheck")
+add_np_variant(agmpc_prepared_cheat_direct_np3 agmpc_prepared_cheat.cpp 3
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_DELIVERY=DIRECT EMP_AG_TEST_FLIP_DIRECT PASS_RE "cheat in c_gamma MACCheck")
 add_np_variant(agmpc_prepared_input_equiv_np3 agmpc_prepared_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_INPUT_LAMBDA PASS_RE "input Lambda equivocation")
 
 # A caller-provided adopted bundle must be authenticated under this session's

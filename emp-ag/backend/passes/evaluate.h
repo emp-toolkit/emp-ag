@@ -14,30 +14,38 @@
 #include "emp-ag/backend/crypto/halfgate.h"      // HalfGateHash, halfgate_stream_start
 #include "emp-ag/backend/crypto/spdz.h"          // collapse_cgamma_from_records
 #include "emp-ag/backend/runtime.h"              // chunk_pipe
+#include "emp-ag/backend/passes/garble_transport.h"  // recv_garbling_window
 
 namespace emp::ag {
 
 // Streaming evaluator (P1) for ALL nP: fuses garbled-row reception and evaluation
 // so the eval pass consumes each window as the next arrives, overlapping eval-compute
 // with reception (the garbler already streams via garble_and_ship's chunk_pipe).
-// The three num_ands-sized garbling cubes (G_{γ,*} / S_{γ,*} / b_γ) never materialize:
-// a depth-2 ring of kGarbleChunk-sized windows carries them (and_gate reads only the current ai_,
-// strictly increasing). begin() launches ONE receiver: at nP==2 a direct stream from garbler 2,
-// at nP>=3 a single co-aggregate window from the garbler-row aggregation ring's tail (garbler nP)
-// plus the b-bit from P2, so P1 receives O(n) rows/gate; end() joins the receiver.
-template <int nP>
-struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP>> {
+// The num_ands-sized garbling cubes (G_{γ,*} / S_{γ,*} / b_γ or the rows toward P1) never
+// materialize: a depth-2 ring of kGarbleChunk-sized windows carries them (and_gate reads
+// only the current ai_, strictly increasing). begin() launches ONE receiver, which reads
+// each window through recv_garbling_window (passes/garble_transport.h); end() joins it.
+template <int nP, class Cfg>
+struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP, Cfg>> {
   using Wire = uint32_t;
   ComputeCtx<nP> &ctx;
-  block Delta_;        // P1's Delta_1, for the c_gamma witness stash
-  block *mu_;          // per-AND SPDZ witness out (sized num_ands by the caller)
-  unsigned char *lam_out_;   // per-AND opened mask out (the Lambda_AND broadcast buffer)
-  // Per-AND records precomputed by draw_and_seed's P1 capture+sweep (state.h
-  // ev_tg/ev_mu): the tgamma basis (A,B,C per dest) and the c_gamma witness
-  // records (s0,s1,s2). With them the walk touches labels, masks, the pinned
-  // window, and these two contiguous streams, never the share fabric.
+  block Delta_;        // P1's Delta_1: the c_gamma witness stash (KRRW), delta_w_ (WRK)
+  // Per-AND records precomputed by draw_and_seed's P1 capture+sweep (state.h): the
+  // tgamma basis (A,B,C per dest) and, by Auth, the c_gamma witness records (KRRW) or
+  // P1's keys and own bits on Lambda's share (WRK). With them the walk touches labels,
+  // masks, the pinned window, and these contiguous streams, never the share fabric.
   const block *tg_rec_;
+  // KRRW: c_gamma witness records in; per-AND SPDZ witness and Lambda_AND out (the
+  // caller sizes both to num_ands).
   const block *mu_rec_;
+  block *mu_;
+  unsigned char *lam_out_;
+  // WRK: P1's key sums (3 per AND) and own share bits, and the truncation window of the
+  // rows toward P1 with Delta_1 cut to it.
+  const block *auth_rec_;
+  const unsigned char *auth_bits_;
+  int bits_;
+  block window_, delta_w_;
   uint32_t wid;
   int ai = 0;
   int c0_ = -1, c1_ = -1;
@@ -62,19 +70,17 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP>> {
 #endif
 
   StreamEvaluatePass(ComputeCtx<nP> &c, ThreadPool *pl, NetIOMP<nP> *netio,
-                     block Delta, block *mu, unsigned char *lam_out,
-                     const block *tg_rec, const block *mu_rec,
-                     EvalChunk<nP> *stored = nullptr)
-      : ctx(c), Delta_(Delta), mu_(mu), lam_out_(lam_out),
-        tg_rec_(tg_rec), mu_rec_(mu_rec),
+                     block Delta, int ssp, EvalChunk<nP> *stored = nullptr)
+      : ctx(c), Delta_(Delta), tg_rec_(c.ev_tg.data()), mu_rec_(c.ev_mu.data()),
+        mu_(c.cgamma_mu.data()), lam_out_(c.Lambda_AND.data()),
+        auth_rec_(c.ev_auth.data()), auth_bits_(c.ev_auth_bits.data()),
+        bits_(laand_window_bits(ssp)), window_(laand_window_mask(ssp)),
+        delta_w_(Delta & laand_window_mask(ssp)),
         wid((uint32_t)c.num_in), pool(pl), io(netio),
         cap_(garble_window_cap<nP>(c.num_ands)),
         mr_((size_t)(nP + 1) * (nP + 1)),
-        pipe(stored == nullptr ? 2 : 0, [this](EvalChunk<nP> &ch) {
-          if constexpr (nP == 2) ch.G.resize((size_t)2 * cap_);
-          else ch.Agg.resize((size_t)3 * (nP - 1) * cap_);
-          ch.b.resize((size_t)cap_);
-        }) {
+        pipe(stored == nullptr ? 2 : 0,
+             [this](EvalChunk<nP> &ch) { size_eval_chunk<nP, Cfg>(ch, cap_); }) {
     if (stored != nullptr) {
       expecting(stored->n == c.num_ands,
                 "prepared evaluator row count differs from circuit AND count");
@@ -88,10 +94,8 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP>> {
   }
 
   // begin(): launch the receiver coordinator (the SINGLE producer -> the chunk_pipe
-  // stays SPSC). nP==2 is one direct stream (garbler 2's G, then b). nP>=3: the garblers
-  // pre-aggregate G+S over a ring (garble_and_ship), so per window P1 receives ONE
-  // co-aggregate from the ring tail (garbler nP) plus the designated bit b from P2, so
-  // P1's per-window receive is O(n). run_pass auto-calls begin()/end() around the gate walk.
+  // stays SPSC); recv_garbling_window (passes/garble_transport.h) reads each window as
+  // the delivery delivers it. run_pass auto-calls begin()/end() around the gate walk.
   void begin() {
     if (stored_) return;
     recv_fut = pool->enqueue([this] {
@@ -107,18 +111,7 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP>> {
         _t = agmpc_now_ns();
 #endif
         slot.n = std::min(cap_, na - base);
-        const int n = slot.n;
-        if constexpr (nP == 2) {
-          io->recv_data(2, slot.G.data(), (size_t)2 * n * sizeof(block));
-          io->recv_bool(2, (bool *)slot.b.data(), n);
-        } else {
-          // The garblers already co-aggregated G+S into 3 rows/dest via the ring
-          // (garble_and_ship), so P1 receives ONE window from the ring tail (garbler nP)
-          // instead of the n-1 per-garbler G/S streams. The designated bit b is direct
-          // from P2.
-          io->recv_data(nP, slot.Agg.data(), (size_t)3 * (nP - 1) * n * sizeof(block));
-          io->recv_bool(2, (bool *)slot.b.data(), n);
-        }
+        recv_garbling_window<nP, Cfg>(io, slot, 0, slot.n, bits_);
 #ifdef AG_PROFILE
         ev_recv_ns += agmpc_now_ns() - _t;
 #endif
@@ -202,15 +195,16 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP>> {
     // Per source, hash P1's two active labels for every destination under the next
     // gids of that source's stream -- the gids the garbler hashed them under, so the
     // re-derived hashes match (crypto/halfgate.h).
+    constexpr int D = kHalfGateDests<nP, Cfg>;   // the garblers, then P1 under WRK
     block self_Ha[nP + 1], self_Hb[nP + 1];
+    block p1_pad = zero_block;   // WRK: the sources' hashes on P1's lanes, summed
     for (int s = 2; s <= nP; ++s) {
-      block buf[(nP - 1) * 2];
-      for (int d = 2; d <= nP; ++d) {
-        int k = d - 2;
+      block buf[D * 2];
+      for (int k = 0; k < D; ++k) {
         buf[2 * k]     = ctx.EVAL(s, in0);
         buf[2 * k + 1] = ctx.EVAL(s, in1);
       }
-      halfgate_hash_evaluator<nP>(mitc_src_[s - 2], buf);
+      halfgate_hash_evaluator<nP, D>(mitc_src_[s - 2], buf);
       for (int d = 2; d <= nP; ++d) {
         int k = d - 2;
         if (d == s) {
@@ -220,6 +214,8 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP>> {
           Mr(s, d) = buf[2 * k] ^ buf[2 * k + 1];   // P1-local hash; the S term is folded into Agg
         }
       }
+      if constexpr (Cfg::auth == Auth::WRK)
+        p1_pad = p1_pad ^ buf[2 * (nP - 1)] ^ buf[2 * (nP - 1) + 1];
     }
     // mLa/mLb (hoisted above the record fold): branchless masks for the two public
     // selectors La/Lb (equivalent to branching on them); the gated addends are
@@ -237,19 +233,38 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP>> {
       }
       ctx.EVAL(i, out) = t;
     }
-    ctx.MASK(out) =
-        (unsigned char)(cur->b[loc] ^ LSB1(ctx.EVAL(2, out)));
-    // P1 knows every opened mask DURING eval: stash the Lambda_AND broadcast value
-    // and the finalized c_gamma SPDZ witness here. The witness uses the SAME record
-    // form the garblers stash (s0/s1/s2 precomputed by draw_and_seed) —
-    // value-identical to the bundle-form collapse, per collapse_cgamma_from_records'
-    // contract. open_and_masks then just sends the buffer (no collect walk), and the
-    // output check folds mu with chi (drawn only after that broadcast), so P1 never
-    // re-walks the fabric.
-    lam_out_[ai_] = ctx.MASK(out);
-    mu_[ai_] = ag::collapse_cgamma_from_records(La, Lb, ctx.MASK(out) != 0,
-                                                mu_rec_[3 * ai_ + 0], mu_rec_[3 * ai_ + 1],
-                                                mu_rec_[3 * ai_ + 2], Delta_);
+    if constexpr (Cfg::auth == Auth::KRRW) {
+      ctx.MASK(out) =
+          (unsigned char)(cur->b[loc] ^ LSB1(ctx.EVAL(2, out)));
+      // P1 knows every opened mask DURING eval: stash the Lambda_AND broadcast value
+      // and the finalized c_gamma SPDZ witness here. The witness uses the SAME record
+      // form the garblers stash (s0/s1/s2 precomputed by draw_and_seed) —
+      // value-identical to the bundle-form collapse, per collapse_cgamma_from_records'
+      // contract. open_and_masks then just sends the buffer (no collect walk), and the
+      // output check folds mu with chi (drawn only after that broadcast), so P1 never
+      // re-walks the fabric.
+      lam_out_[ai_] = ctx.MASK(out);
+      mu_[ai_] = ag::collapse_cgamma_from_records(La, Lb, ctx.MASK(out) != 0,
+                                                  mu_rec_[3 * ai_ + 0], mu_rec_[3 * ai_ + 1],
+                                                  mu_rec_[3 * ai_ + 2], Delta_);
+    } else {
+      // The rows toward P1 leave the garblers' MACs under Delta_1 on their summed share
+      // u of Lambda ^ La Lb (crypto/halfgate.h, cross_rows); minus P1's keys on it they
+      // are u * Delta_1 within the window, or a garbler cheated. bit 0 of Delta_1 is 1
+      // and of every key 0, so bit 0 of that difference is u.
+      const block *t = &cur->T[3 * loc];
+      const block *k = auth_rec_ + 3 * ai_;
+      const block v = (p1_pad ^ t[2] ^ (t[0] & mLa) ^ (t[1] & mLb) ^
+                       k[2] ^ (k[0] & mLa) ^ (k[1] & mLb)) & window_;
+      const bool u = getLSB(v);
+      const block expect = select_mask[u] & delta_w_;
+      expecting(cmpBlock(&v, &expect, 1), "WRK: a garbled gate failed P1's check");
+      // P1's own share of Lambda ^ La Lb, from its bits on lambda_beta, lambda_alpha and
+      // lambda_gamma ^ sigma (draw_and_seed).
+      const unsigned r = auth_bits_[ai_];
+      const unsigned own = (La & r) ^ (Lb & (r >> 1)) ^ (r >> 2);
+      ctx.MASK(out) = (unsigned char)(((La & Lb) ^ own ^ u) & 1);
+    }
     ++loc;
     return id;
   }
@@ -260,15 +275,16 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP>> {
 // inside StreamEvaluatePass<nP> holds only kGarbleChunk ANDs at a time. run_pass drives
 // begin() (launch the single receiver) -> the gate walk -> end() (join). At nP>2 the
 // receiver reads one co-aggregate window from the aggregation ring tail (not n-1 streams).
-template <int nP>
+template <int nP, class Cfg>
 template <class Source>
-void AGMPCProtocol<nP>::stream_evaluate(ComputeCtx &ctx, Source &source) {
+void AGMPCProtocol<nP, Cfg>::stream_evaluate(ComputeCtx &ctx, Source &source) {
   // P1's c_gamma witness + Lambda_AND broadcast buffers (grow-only, reused across
   // chunks), both finalized inside the eval walk — see StreamEvaluatePass.
-  if ((int)ctx.cgamma_mu.size() < ctx.num_ands) ctx.cgamma_mu.resize(ctx.num_ands);
-  if ((int)ctx.Lambda_AND.size() < ctx.num_ands) ctx.Lambda_AND.resize(ctx.num_ands);
-  StreamEvaluatePass<nP> pass(ctx, pool, io, Delta, ctx.cgamma_mu.data(),
-                              ctx.Lambda_AND.data(), ctx.ev_tg.data(), ctx.ev_mu.data());
+  if (Cfg::auth == Auth::KRRW) {
+    if ((int)ctx.cgamma_mu.size() < ctx.num_ands) ctx.cgamma_mu.resize(ctx.num_ands);
+    if ((int)ctx.Lambda_AND.size() < ctx.num_ands) ctx.Lambda_AND.resize(ctx.num_ands);
+  }
+  StreamEvaluatePass<nP, Cfg> pass(ctx, pool, io, Delta, fpre->ssp);
   ag::run_pass(pass, source);
 }
 
@@ -276,44 +292,30 @@ void AGMPCProtocol<nP>::stream_evaluate(ComputeCtx &ctx, Source &source) {
 // boundaries must be preserved for recv_bool because every window has its own
 // packed tail byte; decoded rows are flattened into one direct-access chunk for
 // the later evaluator walk.
-template <int nP>
-void AGMPCProtocol<nP>::receive_prepared_garbling(
+template <int nP, class Cfg>
+void AGMPCProtocol<nP, Cfg>::receive_prepared_garbling(
     ComputeCtx &ctx, EvalChunk<nP> &rows) {
   const int num_ands = ctx.num_ands;
   const int cap = garble_window_cap<nP>(num_ands);
   rows.n = num_ands;
-  rows.b.resize((size_t)num_ands);
-  if constexpr (nP == 2)
-    rows.G.resize((size_t)2 * num_ands);
-  else
-    rows.Agg.resize((size_t)3 * (nP - 1) * num_ands);
-
-  for (int base = 0; base < num_ands; base += cap) {
-    const int n = std::min(cap, num_ands - base);
-    if constexpr (nP == 2) {
-      io->recv_data(2, rows.G.data() + (size_t)2 * base,
-                    (size_t)2 * n * sizeof(block));
-      io->recv_bool(2, (bool *)(rows.b.data() + base), n);
-    } else {
-      io->recv_data(nP, rows.Agg.data() + (size_t)3 * (nP - 1) * base,
-                    (size_t)3 * (nP - 1) * n * sizeof(block));
-      io->recv_bool(2, (bool *)(rows.b.data() + base), n);
-    }
-  }
+  size_eval_chunk<nP, Cfg>(rows, num_ands);
+  for (int base = 0; base < num_ands; base += cap)
+    recv_garbling_window<nP, Cfg>(io, rows, (size_t)base, std::min(cap, num_ands - base),
+                                laand_window_bits(fpre->ssp));
 }
 
 // Online P1 source for stored rows.  `cur` starts at the one full-circuit
 // EvalChunk, so and_gate takes the same fast path: no feeder, allocation,
 // memory copy, network receive, or per-gate mode branch.
-template <int nP>
+template <int nP, class Cfg>
 template <class Source>
-void AGMPCProtocol<nP>::evaluate_prepared(
+void AGMPCProtocol<nP, Cfg>::evaluate_prepared(
     ComputeCtx &ctx, Source &source, EvalChunk<nP> &&rows) {
-  if ((int)ctx.cgamma_mu.size() < ctx.num_ands) ctx.cgamma_mu.resize(ctx.num_ands);
-  if ((int)ctx.Lambda_AND.size() < ctx.num_ands) ctx.Lambda_AND.resize(ctx.num_ands);
-  StreamEvaluatePass<nP> pass(ctx, pool, io, Delta, ctx.cgamma_mu.data(),
-                              ctx.Lambda_AND.data(), ctx.ev_tg.data(),
-                              ctx.ev_mu.data(), &rows);
+  if (Cfg::auth == Auth::KRRW) {
+    if ((int)ctx.cgamma_mu.size() < ctx.num_ands) ctx.cgamma_mu.resize(ctx.num_ands);
+    if ((int)ctx.Lambda_AND.size() < ctx.num_ands) ctx.Lambda_AND.resize(ctx.num_ands);
+  }
+  StreamEvaluatePass<nP, Cfg> pass(ctx, pool, io, Delta, fpre->ssp, &rows);
   ag::run_pass(pass, source);
 }
 

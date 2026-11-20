@@ -1,7 +1,7 @@
 #ifndef EMP_AG_FRONTEND_AGMPC_SESSION_H__
 #define EMP_AG_FRONTEND_AGMPC_SESSION_H__
 
-// AGMPCSession<nP> — the public handle for nP-party authenticated garbling (KRRW),
+// AGMPCSession<nP, Cfg> — the public handle for nP-party authenticated garbling,
 // including two-party (AGMPCSession<2>). The DIRECT/chunked session flow
 // (input / input_batch / reveal / checkpoint / run(circuit) / run_artifact, RAII
 // scope-based liveness, the flush machinery) is shared with every chunked session
@@ -95,10 +95,11 @@ using emp::ag::AShareBundle;
 using emp::ag::SecureWires;
 using emp::ag::AGMPCProtocol;
 
-template <int nP>
-class AGMPCSession : public ChunkedSession<AGMPCSession<nP>> {
-  friend class ChunkedSession<AGMPCSession<nP>>;
-  using Base = ChunkedSession<AGMPCSession<nP>>;
+// Cfg (backend/garble_config.h) fixes the garbling options; every party must use the same.
+template <int nP, class Cfg = emp::ag::GarbleConfig<>>
+class AGMPCSession : public ChunkedSession<AGMPCSession<nP, Cfg>> {
+  friend class ChunkedSession<AGMPCSession<nP, Cfg>>;
+  using Base = ChunkedSession<AGMPCSession<nP, Cfg>>;
 
 public:
   using ctx_t = typename Base::ctx_t;
@@ -109,7 +110,7 @@ public:
 
   // The engine (backend/engine.h) drives the AGMPCProtocol<nP> passes; it exposes
   // run_source/run_program/run_composed over SecureWires bundles.
-  using Engine = emp::ag::AGMPCEngine<nP>;
+  using Engine = emp::ag::AGMPCEngine<nP, Cfg>;
 
   // Internal overload-routing tag. Prepared handles must never fall through to
   // the live-body run() template when a caller forgets std::move or supplies a
@@ -121,7 +122,7 @@ public:
   // accepts exactly the same argument/return types as run(circuit, ...).
   template <frontend::RecordValue RetV, frontend::RecordValue... ArgVs>
   class PreparedExecution : private PreparedExecutionTag {
-    friend class AGMPCSession<nP>;
+    friend class AGMPCSession<nP, Cfg>;
     using Material = typename Engine::Material;
 
     AGMPCSession *owner_ = nullptr;
@@ -238,11 +239,12 @@ public:
   // run_source too, which the base's gate-counting can't see).
   uint64_t num_and() const { return engine_.total_ands; }
   int process_input_calls() const { return process_input_calls_; }
-  AGMPCProtocol<nP>& protocol() { return proto_; }
+  AGMPCProtocol<nP, Cfg>& protocol() { return proto_; }
 
-  // Output goes to every party: the symmetric SPDZ c_gamma MACCheck certifies
-  // every party unconditionally (F_MPC). Choose who reconstructs a given value
-  // at reveal time via reveal(..., recipient) / PUBLIC.
+  // Output goes to every party: under Auth::KRRW the symmetric SPDZ c_gamma MACCheck
+  // certifies every party; under Auth::WRK P1 checks every gate and each garbler the
+  // outputs' Lambda against its labels (backend/garble_config.h). Choose who
+  // reconstructs a given value at reveal time via reveal(..., recipient) / PUBLIC.
 
   using Base::run;
 
@@ -520,7 +522,7 @@ private:
   std::unique_ptr<NetIOMPGroup<nP>> owned_grp_;
   NetIOMP<nP> *io_view_;
   NetIOMPGroup<nP> *group_view_;
-  AGMPCProtocol<nP> proto_;
+  AGMPCProtocol<nP, Cfg> proto_;
   Engine engine_;
   std::unordered_map<uint32_t, CarriedState> carried_;
   std::vector<StagedInput> staged_inputs_;

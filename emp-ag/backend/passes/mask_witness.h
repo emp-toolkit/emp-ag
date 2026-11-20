@@ -58,10 +58,10 @@ namespace emp::ag {
 // reduction. P1 has no such pass at all: its mu were finalized inside the eval walk
 // (StreamEvaluatePass); its MASK fabric persists from eval and its WIRE fabric from
 // DrawBeaverPass's walk (eval does not touch WIRE) — see output_check.
-template <int nP>
-struct MaskWitnessPass : SlotGateMixin<MaskWitnessPass<nP>> {
+template <int nP, class Cfg>
+struct MaskWitnessPass : SlotGateMixin<MaskWitnessPass<nP, Cfg>> {
   using Wire = uint32_t;
-  AGMPCProtocol<nP> *P;
+  AGMPCProtocol<nP, Cfg> *P;
   ComputeCtx<nP> &ctx;
   const std::vector<unsigned char> &Lambda_AND;
   // The RLC fold is kRlcLanes-lane chain-broken (see rlc_fold_mu): lane j = a mod K
@@ -74,7 +74,7 @@ struct MaskWitnessPass : SlotGateMixin<MaskWitnessPass<nP>> {
   uint32_t wid;
   int ai = 0;
   int c0_ = -1, c1_ = -1;
-  MaskWitnessPass(AGMPCProtocol<nP> *p, ComputeCtx<nP> &c,
+  MaskWitnessPass(AGMPCProtocol<nP, Cfg> *p, ComputeCtx<nP> &c,
                   const std::vector<unsigned char> &la, block chi_)
       : P(p), ctx(c), Lambda_AND(la), powK(gf_pow(chi_, kRlcLanes)),
         wid((uint32_t)c.num_in) {
@@ -124,13 +124,24 @@ struct MaskWitnessPass : SlotGateMixin<MaskWitnessPass<nP>> {
   }
 };
 
+// Auth::WRK on a circuit with no AND gate: every mask follows from the inputs, so a
+// garbler sets its own with the mask walk above (no AND gate fires, so it folds nothing)
+// and nothing is sent. P1's masks come from evaluation.
+template <int nP, class Cfg>
+template <class Source>
+void AGMPCProtocol<nP, Cfg>::linear_masks_(ComputeCtx &ctx, Source &source) {
+  if (party == 1) return;
+  MaskWitnessPass<nP, Cfg> pass(this, ctx, ctx.Lambda_AND, zero_block);
+  ag::run_pass(pass, source);
+}
+
 // open_and_masks: P1 broadcasts the AND-output masks Lambda_AND EARLY. The buffer was
 // filled during the eval walk (StreamEvaluatePass), so this phase is pure I/O at
 // every role: P1 sends, garblers receive (application + the witness fold live in
 // the output check's MaskWitnessPass).
-template <int nP>
+template <int nP, class Cfg>
 template <class Source>
-void AGMPCProtocol<nP>::open_and_masks(ComputeCtx &ctx, [[maybe_unused]] Source &source) {
+void AGMPCProtocol<nP, Cfg>::open_and_masks(ComputeCtx &ctx, [[maybe_unused]] Source &source) {
   const int num_ands = ctx.num_ands;
   if (num_ands == 0) return;
   std::vector<unsigned char> &Lambda_AND = ctx.Lambda_AND;
@@ -162,9 +173,9 @@ void AGMPCProtocol<nP>::open_and_masks(ComputeCtx &ctx, [[maybe_unused]] Source 
 // one F_coin challenge chi, one RLC m_i = sum chi_a mu_c[a], one rush-safe shared-zero check
 // XOR_i m_i = 0 (== c_gamma . Delta, which is 0 iff every gate is correct; Delta is never
 // opened). Runs at EVERY party: every honest party certifies the whole computation.
-template <int nP>
+template <int nP, class Cfg>
 template <class Source>
-void AGMPCProtocol<nP>::output_check(ComputeCtx &ctx, Source &source) {
+void AGMPCProtocol<nP, Cfg>::output_check(ComputeCtx &ctx, Source &source) {
   const int num_ands = ctx.num_ands;
 
   // F_coin: the RLC challenge chi, drawn BEFORE the witness walk. The walk sends nothing, so its
@@ -197,7 +208,7 @@ void AGMPCProtocol<nP>::output_check(ComputeCtx &ctx, Source &source) {
   if (party == 1) {
     m_i = ag::rlc_fold_mu(ctx.cgamma_mu.data(), num_ands, chi, pool);
   } else {
-    MaskWitnessPass<nP> pass(this, ctx, ctx.Lambda_AND, chi);
+    MaskWitnessPass<nP, Cfg> pass(this, ctx, ctx.Lambda_AND, chi);
     ag::run_pass(pass, source);
     m_i = pass.m();
   }

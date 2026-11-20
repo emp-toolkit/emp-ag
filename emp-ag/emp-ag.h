@@ -1,7 +1,7 @@
 #ifndef EMP_AG_H__
 #define EMP_AG_H__
 
-// emp-ag: AGMPC authenticated garbling for n >= 2 parties (KRRW), built on
+// emp-ag: AGMPC authenticated garbling for n >= 2 parties (KRRW or WRK), built on
 // emp-tool's BooleanContext + session model. The protocol is mpc by default
 // (AGMPCSession<nP>); the 2-party case is just AGMPCSession<2> — the nP==2
 // instantiation, special-cased only where the algebra collapses (the c_gamma equality

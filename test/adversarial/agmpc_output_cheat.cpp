@@ -74,7 +74,14 @@ int main(int argc, char **argv) {
   }
   batch.finish();
   Bit acc = sess.template input<Bit>(PUBLIC, false);
+#ifdef CHEAT_DEPTH2
+  // Depth 2: a second AND reads each first one's output, so under Auth::WRK a label P1
+  // recovers wrong at the first is caught by P1's own check of the second, not only when
+  // P1 hands the garblers the output's Lambda.
+  for (int i = 0; i < 8; ++i) acc = acc ^ ((a[i] & b[i]) & a[(i + 1) % 8]);
+#else
   for (int i = 0; i < 8; ++i) acc = acc ^ (a[i] & b[i]);
+#endif
 
   // Reveal to everyone: every honest party runs the MACCheck and must abort on the flip.
   std::optional<bool> out = sess.reveal(acc, PUBLIC);

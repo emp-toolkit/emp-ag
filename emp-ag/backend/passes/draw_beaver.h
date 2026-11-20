@@ -56,6 +56,11 @@ struct DrawBeaverPass : SlotGateMixin<DrawBeaverPass<nP>> {
   // (sigma does not exist during this walk).
   block *tg_ = nullptr;
   block *mu_ = nullptr;
+  // P1 under Auth::WRK (state.h ev_auth / ev_auth_bits): its key sums and own bits on
+  // the shares of lambda_in1, lambda_in0 and lambda_out, for its per-gate check. sigma's
+  // are folded in by the sweep. null otherwise.
+  block *auth_ = nullptr;
+  unsigned char *auth_bits_ = nullptr;
   block Delta_ = zero_block;
   int party_;
   uint32_t wid;
@@ -134,6 +139,12 @@ struct DrawBeaverPass : SlotGateMixin<DrawBeaverPass<nP>> {
       mu_[3 * ai + 1] = (select_mask[b_bit] & Delta_) ^ m1 ^ k1;
       mu_[3 * ai + 2] = (select_mask[a_bit] & Delta_) ^ m0 ^ k0;
     }
+    if (auth_) {
+      auth_[3 * ai + 0] = k1;
+      auth_[3 * ai + 1] = k0;
+      auth_[3 * ai + 2] = ko;
+      auth_bits_[ai] = (unsigned char)(b_bit | (a_bit << 1) | (getLSB(W.mac(0)) << 2));
+    }
     ++ai;
     return id;
   }
@@ -154,9 +165,9 @@ struct DrawBeaverPass : SlotGateMixin<DrawBeaverPass<nP>> {
 // separately in compute_and_shares: B independent triples per AND are bucketed
 // before opening x = λ_α ⊕ a and y = λ_β ⊕ b. The resulting corrected share is
 // σ = c ⊕ xb ⊕ ya ⊕ xy = λ_α λ_β; neither operand mask is a leaky-AND input.
-template <int nP>
+template <int nP, class Cfg>
 template <class Source>
-void AGMPCProtocol<nP>::draw_and_seed(ComputeCtx &ctx, Source &source) {
+void AGMPCProtocol<nP, Cfg>::draw_and_seed(ComputeCtx &ctx, Source &source) {
   const int num_ands = ctx.num_ands;
 #ifdef AG_PROFILE
   int64_t _all0 = io->count();
@@ -201,9 +212,16 @@ void AGMPCProtocol<nP>::draw_and_seed(ComputeCtx &ctx, Source &source) {
     // contribution is folded by the sigma sweep below, after compute_and_shares mints it.
     if (party == 1 && num_ands > 0) {
       ctx.ev_tg.resize((size_t)3 * (nP - 1) * num_ands);
-      ctx.ev_mu.resize((size_t)3 * num_ands);
       pass.tg_ = ctx.ev_tg.data();
-      pass.mu_ = ctx.ev_mu.data();
+      if constexpr (Cfg::auth == Auth::KRRW) {
+        ctx.ev_mu.resize((size_t)3 * num_ands);
+        pass.mu_ = ctx.ev_mu.data();
+      } else {
+        ctx.ev_auth.resize((size_t)3 * num_ands);
+        ctx.ev_auth_bits.resize((size_t)num_ands);
+        pass.auth_ = ctx.ev_auth.data();
+        pass.auth_bits_ = ctx.ev_auth_bits.data();
+      }
     }
     ag::run_pass(pass, source);
   }
@@ -217,14 +235,21 @@ void AGMPCProtocol<nP>::draw_and_seed(ComputeCtx &ctx, Source &source) {
   if (party == 1 && num_ands > 0) {
     block *tg = ctx.ev_tg.data();
     block *mu = ctx.ev_mu.data();
+    block *au = ctx.ev_auth.data();
+    unsigned char *aub = ctx.ev_auth_bits.data();
     const block D = Delta;
     const AShareBundle<nP> *sig = ctx.sigma.data();
-    ag::parallel_for(pool, num_ands, [&, tg, mu, D, sig](int lo, int hi) {
+    ag::parallel_for(pool, num_ands, [&, tg, mu, au, aub, D, sig](int lo, int hi) {
       for (int ai = lo; ai < hi; ++ai) {
         block *r = tg + (size_t)3 * (nP - 1) * ai;
         for (int i = 2; i <= nP; ++i)
           r[3 * (i - 2) + 2] = r[3 * (i - 2) + 2] ^ sig[ai].mac(i - 2);
-        mu[3 * ai + 0] = mu[3 * ai + 0] ^ ag::spdz_mac_share(sig[ai], D);
+        if constexpr (Cfg::auth == Auth::KRRW) {
+          mu[3 * ai + 0] = mu[3 * ai + 0] ^ ag::spdz_mac_share(sig[ai], D);
+        } else {
+          au[3 * ai + 2] = au[3 * ai + 2] ^ peer_key_sum(sig[ai]);
+          aub[ai] = (unsigned char)(aub[ai] ^ (own_bit(sig[ai]) << 2));
+        }
       }
     });
   }

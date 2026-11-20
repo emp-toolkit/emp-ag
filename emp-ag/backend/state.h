@@ -56,6 +56,11 @@ struct ComputeCtx {
   // They live HERE, not on AGMPCProtocol: they are per-chunk state crossing the
   // produce_/consume_ seam.
   BlockVec ev_tg, ev_mu;
+  // Under Auth::WRK, in place of ev_mu: P1's key sums on the garblers' shares of
+  // lambda_in1, lambda_in0 and lambda_out ^ sigma (ev_auth[3ai + {0,1,2}]), and its own
+  // share bits of the same in bits 0, 1, 2 of ev_auth_bits[ai], for its per-gate check.
+  BlockVec ev_auth;
+  std::vector<unsigned char> ev_auth_bits;
   // Execution-local output-check state.  These records cross either the
   // garble/evaluate -> MACCheck seam or, for prepared execution, the offline ->
   // online seam, so they belong to the job rather than the long-lived protocol.

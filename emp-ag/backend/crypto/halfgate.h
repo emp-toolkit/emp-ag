@@ -10,6 +10,7 @@
 // or network state.
 //
 #include "emp-ag/backend/shares.h"
+#include "emp-ag/backend/garble_config.h"   // Auth (the destinations a gate hashes for)
 #include "emp-tool/runtime/core/block.h"   // block ops; makeBlock
 #include "emp-tool/runtime/crypto/mitccrh.h"
 #include <cstdint>
@@ -29,6 +30,22 @@ inline void self_halfgate_row(block H_a0, block H_a1, block H_b0, block H_b1,
   G1    = H_b0 ^ H_b1 ^ ml_a0 ^ peer_key_sum(a) ^ own_dot(a, Delta);
   ml_g0 = H_a0 ^ H_b0 ^ peer_key_sum(ab) ^ own_dot(ab, Delta) ^
           peer_key_sum(g) ^ own_dot(g, Delta);
+}
+
+// The three rows a garbler sends toward the holder of key slot s: its MACs under that
+// key on its shares of lambda_beta, of lambda_alpha, and of lambda_gamma xor sigma, each
+// padded with that destination's hashes h = {H(a0), H(a1), H(b0), H(b1)} of the first
+// (a) and second (b) input's labels. Given the active labels, the hashes leave exactly
+//   La * row[0] ^ Lb * row[1] ^ row[2] ^ H(a_La) ^ H(b_Lb)
+//     = M_s[La lambda_beta ^ Lb lambda_alpha ^ sigma ^ lambda_gamma],
+// the MAC on this garbler's share of Lambda_gamma ^ La Lb: the destination's label
+// material, or (toward P1) the value P1 authenticates Lambda with.
+template <class B>
+inline void cross_rows(const block *h, const B &a, const B &b, const B &ab,
+                       const B &g, int s, block *row) {
+  row[0] = h[0] ^ h[1] ^ peer_mac(b, s);
+  row[1] = h[2] ^ h[3] ^ peer_mac(a, s);
+  row[2] = h[0] ^ h[2] ^ peer_mac(g, s) ^ peer_mac(ab, s);
 }
 
 // Garbler's t_gamma witness (MAC form) under the evaluator's key slot s. P1's eval-side
@@ -57,15 +74,20 @@ inline block tgamma_witness_garbler(bool La, bool Lb, const B &in0, const B &in1
 // -- would hash the second input's labels exactly as the first's, and the garbler's
 // two half-gate rows would XOR to its 0-label of the input, handing the evaluator
 // Delta. Both ends hash every AND gate once, in circuit order and with the same
-// calls, so their streams advance in lockstep.
+// calls, so their streams advance in lockstep. Under Auth::WRK, P1 is one more
+// destination, after the garblers: its two lanes follow destination nP's, so a gate
+// hashes 2 nP lanes.
 //
 // ReuseShift stays 3 for every nP: each step above 3 would cost one more bit of the
 // multi-instance bound (mitccrh.h). A stream call runs under one key, so its lanes
 // fit one bucket of 2^ReuseShift gids, and a gate hashes its lanes in calls of at
-// most that many. Up to 5 parties that is one call per gate, and one key covers 4
-// gates at nP = 2, 2 at nP = 3 and one gate at nP = 4 and 5; beyond, a gate takes
-// ceil(2 (nP-1) / 8) calls and as many keys.
-template <int nP> inline constexpr int kHalfGateLanes = 2 * (nP - 1);
+// most that many. A gate of D destinations takes ceil(2 D / 8) calls: one up to 4
+// destinations (5 parties under KRRW, 4 under WRK, whose P1 is one more), where one key
+// covers 4 gates at D = 1, 2 at D = 2 and one gate at D = 3 and 4.
+// The destinations an AND gate hashes for: the garblers 2..nP, then P1 under WRK.
+template <int nP, class Cfg>
+inline constexpr int kHalfGateDests = nP - 1 + (Cfg::auth == Auth::WRK ? 1 : 0);
+template <int D> inline constexpr int kHalfGateLanes = 2 * D;
 template <int nP> inline constexpr int kHalfGateReuseShift = 3;
 template <int nP> using HalfGateHash = MITCCRH<kHalfGateReuseShift<nP>>;
 // Lanes per stream call: one key bucket.
@@ -76,12 +98,13 @@ inline block halfgate_stream_start(block seed, int sender) {
   return seed ^ makeBlock(0, (uint64_t)sender);
 }
 
-// Hash one AND gate's lanes of H blocks each, in place: whole buckets of lanes first,
-// then the remaining lanes in one call.
-template <int nP, int H>
+// Hash one AND gate's lanes of H blocks each, for D destinations, in place: whole
+// buckets of lanes first, then the remaining lanes in one call.
+template <int nP, int H, int D = nP - 1>
 inline void halfgate_hash_lanes(HalfGateHash<nP> &h, block *buf) {
   constexpr int per_call = kHalfGateCallLanes<nP>;
-  constexpr int full = kHalfGateLanes<nP> / per_call, rest = kHalfGateLanes<nP> % per_call;
+  constexpr int full = kHalfGateLanes<D> / per_call;
+  constexpr int rest = kHalfGateLanes<D> % per_call;
   for (int c = 0; c < full; ++c)
     h.template hash_cir<per_call, H>(buf + c * per_call * H);
   if constexpr (rest > 0)
@@ -89,19 +112,19 @@ inline void halfgate_hash_lanes(HalfGateHash<nP> &h, block *buf) {
 }
 
 // Garbler: hash, in place, one AND gate's labels for every destination. buf holds
-// {a0, a1, b0, b1} per destination (4 (nP-1) blocks, destination d at 4 (d-2)): a0/a1
+// {a0, a1, b0, b1} per destination (4 D blocks, garbler d at 4 (d-2), P1 last): a0/a1
 // the first input's labels, b0/b1 the second's.
-template <int nP>
+template <int nP, int D = nP - 1>
 inline void halfgate_hash_garbler(HalfGateHash<nP> &h, block *buf) {
-  halfgate_hash_lanes<nP, 2>(h, buf);
+  halfgate_hash_lanes<nP, 2, D>(h, buf);
 }
 
 // Evaluator: hash, in place, its active labels of one AND gate as one sender garbled
-// them. buf holds {A, B} per destination (2 (nP-1) blocks, destination d at 2 (d-2)):
+// them. buf holds {A, B} per destination (2 D blocks, garbler d at 2 (d-2), P1 last):
 // A the first input's active label, B the second's.
-template <int nP>
+template <int nP, int D = nP - 1>
 inline void halfgate_hash_evaluator(HalfGateHash<nP> &h, block *buf) {
-  halfgate_hash_lanes<nP, 1>(h, buf);
+  halfgate_hash_lanes<nP, 1, D>(h, buf);
 }
 
 }  // namespace emp::ag

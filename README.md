@@ -120,6 +120,19 @@ cut-and-choose triples (`backend/preproc/cut_and_choose_triples.h`), generated
 COTs are cheap (`Ferret`) and batches are large, at the cost of more computation
 and of memory proportional to the batch. Every party must make the same choice.
 
+The garbling options are compile-time: `AGMPCSession<nP, ag::GarbleConfig<A, D>>`
+(`backend/garble_config.h`). Every party must use the same options; a session binds
+any non-default choice into its session id, so a mismatch fails setup.
+`-DEMP_AG_GARBLE_AUTH=WRK` and `-DEMP_AG_GARBLE_DELIVERY=DIRECT` change the default
+for a whole build.
+
+| Option | Values | Effect |
+|---|---|---|
+| `A` | `Auth::KRRW` (default) | Party 2 sends one extra bit per AND gate, from which party 1 reads its masked values; a check after evaluation certifies them. |
+| | `Auth::WRK` | Every garbler also sends party 1 three rows per AND gate, truncated to `ssp + 2` bits, and party 1 checks each gate while it evaluates. More bytes per gate, and no check after evaluation; the garblers then receive the outputs' masked values from party 1, authenticated by their labels. The check is statistical: a forged row passes with probability `2^-ssp`, and a failed attempt aborts the run. |
+| `D` (`nP >= 3`) | `Delivery::RING` (default) | The garblers sum their rows along a chain, so party 1 receives three rows per garbler. |
+| | `Delivery::DIRECT` | Each garbler sends its own rows to party 1, which sums them: no chain of hops, but every garbler's rows on party 1's link. |
+
 ## Consuming from another CMake project
 
 ```cmake
@@ -296,22 +309,28 @@ This costs `3B+1` COTs per AND per direction per peer, excluding input masks
 and session overhead. Circuit masks are never used as leaky-AND operands:
 successful selective-failure guesses must concern the independent triples,
 rather than disclose a real wire mask before bucketing. At
-`nP >= 3` the garbler rows are combined through a **garbler-row aggregation
-ring** (following the YWZ20 idea), collapsing the O(n²) cross-garbler `S`-term
-cube to O(n) per gate. The output check is a symmetric SPDZ `c_gamma` MACCheck
-that certifies every party at once. Correlated OT uses a long-lived emp-ot
+`nP >= 3` the garbler rows are combined by default through a **garbler-row
+aggregation ring** (following the YWZ20 idea), collapsing the O(n²)
+cross-garbler `S`-term cube to O(n) per gate at party 1. By default the output
+check is a symmetric SPDZ `c_gamma` MACCheck that certifies every party at once.
+Under `Auth::WRK`, party 1 instead checks each gate during evaluation against
+MACs under its own key that every garbler sends in its rows: the technique of
+WRK17 carried on half-gate rows, as
+[DILO22](https://eprint.iacr.org/2022/836) does for two parties. Correlated OT uses a long-lived emp-ot
 extension whose consistency check runs before every reveal, so it gates output
 release.
 
 ## Layout
 
-`AGMPCSession<nP>` is the only public handle; under it sit the gate recorder,
+`AGMPCSession<nP>` (with an optional garbling configuration, `AGMPCSession<nP, Cfg>`) is
+the only public handle; under it sit the gate recorder,
 the engine, and the crypto protocol. Headers live under the `emp-ag/` include
 root (`<emp-ag/...>`):
 
 - **`frontend/agmpc_session.h`** — `emp::AGMPCSession<nP>`, the public session
   (the only piece a caller needs), and its live-body replay.
-- **`backend/`** — the spine: `protocol.h` (`AGMPCProtocol<nP>`), `engine.h`
+- **`backend/`** — the spine: `garble_config.h` (the garbling options),
+  `protocol.h` (`AGMPCProtocol<nP>`), `engine.h`
   (`AGMPCEngine<nP>`, which drives the gate passes over a BooleanProgram /
   ComposePlan / live body — the same gate stream through every phase, so the
   transcript is identical across strategies), `input_auth.h`, `shares.h`,
@@ -321,9 +340,10 @@ root (`<emp-ag/...>`):
   `open_check.h` (checking opened authenticated bits: pairwise and symmetric),
   `feq.h` / `fzero.h`, `protocols.h`, `bucketing.h`.
 - **`backend/passes/`** — the circuit walks: `draw_beaver.h`, `garble.h`
-  (garble + ship + the `nP >= 3` aggregation ring), `evaluate.h` (streaming
-  evaluate), `mask_witness.h` (the SPDZ `c_gamma` MACCheck), `wire_format.h`
-  (the garbler↔evaluator byte contract).
+  (garble), `garble_transport.h` (how the rows reach party 1: direct, or the
+  `nP >= 3` aggregation ring), `evaluate.h` (streaming evaluate),
+  `mask_witness.h` (the SPDZ `c_gamma` MACCheck), `wire_format.h` (the
+  garbler↔evaluator byte contract).
 - **`backend/preproc/`** — `triple_pool.h` / `auth_share_pool.h`: the
   correlated-OT mesh plus malicious authenticated AND-share generation
   (aShares `MAC = KEY ⊕ x·Δ` from emp-ot COT, independent leaky-AND

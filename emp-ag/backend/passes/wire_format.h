@@ -48,7 +48,8 @@ struct GarbleChunk {
   int n = 0;                     // ANDs in this chunk
   BlockVec G;                    // 2*n G rows
   std::vector<BlockVec> S;       // S[j] = 3*n rows, for j in [2,nP], j != party
-  std::vector<unsigned char> b;  // n designated bits (party 2 only)
+  std::vector<unsigned char> b;  // KRRW: n designated bits (party 2 only)
+  BlockVec T;                    // WRK: 3*n rows toward P1, sent truncated
 };
 
 // A kGarbleChunk-sized window of the evaluator's garbled input. nP==2: the single
@@ -62,7 +63,8 @@ struct EvalChunk {
   int n = 0;
   BlockVec G;     // nP==2 only: the single garbler's 2 half-gate rows/AND, flat [2*loc + {0:La,1:Lb}]
   BlockVec Agg;   // nP>=3: 3 rows/dest, indexed [agg_row_index(nP-1, loc, i) + r], i in [2,nP], r in [0,2]
-  std::vector<unsigned char> b;                             // [cap]
+  std::vector<unsigned char> b;   // KRRW: [cap]
+  BlockVec T;     // WRK: the garblers' rows toward P1, summed and truncated, flat [3*loc + r]
 };
 
 }  // namespace emp::ag
