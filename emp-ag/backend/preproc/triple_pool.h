@@ -308,7 +308,7 @@ public:
              int64_t planned_receiver_cots = -1)
       : pool(pool), party(party), ssp(ag::checked_statistical_security(ssp)), io(io),
         session_id(session_id_in),
-        abit(io, pool, party, nullptr, grp_in, session_id_in, base_ot_kind,
+        abit(io, pool, party, grp_in, session_id_in, base_ot_kind,
              planned_sender_cots, planned_receiver_cots),
         Delta(abit.Delta),
         open_check_(io, pool, party, abit.Delta, session_id_in, &prg, grp_in),

@@ -7,7 +7,7 @@
 //   nP=2 — the ONLY regime with no runtime cross-consistency backstop (check2
 //   is nP>2; the deferred COT check certifies per-instance correlation, not
 //   lane agreement), so this run is the guard: if the two parties ever used a
-//   divergent partition / salt / cadence for a lane, that lane's COTs would not
+//   divergent partition / cadence / clone order for a lane, that lane's COTs would not
 //   correlate -> wrong authenticated shares -> wrong triples -> a wrong AND
 //   output (reveal mismatch) or a c_gamma abort.
 //

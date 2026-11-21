@@ -1,8 +1,8 @@
 // AG-MPC golden snapshot — pins a strategy x circuit matrix and gates on OUTPUT
 // CORRECTNESS (not a frozen transcript), by necessity:
 //
-//   * the transcript is NOT byte-reproducible: Delta/choice seeds are drawn from a
-//     hardware-seeded PRG (preproc/auth_share_pool.h), so the wire bytes differ run to run.
+//   * the transcript is NOT byte-reproducible: Delta and the COT choices are drawn from
+//     hardware-seeded PRGs, so the wire bytes differ run to run.
 //   * so the gate is OUTPUT CORRECTNESS vs a cleartext oracle (digest==OpenSSL in the
 //     crypto cases), across the matrix, at nP=2, 3 and 4. This is determinism-
 //     independent (outputs are fixed given inputs).

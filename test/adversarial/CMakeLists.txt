@@ -54,8 +54,8 @@ add_np_variant(agmpc_cheat_xy_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_N
 # aShare consistency (check2, nP>=3): its residuals and views are tested by the next zero
 # test -- the symmetric open check's, or one of their own after the pairwise check and
 # before a reveal. FLIP_BW: party 2 sends party 3 a different consistency value, caught by
-# the agreement on the views. SPLIT_CHOICE: party 2's choice bits differ between peers,
-# every COT valid, caught by the residuals. TWO_WORLD + SPLIT_CHOICE: party 2 also sends
+# the agreement on the views. SPLIT_CHOICE: party 2's bits differ between peers, every
+# MAC valid, caught by the residuals. TWO_WORLD + SPLIT_CHOICE: party 2 also sends
 # each peer the value its bits toward that peer give, so every residual cancels and only
 # the agreement on the views catches it. agmpc_share_consistency.cpp has no AND, so only
 # the settle before the reveal can catch any of these.

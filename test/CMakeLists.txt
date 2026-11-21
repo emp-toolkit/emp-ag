@@ -30,10 +30,10 @@ endfunction()
 # incl. a full session on mesh 0 concurrent with traffic on mesh 1.
 add_test_case_with_run(netmp_group)
 
-# Lower-layer protocol tests (auth-shares / IKNP). Both use the white-box check_MAC COT
-# correlation check, compiled only under EMP_AG_DEBUG_CHECKS.
+# Lower-layer protocol tests (auth-shares / IKNP). auth_share uses the white-box check_MAC
+# correlation check, compiled only under EMP_AG_DEBUG_CHECKS; three_party_iknp checks
+# each pair's correlation itself.
 add_test_case_with_run(three_party_iknp)
-target_compile_definitions(test_three_party_iknp PRIVATE EMP_AG_DEBUG_CHECKS)
 add_test_case_with_run(auth_share)
 target_compile_definitions(test_auth_share PRIVATE EMP_AG_DEBUG_CHECKS)
 
@@ -155,7 +155,7 @@ add_np_variant(agmpc_independent_triples_short_np2 agmpc_independent_triples.cpp
 # SoftSpoken lane-parallel COT end-to-end over a NetIOMPGroup (L=2), one source
 # with the party count via LANE_NP. BOTH registrations are load-bearing: nP=2 is
 # the ONLY regime with no runtime cross-consistency backstop (the guard that both
-# parties used an identical lane partition / salt / cadence); nP=3 exercises the
+# parties used an identical lane partition / cadence / clone order); nP=3 exercises the
 # malicious-check paths under lanes -- check1's csp tail (assembled after the
 # lane join) and check2's universal-hash fold (the nP>2 cross-peer x^me backstop).
 add_np_variant(lane_np2 lane.cpp 2 DEFS LANE_NP=2)

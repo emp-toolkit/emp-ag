@@ -14,13 +14,14 @@
 //          exercise the malicious-check chi-fold over many chunks)
 
 #include "emp-ag/backend/netmp.h"
-#include "emp-ag/backend/crypto/protocols.h"   // check_MAC (EMP_AG_DEBUG_CHECKS-gated COT correlation check)
+#include "emp-ag/backend/runtime.h"   // default_pool_size
 #include "emp-ot/ot_extension/iknp.h"
+#include "emp-tool/emp-tool.h"
 #include <future>
 #include <memory>
 using namespace std;
 using namespace emp;
-using namespace emp::ag;   // check_MAC
+using namespace emp::ag;
 
 const int nP = 3;
 const int LEN = 1 << 14;
@@ -57,12 +58,6 @@ int main(int argc, char **argv) {
   for (int peer = 1; peer <= nP; ++peer) if (peer != party)
     abit1[peer]->set_delta(delta);
 
-  // Shared choice seed across all abit2[peer] receivers
-  block choice_seed;
-  prg.random_block(&choice_seed, 1);
-  for (int peer = 1; peer <= nP; ++peer) if (peer != party)
-    abit2[peer]->choice_prg.reseed(&choice_seed);
-
   // Bulk RCOT phase: parallel across peers. First call on each
   // instance triggers the lazy base-OT bootstrap; subsequent
   // chunks within the same rcot call stream the extension.
@@ -90,11 +85,29 @@ int main(int argc, char **argv) {
   }
 
   // Correctness (not just "did not crash / hang"): verify the COT correlation
-  // M[peer] = K_peer[me] ^ x*Delta_peer for every pair. Reuses the white-box check_MAC
-  // (which broadcasts Delta in the clear -- fine for a test, so this TU is built with
-  // EMP_AG_DEBUG_CHECKS); it derives x from bit0(M) under the delta[0]=1 pinning and
-  // aborts via expecting() on any mismatch at any party (runN then fails ctest).
-  check_MAC<nP>(&io, M, K, abit1[party == 1 ? 2 : 1]->Delta, LEN, party);
+  // M = K ^ r*Delta for the pair (i, j) with i < j, where i is the sender and r is
+  // j's choice bits toward i. Each receiver draws its own choices, so r is read per
+  // pair from bit0(M) under the delta[0]=1 pinning. White-box: i sends j its Delta and
+  // keys in the clear (fine for a test), and any mismatch aborts via expecting() (runN
+  // then fails ctest).
+  for (int i = 1; i <= nP; ++i)
+    for (int j = i + 1; j <= nP; ++j) {
+      if (party == i) {
+        const block D = abit1[j]->Delta;
+        io.send_data(j, &D, sizeof(block));
+        io.send_data(j, K[j].data(), sizeof(block) * LEN);
+        io.flush(j);
+      } else if (party == j) {
+        block D;
+        BlockVec expect(LEN);
+        io.recv_data(i, &D, sizeof(block));
+        io.recv_data(i, expect.data(), sizeof(block) * LEN);
+        for (int k = 0; k < LEN; ++k)
+          if (getLSB(M[i][k])) expect[k] = expect[k] ^ D;
+        expecting(cmpBlock(M[i].data(), expect.data(), LEN),
+                  "three_party_iknp: COT correlation check failed");
+      }
+    }
   cout << "P" << party << " COT correlation check — OK\n" << flush;
   return 0;
 }

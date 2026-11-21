@@ -28,15 +28,16 @@ namespace emp::ag {
 
 // Choose the OT extension backend used for the per-pair COT mesh.
 // EMP_AG_OT_BACKEND selects the backend. The pool drives it through
-// OTExtension's public API; SoftSpoken lane cloning and Ferret's shared LPN
-// matrix seed are the only backend-specific calls. Candidates:
+// OTExtension's public API; SoftSpoken lane cloning is the only
+// backend-specific call. Candidates:
 //   IKNP        — low setup, ~κ B/COT, fastest on small batches.
 //   SoftSpoken<k> — k tunes compute vs. bandwidth (larger k sends fewer bytes
 //                   but costs more AES per OT); default k=8 minimizes COT
 //                   communication, the binding cost on bandwidth-bound and
 //                   egress-metered links; a smaller k trades COT bytes for
 //                   less AES compute.
-//   Ferret      — ferret_b13 default; smallest steady-state bandwidth.
+//   Ferret      — emp-ot's default parameter set (ferret_b12); smallest
+//                 steady-state bandwidth.
 #ifndef EMP_AG_OT_BACKEND
 #define EMP_AG_OT_BACKEND 1
 #endif
@@ -59,12 +60,13 @@ using OTExt = emp::OTExtension;
 // each call mints fresh shares. check1 is the gadget-tail Δ-consistency check
 // using pair-specific x^{me,j}; check2 is the share-consistency check (nP>2), whose
 // zero test is deferred to the next one the protocol runs (see check2).
-// Sampling x^me and the Fix exchange are collapsed into the COT itself: under
-// the pinned-bit invariant bit0(Δ)=1, bit0(K)=0, bit0(M)=choice (enforced
-// by COT post-processing), the receiver's choice IS x^me and the MAC
-// relation M = K ⊕ x · Δ already holds straight out of rcot — no Fix
-// exchange or KEY update is needed. The share x^me_k is recoverable as
-// bit0(MAC[any non-self peer][k]).
+// The COT post-processing pins bit0(Δ)=1, bit0(K)=0 and bit0(M)=choice, so each
+// draw gives M = K ⊕ choice · Δ. At nP=2 the single receiver's choice is x^me.
+// At nP>2 every receiver draws its own choices r_j and the Fix exchange aligns
+// them: the party samples x^me and sends each peer d_j = x^me ⊕ r_j, one bit per
+// COT; the receiver sets M ^= d_j·e0 and the peer K ^= d_j·(Δ ⊕ e0). So bit0(K)=0,
+// bit0(M)=x^me and M = K ⊕ x^me · Δ hold at every peer slot, and the share x^me_k
+// is bit0(MAC[any non-self peer][k]).
 //
 // Two small implementation choices:
 //
@@ -123,8 +125,8 @@ class AuthSharePool {
 	int party;
 	block session_id;
 
-	// Lane partition is the shared ag::lane_range (runtime.h) — peer-INDEPENDENT:
-	// lane t owns [lo, hi) toward EVERY peer.
+	// Lane partition is the shared ag::lane_range (runtime.h), a pure function of
+	// (ext_len, L), so both ends of every pair agree on lane t's [lo, hi).
 	// The mesh carrying lane t (lane 0 == io == grp->mesh(0)).
 	NetIOMP<nP> *lane_mesh(int t) { return (t == 0) ? io : &grp->mesh(t); }
 	// The COT instance for (peer, sender-role?, lane t).
@@ -158,19 +160,14 @@ class AuthSharePool {
 	std::vector<block> pending_check2_;
 	FsHash pending_check2_view_;
 	BlockVec draw_mac_[nP + 1], draw_key_[nP + 1];   // reused draw() scratch
+	// nP>2 Fix exchange scratch (grow-only): x^me for the current call, and the
+	// corrections sent to and received from each peer.
+	std::vector<uint8_t> fix_x_, fix_out_[nP + 1], fix_in_[nP + 1];
 	bool cot_sessions_open = false;
 	bool cots_minted_since_check = false;
 
  public:
 
-	// `choice_seed_in` (optional): when non-null, all of this party's COT
-	// receiver instances (abit2[peer]) seed their choice_prg from the same
-	// block. With a shared choice seed, the choice bits Pi commits in
-	// COT(i, j) are identical across j by construction, so x^me_k =
-	// bit0(MAC[any_peer][k]) is automatically consistent across peers —
-	// the r_choice/d exchange + K-update is unnecessary. When null,
-	// we sample one internally; that's the default and gives the same
-	// behavior. Pass an explicit seed only for determinism / testing.
 	// `grp_in` (optional): a NetIOMPGroup whose mesh(0) == io. When non-null and
 	// the backend is SoftSpoken, COT/aShare generation runs on
 	// L lanes: the parent COT on mesh 0 + clones on meshes 1..L-1. null => the
@@ -184,7 +181,6 @@ class AuthSharePool {
 	// valid only when the two counts are equal. -1 keeps the ordinary unbounded
 	// streaming path.
 	AuthSharePool(NetIOMP<nP> *io, ThreadPool *pool, int party,
-			const block *choice_seed_in = nullptr,
 			NetIOMPGroup<nP> *grp_in = nullptr,
 			block session_id_in = zero_block,
 			BaseOtKind base_ot_kind = BaseOtKind::CSW,
@@ -207,7 +203,7 @@ class AuthSharePool {
 			grp = grp_in;
 			// A test-mode build (-DEMP_TEST_MODE=ON) makes emp-tool's default-constructed
 			// PRGs deterministic, for wire-byte-identity tests only. If it leaks into a real
-			// run every secret -- Delta, choice seeds, labels, the F_eq nonce --
+			// run every secret -- Delta, the COT choices, labels, the F_eq nonce --
 			// becomes predictable and the c_gamma soundness (which rests on Delta staying
 			// secret and random) collapses. Every construction path (session and raw backend)
 			// funnels through this ctor, so refuse here unless a build explicitly opts in.
@@ -250,10 +246,7 @@ class AuthSharePool {
 			// One public-key base OT per unordered pair: the higher-numbered
 			// party's COT direction bootstraps normally, then supplies hashed
 			// random OTs as the reverse direction's base OTs.
-			block choice_seed;
-			if (choice_seed_in) choice_seed = *choice_seed_in;
-			else prg.random_block(&choice_seed, 1);
-			dedup_bootstrap_pairs_(tmp, choice_seed, base_ot_kind,
+			dedup_bootstrap_pairs_(tmp, base_ot_kind,
 			                       planned_sender_cots, planned_receiver_cots);
 
 #if EMP_AG_OT_BACKEND == 1
@@ -290,11 +283,12 @@ class AuthSharePool {
 	}
 
 #if EMP_AG_OT_BACKEND == 1
-	// After the parents are bootstrapped, spawn lanes 1..L-1 as clone_lane
-	// copies on meshes 1..L-1 and begin() each (clones skip bootstrap; begin()
-	// just enters a session + guards
-	// FS on their fresh mesh channel). Salt = lane index t (never
-	// peer-dependent). SoftSpoken-only (clone_lane is a SoftSpoken method).
+	// After the parents are bootstrapped and their prefixes checked, spawn lanes
+	// 1..L-1 as clone_lane copies on meshes 1..L-1 and begin() each (clones skip
+	// bootstrap; begin() just enters a session + guards FS on their fresh mesh
+	// channel). Each clone derives its session id from its parent's, so both ends
+	// clone every parent in the same order, t = 1..L-1. SoftSpoken-only
+	// (clone_lane is a SoftSpoken method).
 	void spawn_and_begin_lanes() {
 		for (int peer = 1; peer <= nP; ++peer) if (peer != party) {
 			abit1_lane[peer].resize(L - 1);
@@ -302,8 +296,8 @@ class AuthSharePool {
 			for (int t = 1; t < L; ++t) {
 				auto *send_parent = static_cast<ConfiguredOTExt *>(abit1[peer].get());
 				auto *recv_parent = static_cast<ConfiguredOTExt *>(abit2[peer].get());
-				abit1_lane[peer][t - 1] = send_parent->clone_lane(cot_chan(peer, true, t), (uint16_t)t);
-				abit2_lane[peer][t - 1] = recv_parent->clone_lane(cot_chan(peer, false, t), (uint16_t)t);
+				abit1_lane[peer][t - 1] = send_parent->clone_lane(cot_chan(peer, true, t));
+				abit2_lane[peer][t - 1] = recv_parent->clone_lane(cot_chan(peer, false, t));
 			}
 		}
 		vector<future<void>> res;
@@ -318,41 +312,10 @@ class AuthSharePool {
 	}
 #endif
 
-	// The choice seed of this party's receiver toward `peer`: the shared one, so the
-	// party's bits agree across peers.
-	block receiver_choice_seed_(const block &choice_seed, int peer) const {
-		(void)peer;
-#ifdef EMP_AG_TEST_SPLIT_CHOICE
-		// TEST-ONLY (never in production): party 2 draws different bits toward party 3
-		// than toward everyone else, so its shares disagree across peers while every
-		// COT stays valid. The share-consistency check must abort.
-		if (party == 2 && peer == 3) return choice_seed ^ makeBlock(0, 1);
-#endif
-		return choice_seed;
-	}
-
 	std::unique_ptr<OTExt> make_cot_extension_(
 			int role, NetIO *channel, std::unique_ptr<OT> base) {
 		return std::make_unique<ConfiguredOTExt>(
 			role, channel, /*malicious=*/true, std::move(base));
-	}
-
-	// Ferret normally derives its public LPN matrix from the pair-specific sid.
-	// emp-ag instead needs every stream received by Pi to expose the same choice
-	// vector, while keeping those pair/direction transcript ids distinct. Both
-	// endpoints know the receiver identity, so install one session/receiver root
-	// on the configured Ferret instance. Other backends already derive matching
-	// choices directly from set_choice_seed and compile this helper to a no-op.
-	void configure_shared_choice_matrix_(OTExt *ot, int receiver) {
-#if EMP_AG_OT_BACKEND == 2
-		const block root = RO("emp-ag:ferret:lpn-matrix", session_id)
-			.absorb((uint64_t)receiver)
-			.squeeze_block();
-		static_cast<ConfiguredOTExt *>(ot)->set_lpn_matrix_seed(root);
-#else
-		(void)ot;
-		(void)receiver;
-#endif
 	}
 
 	// Bootstrap one direction per unordered pair with its normal public-key base
@@ -365,11 +328,11 @@ class AuthSharePool {
 	// sender's Delta offline, with no abort, and then repair its own primary fold
 	// before that check ran. The derivation hashes prefix row i under gid i of a
 	// MITCCRH stream started from the reverse direction's sid: H(K_i) and
-	// H(K_i ^ Delta) for the primary sender, H(M_i) for the receiver. Both
-	// directions draw and check the same 128-COT prefix, so every receiver of a
-	// party sits at the same session and cursor, preserving the shared-choice
-	// invariant for nP > 2.
-	void dedup_bootstrap_pairs_(const bool* delta_me, const block& choice_seed,
+	// H(K_i ^ Delta) for the primary sender, H(M_i) for the receiver. The
+	// derivation relies on each primary receiver's prefix choices being its own
+	// fresh, private randomness. Both directions draw and check a 128-COT prefix,
+	// so counted plans include the prefix in either direction.
+	void dedup_bootstrap_pairs_(const bool* delta_me,
 			BaseOtKind base_ot_kind, int64_t planned_sender_cots,
 			int64_t planned_receiver_cots) {
 		constexpr int64_t K = 128;
@@ -401,7 +364,7 @@ class AuthSharePool {
 		// peer still needs that worker to make progress on another primary pair.
 		for (int peer : peer_order(party, nP)) {
 			primary[(size_t)peer].resize((size_t)K);
-			res.push_back(pool->enqueue([this, peer, delta_me, &choice_seed,
+			res.push_back(pool->enqueue([this, peer, delta_me,
 			                                  base_ot_kind, planned_sender_cots,
 			                                  planned_receiver_cots, &primary,
 			                                  &primary_sid]() {
@@ -413,7 +376,6 @@ class AuthSharePool {
 					abit1[peer] = make_cot_extension_(
 						ALICE, ch_send, make_base_ot(base_ot_kind, ch_send));
 					abit1[peer]->set_sid(primary_sid[(size_t)peer]);
-					configure_shared_choice_matrix_(abit1[peer].get(), peer);
 					abit1[peer]->set_delta(delta_me);
 					if (planned_sender_cots >= 0) abit1[peer]->begin(planned_sender_cots);
 					else                          abit1[peer]->begin();
@@ -425,8 +387,6 @@ class AuthSharePool {
 					abit2[peer] = make_cot_extension_(
 						BOB, ch_recv, make_base_ot(base_ot_kind, ch_recv));
 					abit2[peer]->set_sid(primary_sid[(size_t)peer]);
-					configure_shared_choice_matrix_(abit2[peer].get(), party);
-					abit2[peer]->set_choice_seed(receiver_choice_seed_(choice_seed, peer));
 					if (planned_receiver_cots >= 0) abit2[peer]->begin(planned_receiver_cots);
 					else                            abit2[peer]->begin();
 					ch_recv->flush();
@@ -444,11 +404,10 @@ class AuthSharePool {
 		joinNclean(res);
 
 		// Phase 2: derive each reverse direction's base OTs from its checked primary
-		// prefix, then draw and check the matching prefix that keeps every receiver
-		// at the same session and cursor.
+		// prefix, then draw and check that direction's own 128-COT prefix.
 		res.clear();
 		for (int peer : peer_order(party, nP)) {
-			res.push_back(pool->enqueue([this, peer, delta_me, &choice_seed,
+			res.push_back(pool->enqueue([this, peer, delta_me,
 			                              planned_sender_cots, planned_receiver_cots,
 			                              &primary, &reverse_sid]() {
 				const bool me_smaller = party < peer;
@@ -477,8 +436,6 @@ class AuthSharePool {
 						BOB, ch_recv,
 						std::make_unique<BufferOT>(ch_recv, std::move(m0), std::move(m1)));
 					abit2[peer]->set_sid(reverse_sid[(size_t)peer]);
-					configure_shared_choice_matrix_(abit2[peer].get(), party);
-					abit2[peer]->set_choice_seed(receiver_choice_seed_(choice_seed, peer));
 					if (planned_receiver_cots >= 0) abit2[peer]->begin(planned_receiver_cots);
 					else                            abit2[peer]->begin();
 					ch_recv->flush();
@@ -500,7 +457,6 @@ class AuthSharePool {
 						ALICE, ch_send,
 						std::make_unique<BufferOT>(ch_send, std::move(c), std::move(mc)));
 					abit1[peer]->set_sid(reverse_sid[(size_t)peer]);
-					configure_shared_choice_matrix_(abit1[peer].get(), peer);
 					abit1[peer]->set_delta(delta_me);
 					if (planned_sender_cots >= 0) abit1[peer]->begin(planned_sender_cots);
 					else                          abit1[peer]->begin();
@@ -629,16 +585,25 @@ class AuthSharePool {
 			KEY[i].resize(ext_len);
 		}
 
-		// No x^me sampling or Fix exchange: with the shared choice_prg seed set
-		// in the ctor, all of Pi's abit2[peer] receivers commit the SAME choice bits
-		// across peer pairs. So bit0(MAC[peer1][k]) = bit0(MAC[peer2][k])
-		// = ... = x^me_k automatically — no need to sample x^me, exchange
-		// r_choice/d, or update K. The pinned-bit invariants (bit0(Δ)=1,
-		// bit0(K)=0, bit0(M)=choice) hold straight out of rcot's bit-0
-		// post-processing. Honest Pi gets a consistent share by
-		// construction; a malicious Pi using non-shared seeds across peers
-		// would produce mismatched per-peer bit0(MAC), and check2's per-
-		// peer Mw verification catches that — soundness preserved.
+		// Fix exchange (nP>2). Every receiver draws its own choices, so the party
+		// samples x^me for the corrected positions [0, length) -- the outputs and
+		// check2's hiding shares -- and each (peer, lane) receiver task sends that
+		// peer d = x^me ⊕ choice, one bit per COT, right after its draw and on the
+		// same channel. The receiver sets MAC ^= d·e0 and the peer KEY ^= d·(Δ ⊕ e0),
+		// so bit0(KEY) = 0, bit0(MAC) = x^me and MAC = KEY ⊕ x^me·Δ hold at every
+		// peer slot. The check1 tail [length, ext_len) keeps its pair-specific
+		// choices. A party whose corrections disagree across peers holds different
+		// bits toward them, which check2 catches. At nP=2 the receiver's choice is
+		// x^me and nothing is sent.
+		if constexpr (nP > 2) {
+			if (fix_x_.size() < (size_t)length) fix_x_.resize((size_t)length);
+			prg.random_bool(fix_x_.data(), length);
+			for (int i = 1; i <= nP; ++i) if (i != party) {
+				if (fix_out_[i].size() < (size_t)length) fix_out_[i].resize((size_t)length);
+				if (fix_in_[i].size() < (size_t)length) fix_in_[i].resize((size_t)length);
+			}
+		}
+		const block dxor = Delta ^ bit0_mask;
 #ifdef AG_PROFILE
 		int64_t _cot0 = io->count();
 #endif
@@ -656,12 +621,44 @@ class AuthSharePool {
 				auto [lo, hi] = lane_range(t, ext_len, L);
 				const int n = hi - lo;
 				if (n <= 0) continue;   // never an empty lane (caller guarantees L <= ext_len)
+				// This lane's corrected positions: [lo, lo + nfix).
+				const int nfix = (nP > 2) ? std::max(0, std::min(hi, length) - lo) : 0;
 				OTExt *otS = cot(peer, true, t);   NetIO *chS = cot_chan(peer, true, t);
 				OTExt *otR = cot(peer, false, t);  NetIO *chR = cot_chan(peer, false, t);
 				block *KEYp = KEY[peer].data() + lo;
 				block *MACp = MAC[peer].data() + lo;
-				res.push_back(pool->enqueue([otS, chS, KEYp, n]() { otS->next_n(KEYp, n); chS->flush(); }));
-				res.push_back(pool->enqueue([otR, chR, MACp, n]() { otR->next_n(MACp, n); chR->flush(); }));
+				uint8_t *din = nfix > 0 ? fix_in_[peer].data() + lo : nullptr;
+				uint8_t *dout = nfix > 0 ? fix_out_[peer].data() + lo : nullptr;
+				const uint8_t *xme = nfix > 0 ? fix_x_.data() + lo : nullptr;
+				bool split = false;
+#ifdef EMP_AG_TEST_SPLIT_CHOICE
+				// TEST-ONLY (never in production): party 2 holds the complement of its
+				// bits toward party 3 -- it applies and sends the flipped correction --
+				// so its shares disagree across peers while every MAC stays valid. The
+				// share-consistency check must abort.
+				split = (party == 2 && peer == 3);
+#endif
+				res.push_back(pool->enqueue([otS, chS, KEYp, n, din, nfix, dxor]() {
+					otS->next_n(KEYp, n);
+					chS->flush();   // before blocking on the correction
+					if (nfix > 0) {
+						chS->recv_bool(din, nfix);
+						for (int k = 0; k < nfix; ++k)
+							KEYp[k] = KEYp[k] ^ (select_mask[din[k]] & dxor);
+					}
+				}));
+				res.push_back(pool->enqueue([otR, chR, MACp, n, dout, xme, nfix, split]() {
+					otR->next_n(MACp, n);
+					if (nfix > 0) {
+						const uint8_t flip = split ? 1 : 0;
+						for (int k = 0; k < nfix; ++k)
+							dout[k] = (uint8_t)(xme[k] ^ (getLSB(MACp[k]) ? 1 : 0) ^ flip);
+						for (int k = 0; k < nfix; ++k)
+							MACp[k] = MACp[k] ^ (select_mask[dout[k]] & bit0_mask);
+						chR->send_bool(dout, nfix);
+					}
+					chR->flush();
+				}));
 			}
 		joinNclean(res);
 		cots_minted_since_check = true;
