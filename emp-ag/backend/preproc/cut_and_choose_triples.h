@@ -49,10 +49,11 @@
 // its zero test's commitments; with the pairwise check at nP > 2 they are exchanged). At
 // nP == 2 there is no second honest view.
 //
-// Outputs are banked: take(n) serves n triples, generating batches of `batch` outputs as
-// the bank runs dry. Batch i of the session is held to 2^-ssp / (i (i + 1)). A batch keeps
-// the MAC and key of all 3 pop candidates toward every peer until its outputs are built,
-// 32 (nP - 1) bytes per aShare, and pop is about B T times the batch.
+// Outputs are banked: take(n), the TripleSource interface (preproc/triple_source.h), serves
+// n triples, generating batches of `batch` outputs as the bank runs dry. Batch i of the
+// session is held to 2^-ssp / (i (i + 1)). A batch keeps the MAC and key of all 3 pop
+// candidates toward every peer until its outputs are built, 32 (nP - 1) bytes per aShare,
+// and pop is about B T times the batch.
 //
 #include "emp-ag/backend/crypto/cut_and_choose_bound.h"
 #include "emp-ag/backend/crypto/feq.h"          // fs_coin_pair_group
@@ -61,6 +62,7 @@
 #include "emp-ag/backend/crypto/protocols.h"    // sampleRandom
 #include "emp-ag/backend/netmp.h"
 #include "emp-ag/backend/preproc/auth_share_pool.h"
+#include "emp-ag/backend/preproc/triple_source.h"
 #include "emp-ag/backend/runtime.h"             // parallel_for
 #include "emp-tool/runtime/crypto/mitccrh.h"
 #include <algorithm>
@@ -74,7 +76,7 @@
 namespace emp::ag {
 
 template <int nP, class OpenCheck = DefaultOpenCheck<nP>>
-class CutAndChooseTriples {
+class CutAndChooseTriples : public TripleSource<nP> {
 public:
   // Opens through kings (else all to all).
   static constexpr bool kKings = nP > 2 && !OpenCheck::kPerPeerOperands;
@@ -96,7 +98,7 @@ public:
 
   // Write n triples into mac[peer] and key[peer], resized to 3n: a at [0, n), b at [n, 2n),
   // c at [2n, 3n), this party's share in bit 0 of its MACs, as AuthSharePool's aShares.
-  void take(int64_t n, BlockVec mac[nP + 1], BlockVec key[nP + 1]) {
+  void take(int64_t n, BlockVec mac[nP + 1], BlockVec key[nP + 1]) override {
     expecting(n >= 0, "cut-and-choose: negative count");
     for (int p = 1; p <= nP; ++p) if (p != party_) {
       mac[p].resize((size_t)(3 * n));
