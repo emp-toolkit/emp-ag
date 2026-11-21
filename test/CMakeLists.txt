@@ -30,12 +30,14 @@ endfunction()
 # incl. a full session on mesh 0 concurrent with traffic on mesh 1.
 add_test_case_with_run(netmp_group)
 
-# Lower-layer protocol tests (auth-shares / IKNP). auth_share uses the white-box check_MAC
-# correlation check, compiled only under EMP_AG_DEBUG_CHECKS; three_party_iknp checks
-# each pair's correlation itself.
+# Lower-layer protocol tests. three_party_iknp checks each pair's correlation itself.
+# ashare_test runs the share layer on its own over every mint the build has (StreamMint;
+# SilentFerretMint too in the SilentFerret build), checking every share in both
+# directions of every pair, at 2, 3 and 4 parties.
 add_test_case_with_run(three_party_iknp)
-add_test_case_with_run(auth_share)
-target_compile_definitions(test_auth_share PRIVATE EMP_AG_DEBUG_CHECKS)
+add_np_variant(ashare_test_np2 ashare_test.cpp 2 DEFS ASHARE_NP=2)
+add_np_variant(ashare_test_np3 ashare_test.cpp 3 DEFS ASHARE_NP=3)
+add_np_variant(ashare_test_np4 ashare_test.cpp 4 DEFS ASHARE_NP=4)
 
 # Typed-value frontend over AGMPCSession (BooleanProgram -> AGMPCEngine) + IR.
 # agmpc_reactive also hosts the direct-recording checks (const-only first chunk,
