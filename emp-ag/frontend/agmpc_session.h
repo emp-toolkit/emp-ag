@@ -214,7 +214,9 @@ public:
   // must select the same kind. `planned_sender_cots` / `planned_receiver_cots`
   // optionally bound each one-lane local COT stream when its total demand
   // is known; counts include emp-ag's 128-COT bootstrap prefix. -1 keeps the
-  // ordinary reusable stream. Each local sender count must match the peer's
+  // ordinary reusable stream. With SilentFerret a plan is instead the batch the
+  // stream prepays at setup, and a stream that runs past it prepays another
+  // batch of the same size. Each local sender count must match the peer's
   // receiver count and vice versa; using one identical pair at every party is
   // valid only when sender == receiver.
   // The worker pool is mandatory and needs

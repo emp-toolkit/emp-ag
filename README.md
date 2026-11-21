@@ -98,7 +98,7 @@ cmake -S emp-ag -B emp-ag/build \
 | `EMP_AG_BUILD_TESTS`    | `ON` when top-level | Build the test suite under `test/` (incl. `test/adversarial/`). |
 | `EMP_AG_BUILD_BENCHES`  | `OFF` | Build the benchmarks under `bench/` (opt-in; not run by ctest). |
 | `EMP_AG_BUILD_EXAMPLES` | `ON` when top-level | Build the examples under `example/` (smoke-run by ctest). |
-| `EMP_AG_OT_BACKEND`     | `SoftSpoken` | COT backend for aShare generation: `SoftSpoken`, `IKNP`, or `Ferret`. |
+| `EMP_AG_OT_BACKEND`     | `SoftSpoken` | COT backend for aShare generation: `SoftSpoken`, `IKNP`, `Ferret`, or `SilentFerret`. `SilentFerret` sends every message for a planned number of COTs when the session starts (the session's planned COT counts), after which drawing COTs moves no bytes. |
 | `EMP_AG_SOFTSPOKEN_K`   | `8` | With `SoftSpoken`, the field parameter `k`. |
 | `EMP_AG_DEBUG`          | `OFF` | Enable internal MAC / correctness checks. |
 | `EMP_AG_PROFILE`        | `OFF` | Protocol timing / communication profiling (`[ag]` / `[ag-tp]` phase markers); zero-cost when off. |
