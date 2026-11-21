@@ -54,9 +54,10 @@ template <int nP, class Cfg = GarbleConfig<>>
 class AGMPCProtocol {
   static_assert(nP >= 2, "AGMPC requires at least 2 parties");
 public:
-  // Long-lived setup: COT mesh + Δ + TriplePool (which owns the inner
-  // AuthSharePool). Constructed once per session and reused across all
-  // input, circuit-run and decode calls.
+  // Long-lived setup, constructed once per session and reused across all input,
+  // circuit-run and decode calls: the share pool (COT mesh + Δ + aShares,
+  // ashare/auth_share_pool.h) and the triple pool over it (triple/triple_pool.h).
+  AuthSharePool<nP> *abit = nullptr;
   TriplePool<nP> *fpre = nullptr;
   NetIOMP<nP> *io;
   ThreadPool *pool;
@@ -109,15 +110,19 @@ public:
     session_id = session_id_ ? *session_id_ : sampleRandom<nP>(io_, &prg, pool_, party_);
     // Parties that disagree on the garbling options then disagree on the id, and setup fails.
     session_id = bind_garble_config<nP, Cfg>(session_id);
-    fpre = new TriplePool<nP>(io_, pool_, party_, ssp_, grp, session_id,
-                              base_ot_kind, planned_sender_cots,
-                              planned_receiver_cots);
-    Delta = fpre->Delta;
+    // The share pool first (base OTs and COT setup), then the triple pool over it.
+    abit = new AuthSharePool<nP>(io_, pool_, party_, grp, session_id, base_ot_kind,
+                                 planned_sender_cots, planned_receiver_cots);
+    fpre = new TriplePool<nP>(*abit, io_, pool_, party_, ssp_, grp, session_id);
+    Delta = abit->Delta;
   }
-  ~AGMPCProtocol() { delete fpre; }
+  ~AGMPCProtocol() {
+    delete fpre;
+    delete abit;
+  }
 
-  // Owns fpre (and borrows io/pool); non-copyable / non-movable so the raw
-  // owning pointer is never double-deleted.
+  // Owns abit and fpre (and borrows io/pool); non-copyable / non-movable so the raw
+  // owning pointers are never double-deleted.
   AGMPCProtocol(const AGMPCProtocol &) = delete;
   AGMPCProtocol &operator=(const AGMPCProtocol &) = delete;
   AGMPCProtocol(AGMPCProtocol &&) = delete;
@@ -190,22 +195,18 @@ private:
   using ComputeCtx = emp::ag::ComputeCtx<nP>;
 
   // The half-gate hash seed is not drawn on a round of its own. It is piggybacked off
-  // the per-chunk post-commitment triple coin: TriplePool::draw_coins squeezes one extra
-  // domain-separated block from that coin into fpre->halfgate_seed_, and draw_and_seed
-  // copies it into ctx.halfgate_seed after compute_and_shares. That coin is globally
+  // the per-chunk post-commitment triple coin: draw_and_seed squeezes one
+  // domain-separated block from TriplePool::call_coin_ into ctx.halfgate_seed after
+  // compute_and_shares. That coin is globally
   // agreed (FS pair at nP==2 / commit-reveal at nP>2), so the evaluator's re-hash matches
   // every garbler; being fresh per chunk, the hash's (start point, gid) -- one stream per
   // sender, garble/halfgate.h -- never repeats across chunks under the fixed long-lived
   // Delta.
 
-  // One-round all-to-all authenticated open. targets[t] (t in 1..nP) is the
-  // list of wire indices into `base` to open to party t (empty => t reconstructs nothing). Every
-  // party sends each non-empty target t != self ONE message [share bits][MAC digest under t's
-  // key]; every target verifies each peer (key ^ bit·Δ) and reconstructs λ_w = ⊕_p λ_w^p.
-  // Returns the reconstructed bits for targets[self]; empty if self is not a target; aborts on a
-  // share-MAC mismatch. One message per directed (sender,target) pair -> deterministic
-  // per-channel transcript; a party sees only shares of wires opened TO IT (privacy).
-  // decode(PUBLIC) and process_inputs both open through this single round.
+  // The checked opening of ashare/open.h over this session's mesh and keys: targets[t]
+  // (t in 1..nP) lists the wire indices into `base` to open to party t, in one round;
+  // returns the bits for targets[self], and aborts on a share-MAC mismatch.
+  // decode(PUBLIC) and process_inputs both open through it.
   std::vector<unsigned char> open_to_targets(const AShareBundle<nP> *base,
                                              const std::vector<std::vector<int>> &targets);
 
