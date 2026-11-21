@@ -118,7 +118,9 @@ bucketed per chunk. `TriplePool::use_cut_and_choose(batch)`, or compiling with
 cut-and-choose triples (`backend/preproc/cut_and_choose_triples.h`), generated
 `batch` at a time and checked before use. This sends fewer bytes per triple when
 COTs are cheap (`Ferret`) and batches are large, at the cost of more computation
-and of memory proportional to the batch. Every party must make the same choice.
+and of memory proportional to the batch. `TriplePool::use_source` installs any
+other source of authenticated random triples (`backend/preproc/triple_source.h`
+states what a source must guarantee). Every party must make the same choice.
 
 The garbling options are compile-time: `AGMPCSession<nP, ag::GarbleConfig<A, D>>`
 (`backend/garble_config.h`). Every party must use the same options; a session binds
