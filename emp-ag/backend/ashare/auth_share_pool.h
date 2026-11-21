@@ -11,6 +11,7 @@
 #include "emp-ot/base_ot/base_ot_select.h"  // BaseOtKind / make_base_ot
 #include "emp-ot/ot_extension/iknp.h"
 #include "emp-ot/ot_extension/ferret/ferret.h"
+#include "emp-ot/ot_extension/ferret/silent_ferret.h"
 #include "emp-ot/ot_extension/softspoken/softspoken.h"
 #include "emp-ag/backend/ashare/buffer_ot.h"   // BufferOT (one base OT per unordered pair)
 #include "emp-ag/backend/ashare/open_check.h"   // SymmetricOpenCheck (settle_check2)
@@ -38,11 +39,21 @@ namespace emp::ag {
 //                   less AES compute.
 //   Ferret      — emp-ot's default parameter set (ferret_b12); smallest
 //                 steady-state bandwidth.
+//   SilentFerret — Ferret that sends, when a stream begins, every message for
+//                 a planned number n of COTs (begin(n): the corrections and
+//                 the consistency checks); drawing them then moves no bytes.
+//                 The planned COT counts set n. A stream with no plan prepays
+//                 one round at a time, and a stream that runs past its batch
+//                 prepays another of the same size. EMP_AG_FERRET_THREADS
+//                 sizes the pool each stream prepares a batch with.
 #ifndef EMP_AG_OT_BACKEND
 #define EMP_AG_OT_BACKEND 1
 #endif
 #ifndef EMP_AG_SOFTSPOKEN_K
 #define EMP_AG_SOFTSPOKEN_K 8
+#endif
+#ifndef EMP_AG_FERRET_THREADS
+#define EMP_AG_FERRET_THREADS 2
 #endif
 #if EMP_AG_OT_BACKEND == 0
 using ConfiguredOTExt = emp::IKNP;
@@ -50,8 +61,10 @@ using ConfiguredOTExt = emp::IKNP;
 using ConfiguredOTExt = emp::SoftSpoken<EMP_AG_SOFTSPOKEN_K>;
 #elif EMP_AG_OT_BACKEND == 2
 using ConfiguredOTExt = emp::Ferret;
+#elif EMP_AG_OT_BACKEND == 3
+using ConfiguredOTExt = emp::SilentFerret;
 #else
-#error "EMP_AG_OT_BACKEND must be 0=IKNP, 1=SoftSpoken, or 2=Ferret"
+#error "EMP_AG_OT_BACKEND must be 0=IKNP, 1=SoftSpoken, 2=Ferret, or 3=SilentFerret"
 #endif
 
 using OTExt = emp::OTExtension;
@@ -165,6 +178,7 @@ class AuthSharePool {
 	std::vector<uint8_t> fix_x_, fix_out_[nP + 1], fix_in_[nP + 1];
 	bool cot_sessions_open = false;
 	bool cots_minted_since_check = false;
+	int64_t cots_per_stream_ = 0;   // see cots_per_stream()
 
  public:
 
@@ -175,7 +189,8 @@ class AuthSharePool {
 	// for each pair's primary direction; every party must select the same kind.
 	// Optional planned sender/receiver counts include the 128-COT bootstrap prefix
 	// and are forwarded to OTExtension::begin(n_ots), allowing a one-lane
-	// SoftSpoken stream to shorten its terminal transfer. For every pair, this
+	// SoftSpoken stream to shorten its terminal transfer and a SilentFerret
+	// stream to prepay all of its COTs. For every pair, this
 	// party's sender count must equal its peer's receiver count and vice versa;
 	// passing one identical (sender,receiver) pair at every party is therefore
 	// valid only when the two counts are equal. -1 keeps the ordinary unbounded
@@ -197,9 +212,12 @@ class AuthSharePool {
 			          "AuthSharePool: planned sender COT count must be -1 or include the 128-COT bootstrap prefix");
 			expecting(planned_receiver_cots == -1 || planned_receiver_cots >= 128,
 			          "AuthSharePool: planned receiver COT count must be -1 or include the 128-COT bootstrap prefix");
+#if EMP_AG_OT_BACKEND == 1
+			// Only SoftSpoken splits each draw across lanes; a plan counts one stream.
 			expecting((planned_sender_cots < 0 && planned_receiver_cots < 0) ||
 			              grp_in == nullptr || grp_in->size() == 1,
 			          "AuthSharePool: counted COT plans require one lane");
+#endif
 			grp = grp_in;
 			// A test-mode build (-DEMP_TEST_MODE=ON) makes emp-tool's default-constructed
 			// PRGs deterministic, for wire-byte-identity tests only. If it leaks into a real
@@ -314,8 +332,15 @@ class AuthSharePool {
 
 	std::unique_ptr<OTExt> make_cot_extension_(
 			int role, NetIO *channel, std::unique_ptr<OT> base) {
+#if EMP_AG_OT_BACKEND == 3
+		// SilentFerret takes its LPN parameters before the base OT, then its pool size.
+		return std::make_unique<ConfiguredOTExt>(
+			role, channel, /*malicious=*/true, emp::tuning::ferret_b12, std::move(base),
+			EMP_AG_FERRET_THREADS);
+#else
 		return std::make_unique<ConfiguredOTExt>(
 			role, channel, /*malicious=*/true, std::move(base));
+#endif
 	}
 
 	// Bootstrap one direction per unordered pair with its normal public-key base
@@ -470,6 +495,7 @@ class AuthSharePool {
 		Delta = abit1[party == 1 ? 2 : 1]->Delta;
 		cot_sessions_open = true;
 		cots_minted_since_check = true;
+		cots_per_stream_ = K;
 	}
 
 	void close_cot_sessions() {
@@ -496,6 +522,11 @@ class AuthSharePool {
 		if (cots_minted_since_check)
 			flush_cot_check();
 	}
+
+	// COTs drawn so far from each COT stream, the 128-COT bootstrap prefix
+	// included. Every stream, toward every peer and in both directions, draws the
+	// same count, so a run's final value is the planned count for the same run.
+	int64_t cots_per_stream() const { return cots_per_stream_; }
 
 	// check2's residuals not yet tested, and the digest of their views, which every
 	// party must share.
@@ -662,6 +693,7 @@ class AuthSharePool {
 			}
 		joinNclean(res);
 		cots_minted_since_check = true;
+		cots_per_stream_ += ext_len;
 #ifdef AG_PROFILE
 		g_ag_cot_bytes += (uint64_t)(io->count() - _cot0);
 #endif

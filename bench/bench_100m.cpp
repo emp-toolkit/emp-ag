@@ -18,6 +18,13 @@
 //                       (trades barrier amortization against peak RSS and cache
 //                       footprint)
 //   BENCH_THREADS=<n>   ThreadPool workers, default ag::default_pool_size(nP)
+//   EMP_AG_PLANNED_COTS=<n> COTs planned per COT stream (unset: no plan). A run
+//                       prints the count that plans the same run ("cots/stream");
+//                       with SilentFerret the plan prepays the whole run at setup.
+//
+// "wall setup" times the session's construction (connections, base OTs, the COT
+// setup); "wall total" starts after it. Start party 1 last so that its setup does
+// not include waiting for the other parties to start.
 
 #include "emp-ag/emp-ag.h"
 #include "emp-tool/ir/builtins.h"
@@ -123,9 +130,16 @@ int run_bench(char **argv) {
   // The session owns its network: `lanes` meshes over one port per party (the
   // owning ctor builds + flushes them). EMP_AG_LANES overrides the production
   // L(nP). AuthSharePool uses L = grp->size().
-  // A fixed session id: the benchmark leaves out the setup coin flip.
+  const char *planned_env = std::getenv("EMP_AG_PLANNED_COTS");
+  const int64_t planned_cots = (planned_env != nullptr && *planned_env != '\0')
+                                   ? (int64_t)std::strtoll(planned_env, nullptr, 10)
+                                   : -1;
+  // A fixed session id: the benchmark leaves out the setup coin flip. Every
+  // stream draws the same count, so one plan serves both directions.
+  auto t_setup0 = std::chrono::steady_clock::now();
   AGMPCSession<nP> sess(party, peer_port(), any_ip ? iptab : nullptr, &pool, 40, lanes,
-                        zero_block);
+                        zero_block, BaseOtKind::CSW, planned_cots, planned_cots);
+  auto t_setup = std::chrono::steady_clock::now();
   using Ctx = typename AGMPCSession<nP>::ctx_t;
   using B256 = BitVec_T<Ctx, 256>;
 
@@ -191,14 +205,21 @@ int run_bench(char **argv) {
     const double run_s    = std::chrono::duration<double>(t_run - t_input).count();
     const double reveal_s = std::chrono::duration<double>(t_reveal - t_run).count();
     const double total_s  = std::chrono::duration<double>(t_reveal - t0).count();
+    const double setup_s  = std::chrono::duration<double>(t_setup - t_setup0).count();
     std::printf("  protocol chunks %llu\n", (unsigned long long)chunks);
     std::printf("  actual ANDs     %llu\n", (unsigned long long)planned_ands);
+    std::printf("  planned cots    %lld\n", (long long)planned_cots);
+    std::printf("  cots/stream     %lld\n", (long long)sess.protocol().abit->cots_per_stream());
+    std::printf("  wall setup      %.3f s\n", setup_s);
     std::printf("  wall input      %.3f s\n", input_s);
     std::printf("  wall run        %.3f s\n", run_s);
     std::printf("  wall reveal     %.3f s\n", reveal_s);
     std::printf("  wall total      %.3f s\n", total_s);
     std::printf("  throughput      %.3f MAND/s\n",
                 total_s > 0 ? (double)planned_ands / total_s / 1.0e6 : 0.0);
+    std::printf("  with setup      %.3f MAND/s\n",
+                (total_s + setup_s) > 0
+                    ? (double)planned_ands / (total_s + setup_s) / 1.0e6 : 0.0);
     std::printf("  comm total      %.3f GiB  (this party, all peers)\n",
                 (double)comm_bytes(&sess.io(), sess.group(), lanes) / (1024.0 * 1024.0 * 1024.0));
     std::printf("  peak RSS        %.3f GiB\n",

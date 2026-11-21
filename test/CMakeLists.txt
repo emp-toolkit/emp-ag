@@ -148,9 +148,13 @@ add_np_variant(agmpc_long_offline_np4 agmpc_long_offline.cpp 4 DEFS LONG_NP=4)
 add_np_variant(agmpc_independent_triples_direct_np2 agmpc_independent_triples.cpp 2)
 add_np_variant(agmpc_independent_triples_prepared_np2 agmpc_independent_triples.cpp 2
                DEFS INDEPENDENT_TRIPLES_PREPARED=1)
-add_np_variant(agmpc_independent_triples_short_np2 agmpc_independent_triples.cpp 2
-               DEFS INDEPENDENT_TRIPLES_PREPARED=1 INDEPENDENT_TRIPLES_SHORT=1
-               PASS_RE "exceeds declared element count")
+# SilentFerret takes a plan as the size of its prepaid batch and prepays another batch
+# when a stream runs past it, so only the other backends reject the extra COT.
+if(NOT EMP_AG_OT_BACKEND STREQUAL "SilentFerret")
+  add_np_variant(agmpc_independent_triples_short_np2 agmpc_independent_triples.cpp 2
+                 DEFS INDEPENDENT_TRIPLES_PREPARED=1 INDEPENDENT_TRIPLES_SHORT=1
+                 PASS_RE "exceeds declared element count")
+endif()
 
 # SoftSpoken lane-parallel COT end-to-end over a NetIOMPGroup (L=2), one source
 # with the party count via LANE_NP. BOTH registrations are load-bearing: nP=2 is

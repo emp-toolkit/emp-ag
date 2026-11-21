@@ -36,8 +36,8 @@ option(EMP_AG_PROFILE       "Enable protocol timing / communication profiling" O
 option(EMP_AG_INSTALL
        "Generate install / find_package(emp-ag) export rules" ${PROJECT_IS_TOP_LEVEL})
 set(EMP_AG_OT_BACKEND "SoftSpoken" CACHE STRING
-    "COT backend for aShare generation: SoftSpoken, IKNP, or Ferret")
-set_property(CACHE EMP_AG_OT_BACKEND PROPERTY STRINGS SoftSpoken IKNP Ferret)
+    "COT backend for aShare generation: SoftSpoken, IKNP, Ferret, or SilentFerret")
+set_property(CACHE EMP_AG_OT_BACKEND PROPERTY STRINGS SoftSpoken IKNP Ferret SilentFerret)
 set(EMP_AG_SOFTSPOKEN_K "8" CACHE STRING
     "SoftSpoken k parameter when EMP_AG_OT_BACKEND=SoftSpoken (8 = fewest COT bytes; smaller k trades COT bytes for less compute)")
 set_property(CACHE EMP_AG_SOFTSPOKEN_K PROPERTY STRINGS 2 4 8)
@@ -73,8 +73,10 @@ elseif(EMP_AG_OT_BACKEND STREQUAL "SoftSpoken")
         EMP_AG_OT_BACKEND=1 EMP_AG_SOFTSPOKEN_K=${EMP_AG_SOFTSPOKEN_K})
 elseif(EMP_AG_OT_BACKEND STREQUAL "Ferret")
     target_compile_definitions(emp-ag INTERFACE EMP_AG_OT_BACKEND=2)
+elseif(EMP_AG_OT_BACKEND STREQUAL "SilentFerret")
+    target_compile_definitions(emp-ag INTERFACE EMP_AG_OT_BACKEND=3)
 else()
-    message(FATAL_ERROR "EMP_AG_OT_BACKEND must be one of: SoftSpoken, IKNP, Ferret")
+    message(FATAL_ERROR "EMP_AG_OT_BACKEND must be one of: SoftSpoken, IKNP, Ferret, SilentFerret")
 endif()
 
 if(EMP_AG_DEBUG)
