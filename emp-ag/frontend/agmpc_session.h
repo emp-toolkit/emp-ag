@@ -158,6 +158,58 @@ public:
     ~PreparedExecution() { release_(); }
   };
 
+  // Circuit mode (emp-tool ComputationSession): a prepared Computation, one use,
+  // this session only. Destroying it unrun drops it: its preprocessing is never
+  // reused, and the session continues.
+  class ComputationJob {
+    friend class AGMPCSession<nP, Cfg>;
+    using Material = typename Engine::Material;
+
+    AGMPCSession *owner_ = nullptr;
+    uint64_t token_ = 0;
+    std::unique_ptr<Material> material_;
+    std::shared_ptr<const circuit::ComputationArtifact> artifact_;
+    std::vector<unsigned char> mask_;   // per input wire: its mask where opened to this party
+
+    ComputationJob(AGMPCSession *owner, uint64_t token,
+                   std::unique_ptr<Material> material,
+                   std::shared_ptr<const circuit::ComputationArtifact> artifact,
+                   std::vector<unsigned char> mask)
+        : owner_(owner), token_(token), material_(std::move(material)),
+          artifact_(std::move(artifact)), mask_(std::move(mask)) {}
+    void release_() {
+      if (owner_ != nullptr) owner_->abandon_computation_(token_);
+      owner_ = nullptr;
+      token_ = 0;
+      material_.reset();
+      artifact_.reset();
+      mask_.clear();
+    }
+
+  public:
+    ComputationJob(const ComputationJob &) = delete;
+    ComputationJob &operator=(const ComputationJob &) = delete;
+    ComputationJob(ComputationJob &&other) noexcept
+        : owner_(std::exchange(other.owner_, nullptr)),
+          token_(std::exchange(other.token_, 0)),
+          material_(std::move(other.material_)),
+          artifact_(std::move(other.artifact_)),
+          mask_(std::move(other.mask_)) {}
+    ComputationJob &operator=(ComputationJob &&other) noexcept {
+      if (this != &other) {
+        release_();
+        owner_ = std::exchange(other.owner_, nullptr);
+        token_ = std::exchange(other.token_, 0);
+        material_ = std::move(other.material_);
+        artifact_ = std::move(other.artifact_);
+        mask_ = std::move(other.mask_);
+      }
+      return *this;
+    }
+    ~ComputationJob() { release_(); }
+  };
+  using job_t = ComputationJob;
+
   // The session OWNS its network: it builds `lanes` NetIOMP meshes over one port
   // per party (port+party listen, dial port+peer) and runs COT/aShare generation
   // lane-parallel across them. `ip` is the
@@ -224,6 +276,8 @@ public:
   ~AGMPCSession() {
     expecting(!prepared_outstanding_,
               "AGMPCSession: a prepared execution outlived its session");
+    expecting(!computation_outstanding_,
+              "AGMPCSession: a Computation job outlived its session");
   }
 
   // The session's mesh-0 NetIOMP (the io for all non-lane traffic) and, when
@@ -256,6 +310,7 @@ public:
   prepare(const frontend::Circuit<RetV, ArgVs...> &c) {
     expecting(!prepared_outstanding_,
               "AGMPCSession::prepare: another prepared execution is outstanding");
+    require_no_computation_job_("AGMPCSession::prepare");
     materialize_deferred_inputs_();
     std::unique_ptr<typename Engine::Material> material =
         engine_.prepare_program(c.program_shared());
@@ -274,6 +329,7 @@ public:
   run(PreparedExecution<RetV, ArgVs...> &&prepared,
       const typename ArgVs::template rebind<ctx_t> &...args) {
     using Out = typename RetV::template rebind<ctx_t>;
+    require_no_computation_job_("AGMPCSession::run(prepared)");
     expecting(prepared.owner_ == this && prepared.material_ != nullptr &&
                   prepared_outstanding_ &&
                   prepared.token_ == active_prepared_token_,
@@ -340,6 +396,97 @@ public:
     return Base::template from_ids_<Out>(this->ctx_, out_ids);
   }
 
+  // ---- Circuit mode (emp-tool ComputationSession; the typed surface is
+  // emp-tool's cf::computation / cf::prepare / cf::run). ----
+  //
+  // prepare_computation does every step that needs no input value: all
+  // preprocessing and the garbling of the whole program (P1 stores the rows),
+  // then one MAC-checked round that opens each Party input's mask to its owner
+  // and each Public input's to every party. Its checks all complete before that
+  // round. At most one job (of this kind or a prepared execution) is outstanding,
+  // and while a job is outstanding every other call of the session that sends
+  // anything is fatal.
+  job_t prepare_computation(std::shared_ptr<const circuit::ComputationArtifact> art) {
+    expecting(art != nullptr, "AGMPCSession::prepare_computation: null computation");
+    circuit::validate_computation(*art);
+    for (const circuit::InputRole &r : art->io.inputs)
+      expecting(r.kind == circuit::InputKind::Public || r.owner <= nP,
+                "AGMPCSession::prepare_computation: an input owner is above the party count");
+    for (const circuit::OutputRole &r : art->io.outputs)
+      expecting(r.kind == circuit::OutputKind::Public || r.recipient <= nP,
+                "AGMPCSession::prepare_computation: an output recipient is above the party count");
+    expecting(!prepared_outstanding_,
+              "AGMPCSession::prepare_computation: a prepared execution is outstanding");
+    require_no_computation_job_("AGMPCSession::prepare_computation");
+
+    std::unique_ptr<typename Engine::Material> material =
+        engine_.prepare_program(art->program);
+    std::vector<int> owner = computation_input_owners_(*art);
+    std::vector<unsigned char> mask = engine_.open_input_masks(*material, owner);
+    computation_outstanding_ = true;
+    active_computation_token_ = ++next_prepared_token_;
+    return job_t(this, active_computation_token_, std::move(material),
+                 std::move(art), std::move(mask));
+  }
+
+  // The online half: this party binds its own Party slots and every Public slot
+  // (emp-tool check_bindings), checked before any traffic; the job is consumed
+  // before the first message. The owners broadcast their masked inputs (echoed
+  // at nP >= 3), the garblers send P1 the input labels, P1 evaluates the stored
+  // rows, and each output slot opens to its recipients: under KRRW after the
+  // output check, under WRK in the first flight after the inputs, with P1's
+  // masked values handed to each garbler recipient after evaluation.
+  session::RawResult run_computation(job_t &&job, const session::RawBindings &b) {
+    expecting(job.owner_ == this && job.material_ != nullptr &&
+                  computation_outstanding_ &&
+                  job.token_ == active_computation_token_,
+              "AGMPCSession::run_computation: invalid, foreign, abandoned, or consumed job");
+    const std::shared_ptr<const circuit::ComputationArtifact> art = job.artifact_;
+    const circuit::IoSignature &io_sig = art->io;
+    const int me = party();
+    session::check_bindings(*art, me, b);
+
+    const std::vector<uint32_t> in_off = circuit::input_slot_offsets(io_sig);
+    std::vector<int> owner = computation_input_owners_(*art);
+    std::vector<unsigned char> lambda(owner.size(), 0);
+    for (size_t s = 0; s < io_sig.inputs.size(); ++s) {
+      if (!session::binds(io_sig.inputs[s], me)) continue;
+      const session::Bits &bits = *b.inputs[s];
+      for (uint32_t k = 0; k < io_sig.inputs[s].width; ++k) {
+        const size_t w = (size_t)in_off[s] + k;
+        lambda[w] = (unsigned char)((job.mask_[w] ^ (bits[k] != 0 ? 1 : 0)) & 1);
+      }
+    }
+    const std::vector<uint32_t> out_off = circuit::output_slot_offsets(io_sig);
+    std::vector<std::vector<int>> open_to(nP + 1);
+    for (size_t s = 0; s < io_sig.outputs.size(); ++s)
+      for (int t = 1; t <= nP; ++t)
+        if (session::receives(io_sig.outputs[s], t))
+          for (uint32_t k = 0; k < io_sig.outputs[s].width; ++k)
+            open_to[(size_t)t].push_back((int)(out_off[s] + k));
+
+    // Consume before the first online message: an aborted run is not retryable.
+    std::unique_ptr<typename Engine::Material> material = std::move(job.material_);
+    job.owner_ = nullptr;
+    job.token_ = 0;
+    job.artifact_.reset();
+    job.mask_.clear();
+    computation_outstanding_ = false;
+    active_computation_token_ = 0;
+    const std::vector<unsigned char> bits =
+        engine_.run_computation(*material, owner, lambda, open_to);
+
+    session::RawResult r;
+    r.outputs.resize(io_sig.outputs.size());
+    for (size_t s = 0; s < io_sig.outputs.size(); ++s) {
+      if (!session::receives(io_sig.outputs[s], me)) continue;
+      session::Bits v(io_sig.outputs[s].width);
+      for (uint32_t k = 0; k < io_sig.outputs[s].width; ++k) v[k] = bits[out_off[s] + k];
+      r.outputs[s] = std::move(v);
+    }
+    return r;
+  }
+
   // COMPILED replay retains Circuit's immutable shared owner so the engine can
   // cache lowering and the AND count without rescanning gates or trusting a raw
   // address across object lifetimes.
@@ -349,6 +496,7 @@ public:
   wire_bundle_rebind_t<RetV, ctx_t>
   run(const frontend::Circuit<RetV, ArgVs...>& c,
       const wire_bundle_rebind_t<ArgVs, ctx_t>&... args) {
+    require_no_computation_job_("AGMPCSession::run(circuit)");
     materialize_deferred_inputs_();
     using Out = wire_bundle_rebind_t<RetV, ctx_t>;
     std::vector<uint32_t> in_ids;
@@ -379,6 +527,7 @@ public:
         typename std::decay_t<Args>::template rebind<RecordCtx>...>;
     (void)sizeof(frontend::circuit_contract<Tr>);
     if constexpr (Tr::ok) {
+      require_no_computation_job_("AGMPCSession::run(body)");
       materialize_deferred_inputs_();
       std::vector<uint32_t> in_ids;
       (this->append_arg_ids_(in_ids, args), ...);
@@ -410,6 +559,7 @@ public:
   auto run_compose(F&& body, const Args&... args) {
     (void)sizeof(frontend::circuit_contract<Tr>);
     if constexpr (Tr::ok) {
+      require_no_computation_job_("AGMPCSession::run_compose");
       materialize_deferred_inputs_();
       ComposePlan plan = frontend::compose<
           typename std::decay_t<Args>::template rebind<RecordCtx>...>(std::forward<F>(body));
@@ -448,6 +598,7 @@ public:
   // See backend/input_auth.h::adopt_authenticated_input.
   template <class V>
   V adopt_authenticated_input(const AShareBundle<nP>* bundles) {
+    require_no_computation_job_("AGMPCSession::adopt_authenticated_input");
     std::vector<uint32_t> ids = this->ctx_.reserve_ids(V::width());
     if (!prepared_outstanding_) {
       materialize_into_(
@@ -530,12 +681,15 @@ private:
   uint64_t next_prepared_token_ = 0;
   uint64_t active_prepared_token_ = 0;
   bool prepared_outstanding_ = false;
+  uint64_t active_computation_token_ = 0;
+  bool computation_outstanding_ = false;
   size_t lazy_label_count_ = 0;
   int process_input_calls_ = 0;
 
   // ============ CRTP hooks the ChunkedSession base calls (id-based) ============
   void authenticate_into_(int owner, const std::vector<uint8_t>& bits,
                           const std::vector<uint32_t>& ids) {
+    require_no_computation_job_("AGMPCSession::input");
     if (prepared_outstanding_ && owner != PUBLIC)
       stage_input_(owner, bits, ids);
     else
@@ -544,6 +698,7 @@ private:
   void batch_authenticate_into_(const std::vector<int>& owners,
                                 const std::vector<std::vector<uint8_t>>& bits,
                                 const std::vector<std::vector<uint32_t>>& ids) {
+    require_no_computation_job_("AGMPCSession::input_batch");
     if (!prepared_outstanding_) {
       batch_finish_eager_(owners, bits, ids);
       return;
@@ -558,6 +713,7 @@ private:
   void run_program_into_(const circuit::BooleanProgram& prog,
                          const std::vector<uint32_t>& in_ids,
                          const std::vector<uint32_t>& out_ids) {
+    require_no_computation_job_("AGMPCSession: a flush");
     materialize_into_(out_ids, engine_.run_program(prog, gather_carried_(in_ids)));
   }
   void validate_recipient_(int recipient) const {
@@ -565,6 +721,7 @@ private:
               "AGMPCSession::reveal: recipient must be a party id in [1, nP] or PUBLIC");
   }
   std::vector<uint8_t> decode_(const std::vector<uint32_t>& ids, int recipient) {
+    require_no_computation_job_("AGMPCSession::reveal");
     validate_recipient_(recipient);   // also checked pre-flush by the base
     std::vector<bool> b = proto_.decode(
         gather_carried_(ids, /*require_labels=*/false), recipient);
@@ -592,6 +749,7 @@ private:
   // the outstanding prepared job remains valid and may solder those values later.
   void materialize_deferred_inputs_() {
     if (staged_inputs_.empty()) return;
+    require_no_computation_job_("AGMPCSession: settling staged inputs");
     std::vector<int> owners;
     std::vector<std::vector<uint8_t>> bits;
     std::vector<std::vector<uint32_t>> ids;
@@ -689,6 +847,28 @@ private:
     dst.insert(dst.end(), ids.begin(), ids.end());
   }
 
+  // The party that supplies each input wire, PUBLIC for a Public slot.
+  static std::vector<int> computation_input_owners_(const circuit::ComputationArtifact &art) {
+    std::vector<int> owner;
+    owner.reserve(art.program->num_inputs);
+    for (const circuit::InputRole &r : art.io.inputs)
+      owner.insert(owner.end(), r.width,
+                   r.kind == circuit::InputKind::Public ? (int)PUBLIC : r.owner);
+    return owner;
+  }
+  void abandon_computation_(uint64_t token) {
+    if (!computation_outstanding_ || token != active_computation_token_) return;
+    computation_outstanding_ = false;
+    active_computation_token_ = 0;
+  }
+  // While a Computation job is outstanding, nothing else of this session sends:
+  // the job's openings and checks then stand alone, and no value crosses between
+  // a Computation and the direct-mode paths. Recording gates sends nothing and
+  // stays allowed.
+  void require_no_computation_job_(const char *what) const {
+    expecting(!computation_outstanding_,
+              [&] { return std::string(what) + ": a Computation job is outstanding"; });
+  }
   void abandon_prepared_(uint64_t token) {
     if (!prepared_outstanding_ || token != active_prepared_token_) return;
     prepared_outstanding_ = false;
@@ -765,6 +945,7 @@ static_assert(Session<AGMPCSession<3>>);
 static_assert(DirectSession<AGMPCSession<3>>);
 static_assert(SessionIO<AGMPCSession<3>, UInt_T<AGMPCSession<3>::ctx_t, 32>>);
 static_assert(CheckpointingSession<AGMPCSession<3>>);
+static_assert(ComputationSession<AGMPCSession<3>>);
 
 }  // namespace emp
 #endif  // EMP_AG_FRONTEND_AGMPC_SESSION_H__

@@ -258,6 +258,35 @@ checkpoint first settles any staged inputs through the normal batched
 authentication path, after which the
 prepared handle can still consume them through soldering.
 
+### Declared owners and recipients
+
+A `Computation` (emp-tool, `circuits/frontend/computation_fn.h`) names each
+input's owner and each output's recipient up front, so more of the work moves
+offline:
+
+```cpp
+namespace cf = emp::frontend;
+auto comp = cf::computation(adder, cf::to(2), cf::from(1), cf::from(PUBLIC));
+auto [sum, x_in, k_in] = comp.handles();
+auto job = cf::prepare(sess, comp);                        // offline
+auto res = party == 1 ? cf::run(sess, std::move(job), cf::bind(x_in, x), cf::bind(k_in, k))
+                      : cf::run(sess, std::move(job), cf::bind(k_in, k));
+std::optional<uint64_t> s = res[sum];                      // present at party 2 only
+```
+
+`prepare` runs all preprocessing and garbles the whole program (party 1 stores
+every row), then, after every check completes, opens each Party input's mask
+to its owner and each Public input's to every party. `run` binds this party's
+own inputs and every Public input: the owners broadcast their masked inputs
+(echoed at nP >= 3), the garblers send the input labels, party 1 evaluates the
+stored rows, and each output opens only to its recipients, under `Auth::KRRW`
+after the output check and under `Auth::WRK` in the first flight after the
+inputs, with party 1 handing each garbler recipient the outputs' masked values.
+A program built elsewhere, with any number of slots, runs through
+`prepare_computation` / `run_computation` directly. One job is outstanding at a
+time; while it is, every other call of the session that sends anything is
+fatal. Values do not cross between this path and the prepared API above.
+
 ### Values and circuits
 
 Circuit values are emp-tool's context-bound types over the session's gate
