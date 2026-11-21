@@ -140,8 +140,8 @@ class AGMPCEngine {
 
     // No correlation check, base OT, or triple traffic is allowed to leak into
     // the later online phase.  This is a no-op if the backend is already clean.
-    mpc->fpre->abit.maybe_flush_cot_check();
-    mpc->fpre->abit.settle_check2();
+    mpc->abit->maybe_flush_cot_check();
+    mpc->abit->settle_check2();
     total_ands += (uint64_t)st.num_ands;
     return material;
   }
@@ -546,8 +546,8 @@ class AGMPCEngine {
   std::vector<unsigned char> open_output_masks_(
       const AShareBundleVec<nP> &bundles,
       const std::vector<std::vector<int>> &open_to) {
-    mpc->fpre->abit.maybe_flush_cot_check();
-    mpc->fpre->abit.settle_check2();
+    mpc->abit->maybe_flush_cot_check();
+    mpc->abit->settle_check2();
 #ifdef EMP_AG_TEST_FLIP_OUTPUT_SHARE
     // TEST-ONLY (never in production): the last party flips its share of the
     // first output position, keeping its MACs. Every recipient must abort.

@@ -203,7 +203,7 @@ void AGMPCProtocol<nP, Cfg>::draw_and_seed(ComputeCtx &ctx, Source &source) {
   // AND-output slot straight from it.
   {
     const block *pre_mac[nP + 1] = {nullptr}, *pre_key[nP + 1] = {nullptr};
-    if (num_ands > 0) fpre->abit.draw_soa(num_ands, pre_mac, pre_key);
+    if (num_ands > 0) abit->draw_soa(num_ands, pre_mac, pre_key);
     DrawBeaverPass<nP> pass(ctx, pre_mac, pre_key, party, capture);
     pass.Delta_ = Delta;   // for the mu_i captures and P1's records
     // P1: capture the eval records inside the walk itself (the bundles are
@@ -257,7 +257,10 @@ void AGMPCProtocol<nP, Cfg>::draw_and_seed(ComputeCtx &ctx, Source &source) {
   // compute_and_shares -> TriplePool::draw_coins). Garbler and evaluator derive it from
   // the same globally-agreed coin, so their per-gate keys agree. Meaningful only when
   // there are ANDs: with none, compute_and_shares is skipped and nothing is hashed.
-  if (num_ands > 0) ctx.halfgate_seed = fpre->halfgate_seed_;
+  // The half-gate hash seed: one domain-separated squeeze of the call's agreed coin
+  // (TriplePool::call_coin_), so no round of its own.
+  if (num_ands > 0)
+    ctx.halfgate_seed = fs_coin("AGMPC halfgate seed", fpre->call_coin_, zero_block);
 #ifdef AG_PROFILE
   if (party == 1) {
     uint64_t all = (uint64_t)(io->count() - _all0), cot = g_ag_cot_bytes - _cot0,

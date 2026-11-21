@@ -247,8 +247,8 @@ struct BeaverOperands {
 // compute_and_shares returns.
 //
 // use_source() replaces the leaky ANDs and their bucketing with a TripleSource
-// (triple/triple_source.h); the Beaver step is the same, and the half-gate hash seed then
-// comes from a coin of its own per call. use_cut_and_choose() installs the bank of
+// (triple/triple_source.h); the Beaver step is the same, and the call's agreed coin
+// (call_coin_) is then drawn for the call itself. use_cut_and_choose() installs the bank of
 // cut-and-choose triples (triple/cut_and_choose_triples.h), generated in large batches
 // and checked before they are banked; EMP_AG_CUT_AND_CHOOSE_BATCH installs it at
 // construction, with that batch size.
@@ -261,16 +261,16 @@ public:
   int ssp;              // statistical security parameter (default 40)
   NetIOMP<nP> *io;
   block session_id;
-  AuthSharePool<nP> abit;
+  AuthSharePool<nP> &abit;   // the session's share pool; its owner outlives this pool
   block Delta;
   PRG prg;
   OpenCheck open_check_;   // checks the d and x/y opens against their MACs
-  // Half-gate hash seed (every sender's MITCCRH stream starts from it), piggybacked off
-  // the per-chunk post-commitment bucket coin in BucketPolicy::draw_coins (one extra
-  // domain-separated squeeze, no dedicated coin round). AGMPCProtocol::draw_and_seed
-  // copies it into ctx.halfgate_seed after compute_and_shares; refreshed on every
-  // compute_and_shares that has ANDs.
-  block halfgate_seed_ = zero_block;
+  // The coin every party agreed on in the last compute_and_shares that had ANDs: the
+  // post-commitment bucket coin of the leaky-AND path (BucketPolicy::draw_coins), or a
+  // coin drawn for the call on the source path. A caller derives its own per-call
+  // randomness from it with a domain of its own, at no extra round; the garbling layer
+  // derives its half-gate hash seed (garble/passes/draw_beaver.h).
+  block call_coin_ = zero_block;
   // Batched LaAND alpha-check stash (nP>=3): each layer's windowed RLC vector +
   // its FZero u_zero are accumulated here across all B layers of a bucket; the ONE
   // B*L RLC zero-sum runs in compute_and_shares. Cleared per compute_and_shares.
@@ -302,16 +302,14 @@ public:
   NetIOMPGroup<nP> *grp = nullptr;
   int L_lanes = 1;
   std::unique_ptr<TripleSource<nP>> source_;   // see use_source; null: per-call leaky ANDs
-  TriplePool(NetIOMP<nP> *io, ThreadPool *pool, int party, int ssp = 40,
-             NetIOMPGroup<nP> *grp_in = nullptr,
-             block session_id_in = zero_block,
-             BaseOtKind base_ot_kind = BaseOtKind::CSW,
-             int64_t planned_sender_cots = -1,
-             int64_t planned_receiver_cots = -1)
+  // Triples over `abit`, the session's share pool (ashare/auth_share_pool.h), which the
+  // caller constructs first and keeps alive.
+  TriplePool(AuthSharePool<nP> &abit_in, NetIOMP<nP> *io, ThreadPool *pool, int party,
+             int ssp = 40, NetIOMPGroup<nP> *grp_in = nullptr,
+             block session_id_in = zero_block)
       : pool(pool), party(party), ssp(ag::checked_statistical_security(ssp)), io(io),
         session_id(session_id_in),
-        abit(io, pool, party, grp_in, session_id_in, base_ot_kind,
-             planned_sender_cots, planned_receiver_cots),
+        abit(abit_in),
         Delta(abit.Delta),
         open_check_(io, pool, party, abit.Delta, session_id_in, &prg, grp_in),
         grp(grp_in), L_lanes(grp_in ? std::max(1, grp_in->size()) : 1) {
@@ -962,11 +960,9 @@ public:
                                    "AGMPC bucket", tp->session_id);
       else c = sampleRandom<nP>(tp->io, &tp->prg, tp->pool, tp->party,
                                 tp->session_id);
-      // Piggyback the half-gate hash seed off this ONE post-commitment coin: a single
-      // extra domain-separated squeeze, no new round and no dedicated seed coin. Every
-      // party folds the SAME coin here, so the evaluator's half-gate re-hash matches
-      // each garbler. Consumed by AGMPCProtocol::draw_and_seed via ctx.halfgate_seed.
-      tp->halfgate_seed_ = fs_coin("AGMPC halfgate seed", c, zero_block);
+      // Every party holds the SAME coin here; callers derive per-call randomness from it
+      // (call_coin_), with no new round.
+      tp->call_coin_ = c;
       return c;
     }
 
@@ -1268,14 +1264,14 @@ public:
         expecting(bkt_accMAC_[p].size() == (size_t)(3 * L) &&
                   bkt_accKEY_[p].size() == (size_t)(3 * L),
                   "triple_pool: the triple source returned the wrong number of triples");
-      // The half-gate hash seed, fresh for this call and agreed by every party, as
-      // draw_coins gives it on the other path.
+      // A coin fresh for this call and agreed by every party, as draw_coins gives it on
+      // the other path (call_coin_). Its label is part of the transcript.
       block c;
       if constexpr (nP == 2)
         c = fs_coin_pair_group<nP>(io, grp, any_peer, "AGMPC halfgate coin", session_id);
       else
         c = sampleRandom<nP>(io, &prg, pool, party, session_id);
-      halfgate_seed_ = fs_coin("AGMPC halfgate seed", c, zero_block);
+      call_coin_ = c;
     } else {
       generate_independent_triples(L, B);
     }

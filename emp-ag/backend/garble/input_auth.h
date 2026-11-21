@@ -8,6 +8,7 @@
 // Tail-included by protocol.h (and self-standing via the include below).
 //
 #include "emp-ag/backend/garble/protocol.h"
+#include "emp-ag/backend/ashare/open.h"   // open_to_targets
 #include "emp-ag/backend/common/fs_hash.h"  // FsHash (FS/check digests)
 #include "emp-ag/backend/common/protocols.h"   // EchoBC
 
@@ -48,8 +49,8 @@ std::vector<SecureWires<nP>> AGMPCProtocol<nP, Cfg>::process_inputs(
   // The draw's share-consistency residual stays pending: the open below
   // publishes only Λ_w = λ_w ⊕ x_w, which the owner's own share masks whatever
   // bits the other parties hold, and the next open check or decode settles it.
-  fpre->abit.draw(n_total, sw.wire_bundle);
-  fpre->abit.maybe_flush_cot_check();
+  abit->draw(n_total, sw.wire_bundle);
+  abit->maybe_flush_cot_check();
 
   // Pi (i ≥ 2) samples m_{w, 0}^i for each input wire.
   if (party != 1)
@@ -185,7 +186,7 @@ SecureWires<nP> AGMPCProtocol<nP, Cfg>::make_prepared_inputs_(int n) {
   SecureWires<nP> sw;
   sw.Lambda.assign((size_t)n, 0);
   if (n == 0) return sw;
-  fpre->abit.draw(n, sw.wire_bundle);
+  abit->draw(n, sw.wire_bundle);
   if (party != 1) {
     sw.label0.resize((size_t)n);
     prg.random_block(sw.label0.data(), n);
@@ -243,8 +244,8 @@ void AGMPCProtocol<nP, Cfg>::bind_prepared_inputs_(
   // This is the first reveal of any correlation minted for the job.  prepare()
   // normally leaves the checks clean already; the guards keep this boundary safe
   // however the material was produced and are wire-free on the clean path.
-  fpre->abit.maybe_flush_cot_check();
-  fpre->abit.settle_check2();
+  abit->maybe_flush_cot_check();
+  abit->settle_check2();
   std::vector<unsigned char> opened =
       open_to_targets(opened_base.data(), open_targets);
   for (int w = 0; w < n; ++w) {
@@ -287,8 +288,8 @@ std::vector<unsigned char> AGMPCProtocol<nP, Cfg>::open_computation_input_masks_
   // Every check of the job's preprocessing completes before its first opening;
   // the guards also settle anything an earlier call deferred, and are wire-free
   // on the clean path.
-  fpre->abit.maybe_flush_cot_check();
-  fpre->abit.settle_check2();
+  abit->maybe_flush_cot_check();
+  abit->settle_check2();
   std::vector<unsigned char> lam = open_to_targets(target.wire_bundle.data(), targets);
   const std::vector<int> &me = targets[party];
   for (size_t j = 0; j < me.size(); ++j) mine[(size_t)me[j]] = (unsigned char)(lam[j] & 1);
@@ -384,88 +385,11 @@ void AGMPCProtocol<nP, Cfg>::load_inputs(ComputeCtx &ctx, const SecureWires<nP> 
   }
 }
 
-// One-round all-to-all authenticated open. targets[t] = wires to open to party t. Every party
-// sends each non-empty target t != self ONE message [share bits][MAC digest under t's key]; each
-// target verifies every peer (key ^ bit·Δ) and reconstructs λ_w = ⊕_p λ_w^p. Returns the bits
-// for targets[self] (empty if self is not a target). One message per directed pair -> the
-// per-channel transcript is deterministic and a party sees only shares of wires opened TO IT.
+// open_to_targets (ashare/open.h) over this session's mesh and keys.
 template <int nP, class Cfg>
 std::vector<unsigned char> AGMPCProtocol<nP, Cfg>::open_to_targets(
     const AShareBundle<nP> *base, const std::vector<std::vector<int>> &targets) {
-  std::vector<std::vector<unsigned char>> tx(nP + 1);   // share bits I send to target t
-  std::vector<std::vector<char>> txd(nP + 1);           // MAC digest I send to target t
-  for (int t = 1; t <= nP; ++t) {
-    if (t == party || targets[t].empty()) continue;
-    int m = (int)targets[t].size();
-    tx[t].resize(m);
-    txd[t].resize(FsHash::DIGEST_SIZE);
-    BlockVec macs(m);
-    int slot = peer_slot(party, t);
-    for (int j = 0; j < m; ++j) {
-#ifdef EMP_AG_TEST_TWO_WORLD
-      // TEST-ONLY (never in production): party 2 sends each target the bit it holds
-      // toward that target (with EMP_AG_TEST_SPLIT_CHOICE those differ), so every
-      // target's MAC check passes.
-      tx[t][j] = (unsigned char)getLSB(base[targets[t][j]].mac(party == 2 ? slot : 0));
-#else
-      tx[t][j] = (unsigned char)getLSB(base[targets[t][j]].mac(0));
-#endif
-      macs[j] = base[targets[t][j]].mac(slot);
-    }
-    FsHash::hash_once(txd[t].data(), macs.data(), (size_t)m * sizeof(block));
-  }
-
-  const std::vector<int> &mine = targets[party];
-  int mm = (int)mine.size();
-  std::vector<std::vector<unsigned char>> rx(nP + 1);   // peer p's shares of MY wires
-  std::vector<std::vector<char>> rxd(nP + 1);           // peer p's MAC digest
-  if (mm > 0)
-    for (int p = 1; p <= nP; ++p) if (p != party) {
-      rx[p].resize(mm);
-      rxd[p].resize(FsHash::DIGEST_SIZE);
-    }
-
-  // One round: send to every target + (if I'm a target) recv from every peer, concurrently.
-  std::vector<future<void>> res;
-  for (int t = 1; t <= nP; ++t) if (t != party && !targets[t].empty()) {
-    int tt = t;
-    res.push_back(pool->enqueue([this, &tx, &txd, tt]() {
-      io->send_bool(tt, (const bool *)tx[tt].data(), (int)tx[tt].size());
-      io->send_data(tt, txd[tt].data(), FsHash::DIGEST_SIZE);
-      io->flush(tt);
-    }));
-  }
-  if (mm > 0)
-    for (int p = 1; p <= nP; ++p) if (p != party) {
-      int pp = p;
-      res.push_back(pool->enqueue([this, &rx, &rxd, pp, mm]() {
-        io->recv_bool(pp, (bool *)rx[pp].data(), mm);
-        io->recv_data(pp, rxd[pp].data(), FsHash::DIGEST_SIZE);
-      }));
-    }
-  joinNclean(res);
-  if (mm == 0) return {};
-
-  // Verify each peer's shares of MY wires against my keys, then reconstruct λ = ⊕_p λ^p.
-  std::vector<unsigned char> my_share(mm);
-  for (int j = 0; j < mm; ++j) my_share[j] = (unsigned char)getLSB(base[mine[j]].mac(0));
-  BlockVec exp_macs(mm);
-  for (int p = 1; p <= nP; ++p) if (p != party) {
-    int slot = peer_slot(party, p);
-    for (int j = 0; j < mm; ++j)
-      exp_macs[j] = base[mine[j]].key(slot) ^ (select_mask[rx[p][j]] & Delta);
-    char D_exp[FsHash::DIGEST_SIZE];
-    FsHash::hash_once(D_exp, exp_macs.data(), (size_t)mm * sizeof(block));
-    expecting(memcmp(D_exp, rxd[p].data(), FsHash::DIGEST_SIZE) == 0,
-              "open_to_targets: share-MAC hash mismatch");
-  }
-  std::vector<unsigned char> lam(mm);
-  for (int j = 0; j < mm; ++j) {
-    unsigned char v = my_share[j];
-    for (int p = 1; p <= nP; ++p) if (p != party) v = v ^ rx[p][j];
-    lam[j] = (unsigned char)(v & 1);
-  }
-  return lam;
+  return ag::open_to_targets<nP>(io, pool, party, Delta, base, targets);
 }
 
 template <int nP, class Cfg>
@@ -482,8 +406,8 @@ std::vector<bool> AGMPCProtocol<nP, Cfg>::decode(const SecureWires<nP> &wires,
   // of the delivered output Lambda under Auth::WRK), so `recipient` is a pure delivery
   // choice (which party reconstructs this open, or PUBLIC = all).
   AG_PHASE_BEGIN();
-  fpre->abit.maybe_flush_cot_check();
-  fpre->abit.settle_check2();
+  abit->maybe_flush_cot_check();
+  abit->settle_check2();
   // Reveal via a MAC-checked open of the wire masks. Every reconstructing party
   // verifies each peer's lambda-share against its OWN (c_gamma-authenticated) keys and forms
   // y_w = Λ_w ⊕ ⊕_p λ_w^p locally -- not trusting P1 to reconstruct and broadcast raw bits. Also
