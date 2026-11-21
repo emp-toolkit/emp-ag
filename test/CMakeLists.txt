@@ -53,7 +53,7 @@ add_test_case_with_run(agmpc_compose)
 
 # Single-process circuit analysis (no parties). The Delta bit-pinning property
 # bit1(+_p Delta_p)=1 is checked by a static_assert next to the pinning in
-# backend/preproc/auth_share_pool.h.
+# backend/ashare/auth_share_pool.h.
 add_test_case(bucketing_test)              # bucket_size matches the n-party leakage bound
 add_test_case(cut_and_choose_bound_test)   # cut-and-choose parameters vs exact small-batch bounds
 add_test_case(laand_window_test)           # exact bit windows, independent codec oracle
@@ -80,12 +80,12 @@ add_np_variant(agmpc_golden_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2)
 add_np_variant(agmpc_golden_np3 agmpc_golden_snapshot.cpp 3  DEFS GOLDEN_NP=3)
 add_np_variant(agmpc_golden_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4)
 # The same matrix under the open checker that is not the default for the party count
-# (crypto/open_check.h: pairwise at nP=2, symmetric above).
+# (ashare/open_check.h: pairwise at nP=2, symmetric above).
 add_np_variant(agmpc_golden_symmetric_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2 EMP_AG_OPEN_CHECK_SYMMETRIC)
 add_np_variant(agmpc_golden_pairwise_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_OPEN_CHECK_PAIRWISE)
 add_np_variant(agmpc_golden_pairwise_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 EMP_AG_OPEN_CHECK_PAIRWISE)
 
-# Garbling options (backend/garble_config.h): the golden matrix and prepared runs under each
+# Garbling options (backend/garble/garble_config.h): the golden matrix and prepared runs under each
 # option that is not the default.
 add_np_variant(agmpc_golden_direct_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_GARBLE_DELIVERY=DIRECT)
 add_np_variant(agmpc_golden_direct_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 EMP_AG_GARBLE_DELIVERY=DIRECT)
@@ -110,7 +110,7 @@ foreach(_t agmpc_chain agmpc_reactive)
     add_np_variant(${_t}_wrk_direct ${_t}.cpp 3 DEFS EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT)
 endforeach()
 
-# Cut-and-choose triples (backend/preproc/cut_and_choose_triples.h). The generator alone,
+# Cut-and-choose triples (backend/triple/cut_and_choose_triples.h). The generator alone,
 # white-box (check_MAC sends Delta: EMP_AG_DEBUG_CHECKS), across batches and the bank, under
 # each checker; then the golden matrix with every session's triples from it, which covers
 # the Beaver step and the per-call half-gate seed.

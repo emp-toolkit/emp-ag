@@ -1,9 +1,9 @@
-// The cut-and-choose triple generator (backend/preproc/cut_and_choose_triples.h) at the
+// The cut-and-choose triple generator (backend/triple/cut_and_choose_triples.h) at the
 // protocol layer: take triples through the bank across several batches, then check that
 // every triple is consistently authenticated (check_MAC, which sends Delta in the clear:
 // white-box, EMP_AG_DEBUG_CHECKS) and correct (a * b == c on the opened shares), and that
 // the bank and the batch count behave as specified. One source; the party count via CNC_NP.
-#include "emp-ag/backend/preproc/cut_and_choose_triples.h"
+#include "emp-ag/backend/triple/cut_and_choose_triples.h"
 #include <cstdio>
 #include <vector>
 using namespace emp;

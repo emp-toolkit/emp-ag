@@ -13,8 +13,8 @@
 //   LEN  — random COTs per pair (default 1<<14 = 16K, big enough to
 //          exercise the malicious-check chi-fold over many chunks)
 
-#include "emp-ag/backend/netmp.h"
-#include "emp-ag/backend/runtime.h"   // default_pool_size
+#include "emp-ag/backend/common/netmp.h"
+#include "emp-ag/backend/common/runtime.h"   // default_pool_size
 #include "emp-ot/ot_extension/iknp.h"
 #include "emp-tool/emp-tool.h"
 #include <future>
@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
   prg.random_bool(delta, 128);
   delta[0] = true;  // bit-0(Δ)=1 invariant
 
-  // Wire IO + role at construction. Mirrors preproc/auth_share_pool.h.
+  // Wire IO + role at construction. Mirrors ashare/auth_share_pool.h.
   for (int peer = 1; peer <= nP; ++peer) if (peer != party) {
     bool me_smaller = party < peer;
     abit1[peer] = std::make_unique<IKNP>(

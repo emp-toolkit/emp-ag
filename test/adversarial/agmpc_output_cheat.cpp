@@ -5,7 +5,7 @@
 //     (open_and_masks). Exercises the certify-ALL property: every honest party aborts, and
 //     at nP=3 the two GARBLERS (not just the evaluator) catch a P1 flip.
 //   EMP_AG_TEST_FLIP_AGG (nP>=3) -- the garbler-row-aggregation ring tail corrupts one
-//     aggregate row (passes/garble.h) -> wrong Lambda_gamma. Confirms ring corruption is caught.
+//     aggregate row (garble/passes/garble.h) -> wrong Lambda_gamma. Confirms ring corruption is caught.
 //   EMP_AG_TEST_FLIP_AGG_MID (nP>=4) -- a MIDDLE ring node corrupts a row (not just the tail).
 //   EMP_AG_TEST_FLIP_B (nP==2) -- a malicious garbler flips one transmitted designated bit b
 //     -> wrong Lambda_gamma; c_gamma is the sole 2-party malicious-garbler guard.
@@ -24,14 +24,14 @@
 //     the zero test inside the symmetric open check catches (abort message contains
 //     "open check"), or the one run on its own after the pairwise check ("cheat aShare").
 //   EMP_AG_TEST_TAMPER_PREFIX -- party 1 flips one bit of the first correction it sends to
-//     party 2 inside the 128-COT bootstrap prefix (backend/netmp.h's TamperNetIO). Party 2's
+//     party 2 inside the 128-COT bootstrap prefix (backend/common/netmp.h's TamperNetIO). Party 2's
 //     check of the prefix must abort during setup, before the reverse direction's base OTs
 //     are derived from it ("SoftSpoken subspace VOLE check failed").
 //   EMP_AG_TEST_CNC_* (with EMP_AG_CUT_AND_CHOOSE_BATCH) -- the cut-and-choose triple
 //     generator: a wrong product correction (FLIP_PRODUCT), z ^ r opening (FLIP_ZR) or
 //     sacrifice difference (FLIP_OPEN), sent to everyone; a z ^ r opening (SPLIT_ZR) or, as
 //     a king, an opened value (KING_SPLIT) sent to party 3 alone. Each must abort while the
-//     triples are generated (backend/preproc/cut_and_choose_triples.h).
+//     triples are generated (backend/triple/cut_and_choose_triples.h).
 // A wrong public value -> the c_gamma MACCheck aborts (FLIP_LAAND aborts earlier, in preproc).
 // (The input-Lambda equivocation hook EMP_AG_TEST_FLIP_INPUT_LAMBDA is exercised by the sibling
 // agmpc_input_equiv.cpp; the aShare consistency check on a circuit with no AND, by

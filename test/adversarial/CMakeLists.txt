@@ -41,7 +41,7 @@ add_np_variant(agmpc_cheat_laand_high_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP
 # FLIP_D / FLIP_XY: a malicious party flips its share of one opened bucket d-bit / Beaver x
 # and sends it to everyone, keeping it itself. Every party then derives the same validly
 # authenticated but wrong sigma, which the c_gamma MACCheck cannot see, so the open check
-# (crypto/open_check.h) must abort. Each runs under the default checker (pairwise at nP=2,
+# (ashare/open_check.h) must abort. Each runs under the default checker (pairwise at nP=2,
 # symmetric above) and under the other one.
 add_np_variant(agmpc_cheat_d_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_TEST_FLIP_D PASS_RE "open check")
 add_np_variant(agmpc_cheat_d_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_D PASS_RE "open check")
@@ -155,7 +155,7 @@ add_test(NAME agmpc_prepared_cheat_agg_np3_offline
                  $<TARGET_FILE:test_agmpc_prepared_cheat_agg_np3> prepare-only
          WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
-# Cut-and-choose triples (EMP_AG_CUT_AND_CHOOSE_BATCH, backend/preproc/cut_and_choose_triples.h).
+# Cut-and-choose triples (EMP_AG_CUT_AND_CHOOSE_BATCH, backend/triple/cut_and_choose_triples.h).
 # FLIP_PRODUCT: party 2 flips every product correction it sends party 1, so about half the
 # candidates are wrong. FLIP_ZR: party 2 opens a wrong z ^ r for one candidate to everyone.
 # FLIP_OPEN: party 2 opens a wrong share of one sacrifice difference to everyone. The open

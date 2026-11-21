@@ -115,11 +115,11 @@ party must select the same base OT.
 The AND triples behind each chunk come, by default, from half-gate leaky ANDs
 bucketed per chunk. `TriplePool::use_cut_and_choose(batch)`, or compiling with
 `-DEMP_AG_CUT_AND_CHOOSE_BATCH=<batch>`, serves them instead from a bank of
-cut-and-choose triples (`backend/preproc/cut_and_choose_triples.h`), generated
+cut-and-choose triples (`backend/triple/cut_and_choose_triples.h`), generated
 `batch` at a time and checked before use. This sends fewer bytes per triple when
 COTs are cheap (`Ferret`) and batches are large, at the cost of more computation
 and of memory proportional to the batch. `TriplePool::use_source` installs any
-other source of authenticated random triples (`backend/preproc/triple_source.h`
+other source of authenticated random triples (`backend/triple/triple_source.h`
 states what a source must guarantee). Every party must make the same choice.
 
 The garbling options are compile-time: `AGMPCSession<nP, ag::GarbleConfig<A, D>>`
@@ -360,25 +360,31 @@ root (`<emp-ag/...>`):
 
 - **`frontend/agmpc_session.h`** — `emp::AGMPCSession<nP>`, the public session
   (the only piece a caller needs), and its live-body replay.
-- **`backend/`** — the spine: `garble_config.h` (the garbling options),
-  `protocol.h` (`AGMPCProtocol<nP>`), `engine.h`
-  (`AGMPCEngine<nP>`, which drives the gate passes over a BooleanProgram /
-  ComposePlan / live body — the same gate stream through every phase, so the
-  transcript is identical across strategies), `input_auth.h`, `shares.h`,
-  `state.h`, `runtime.h`, `netmp.h`.
-- **`backend/crypto/`** — pure primitives: `halfgate.h` (the half-gate row
-  kernels + tweak), `spdz.h` (the SPDZ `c_gamma` collapse + RLC helpers),
-  `open_check.h` (checking opened authenticated bits: pairwise and symmetric),
-  `feq.h` / `fzero.h`, `protocols.h`, `bucketing.h`.
-- **`backend/passes/`** — the circuit walks: `draw_beaver.h`, `garble.h`
-  (garble), `garble_transport.h` (how the rows reach party 1: direct, or the
-  `nP >= 3` aggregation ring), `evaluate.h` (streaming evaluate),
-  `mask_witness.h` (the SPDZ `c_gamma` MACCheck), `wire_format.h` (the
-  garbler↔evaluator byte contract).
-- **`backend/preproc/`** — `triple_pool.h` / `auth_share_pool.h`: the
-  correlated-OT mesh plus malicious authenticated AND-share generation
-  (aShares `MAC = KEY ⊕ x·Δ` from emp-ot COT, independent leaky-AND
-  triples, `F_eq`, bucketing, and Beaver correction).
+- **`backend/`** — the building blocks, each including only the ones below it:
+  - **`common/`** — the party mesh (`netmp.h`), the threading plumbing
+    (`runtime.h`), profiling, and the generic sub-protocols every layer uses:
+    `fs_hash.h`, `protocols.h` (`EchoBC`, `sampleRandom`, `check_MAC`),
+    `feq.h` / `fzero.h`, and `laand_window.h` (exact bit windows for packed rows).
+  - **`ashare/`** — authenticated shares: the share type (`share.h`, aShares
+    `MAC = KEY ⊕ x·Δ`), the share pool over emp-ot COT (`auth_share_pool.h`,
+    with `buffer_ot.h` for the base OTs), checked openings (`open.h`), and the
+    open checks (`open_check.h`: pairwise and symmetric).
+  - **`triple/`** — authenticated AND triples over the share pool:
+    `triple_pool.h` (independent leaky ANDs, bucketing, and the Beaver product
+    of two authenticated sharings), the `TripleSource` interface
+    (`triple_source.h`), and the cut-and-choose bank (`cut_and_choose_triples.h`,
+    `cut_and_choose_bound.h`, `bucketing.h`).
+  - **`garble/`** — authenticated garbling: the options (`garble_config.h`),
+    `protocol.h` (`AGMPCProtocol<nP>`), `engine.h` (`AGMPCEngine<nP>`, which
+    drives the gate passes over a BooleanProgram / ComposePlan / live body — the
+    same gate stream through every phase, so the transcript is identical across
+    strategies), `input_auth.h` (inputs, outputs and their hand-offs), the wire
+    container (`wires.h`), `halfgate.h` (the half-gate row kernels + tweak),
+    `spdz.h` (the SPDZ `c_gamma` collapse + RLC helpers), and `passes/`, the
+    circuit walks: `draw_beaver.h`, `garble.h`, `garble_transport.h` (how the
+    rows reach party 1: direct, or the `nP >= 3` aggregation ring), `evaluate.h`,
+    `mask_witness.h` (the SPDZ `c_gamma` MACCheck) and `wire_format.h` (the
+    garbler↔evaluator byte contract).
 
 Per-wire state uses a slot-reuse map, so memory is linear in #AND gates + live
 width, not #wires. Each header carries a design-rationale comment at the top of

@@ -1,8 +1,8 @@
 // Validate AGMPCEngine::run_program on a hand-built BooleanProgram, with no
 // recorder. Exercises: flat input bundle, gates referencing
 // inputs, explicit non-tail output id, and decode to a chosen recipient.
-#include "emp-ag/backend/protocol.h"
-#include "emp-ag/backend/engine.h"
+#include "emp-ag/backend/garble/protocol.h"
+#include "emp-ag/backend/garble/engine.h"
 #include "emp-tool/ir/program.h"
 using namespace std;
 using namespace emp;
