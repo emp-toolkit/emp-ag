@@ -223,6 +223,19 @@ private:
   void broadcast_input_masks_(SecureWires<nP> &sw,
                               const std::vector<std::vector<int>> &wires_of);
 
+  // Computation input seam, over the same prepared target masks.  Offline,
+  // open_computation_input_masks_ opens each Party input's mask to its owner and
+  // each Public input's (owner[w] == PUBLIC) to every party, and returns per
+  // input wire the mask where it was opened to this party (0 elsewhere).
+  // Online, bind_computation_inputs_ takes Lambda for the wires this party knows
+  // (its own and the Public ones), broadcasts the owners' masked values and
+  // exchanges the input labels.
+  std::vector<unsigned char> open_computation_input_masks_(
+      const SecureWires<nP> &target, const std::vector<int> &owner);
+  void bind_computation_inputs_(SecureWires<nP> &target,
+                                const std::vector<int> &owner,
+                                const std::vector<unsigned char> &lambda);
+
   // One method per protocol phase over a shared ComputeCtx; AGMPCEngine<nP>
   // sequences them in protocol order.
   void load_inputs(ComputeCtx &ctx, const SecureWires<nP> *const *inputs,
@@ -248,6 +261,11 @@ private:
   // (deliver_output_masks_, input_auth.h).
   template <class Source> void linear_masks_(ComputeCtx &ctx, Source &source);
   void deliver_output_masks_(SecureWires<nP> &out);
+  // The same hand-off for a Computation: garbler i receives only the outputs'
+  // Lambda at positions_of[i], with a hash of its labels on them, and sets
+  // out.Lambda there.
+  void deliver_output_masks_to_(SecureWires<nP> &out,
+                                const std::vector<std::vector<int>> &positions_of);
 
   // xor_share / zero_share are free templates in backend/shares.h and SlotGateMixin in
   // backend/passes/pass.h (so the passes can reach them without friendship);

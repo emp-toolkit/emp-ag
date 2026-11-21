@@ -262,6 +262,61 @@ void AGMPCProtocol<nP, Cfg>::bind_prepared_inputs_(
   exchange_input_labels_(target, n);
 }
 
+// Offline half of a Computation's input handling, after the prepared material is
+// garbled: open each Party input's target mask to its owner and each Public
+// input's to every party, in one MAC-checked round.  A Public input's mask then
+// is public, and its masked value b ^ lambda follows from the public bit at every
+// party; no owner broadcast is needed for it online.
+template <int nP, class Cfg>
+std::vector<unsigned char> AGMPCProtocol<nP, Cfg>::open_computation_input_masks_(
+    const SecureWires<nP> &target, const std::vector<int> &owner) {
+  const int n = (int)owner.size();
+  expecting(target.wire_bundle.size() == (size_t)n,
+            "open_computation_input_masks: target width mismatch");
+  std::vector<unsigned char> mine((size_t)n, 0);
+  if (n == 0) return mine;
+  std::vector<std::vector<int>> targets(nP + 1);
+  for (int w = 0; w < n; ++w) {
+    expecting(owner[w] == PUBLIC || (owner[w] >= 1 && owner[w] <= nP),
+              "open_computation_input_masks: owner must be a party id in [1, nP] or PUBLIC");
+    if (owner[w] == PUBLIC)
+      for (int t = 1; t <= nP; ++t) targets[t].push_back(w);
+    else
+      targets[owner[w]].push_back(w);
+  }
+  // Every check of the job's preprocessing completes before its first opening;
+  // the guards also settle anything an earlier call deferred, and are wire-free
+  // on the clean path.
+  fpre->abit.maybe_flush_cot_check();
+  fpre->abit.settle_check2();
+  std::vector<unsigned char> lam = open_to_targets(target.wire_bundle.data(), targets);
+  const std::vector<int> &me = targets[party];
+  for (size_t j = 0; j < me.size(); ++j) mine[(size_t)me[j]] = (unsigned char)(lam[j] & 1);
+  return mine;
+}
+
+// Online half: `lambda` holds Lambda = x ^ mask for this party's own Party inputs
+// and b ^ mask for every Public input.  The owners broadcast their masked values
+// (echoed at nP > 2, over the whole Lambda vector), then the garblers send P1 the
+// selected labels of every input.
+template <int nP, class Cfg>
+void AGMPCProtocol<nP, Cfg>::bind_computation_inputs_(
+    SecureWires<nP> &target, const std::vector<int> &owner,
+    const std::vector<unsigned char> &lambda) {
+  const int n = (int)owner.size();
+  expecting(target.size() == (size_t)n && lambda.size() == (size_t)n,
+            "bind_computation_inputs: width mismatch");
+  if (n == 0) return;
+  std::vector<std::vector<int>> owner_wires(nP + 1);
+  for (int w = 0; w < n; ++w) {
+    if (owner[w] == PUBLIC || owner[w] == party)
+      target.Lambda[w] = (unsigned char)(lambda[w] & 1);
+    if (owner[w] != PUBLIC) owner_wires[owner[w]].push_back(w);
+  }
+  broadcast_input_masks_(target, owner_wires);
+  exchange_input_labels_(target, n);
+}
+
 // Input-label exchange, shared with adopt_authenticated_input: garblers (Pi, i>=2)
 // ship m_{w,Λ_w} = label0[w] ⊕ Λ_w·Δ to the evaluator P1, who stores eval_label.
 template <int nP, class Cfg>
@@ -518,6 +573,53 @@ void AGMPCProtocol<nP, Cfg>::deliver_output_masks_(SecureWires<nP> &out) {
   expecting(memcmp(expect, h, FsHash::DIGEST_SIZE) == 0,
             "WRK: P1's output masks do not match its labels");
   out.Lambda = std::move(lam);
+}
+
+// Auth::WRK, Computation: the hand-off to recipients only.  Garbler i gets the
+// Lambda of the output positions it receives, never of another's, and checks
+// them against its own labels as above.  A computation with no AND gate takes
+// the same path: garblers never derive a masked value themselves.
+template <int nP, class Cfg>
+void AGMPCProtocol<nP, Cfg>::deliver_output_masks_to_(
+    SecureWires<nP> &out, const std::vector<std::vector<int>> &positions_of) {
+  char h[FsHash::DIGEST_SIZE];
+  if (party == 1) {
+    for (int i = 2; i <= nP; ++i) {
+      const std::vector<int> &pos = positions_of[i];
+      const int m = (int)pos.size();
+      if (m == 0) continue;
+      std::vector<unsigned char> lam((size_t)m);
+      BlockVec active((size_t)m);
+      for (int k = 0; k < m; ++k) {
+        lam[k] = out.Lambda[pos[k]];
+        active[k] = out.eval_label[i][pos[k]];
+      }
+      FsHash::hash_once(h, active.data(), (size_t)m * sizeof(block));
+#ifdef EMP_AG_TEST_FLIP_DELIVERED_LAMBDA
+      // TEST-ONLY (never in production): garbler 2 gets its first Lambda flipped,
+      // with the honest hash. Garbler 2's check must fail.
+      if (i == 2) lam[0] ^= 1;
+#endif
+      io->send_bool(i, (const bool *)lam.data(), m);
+      io->send_data(i, h, FsHash::DIGEST_SIZE);
+      io->flush(i);
+    }
+    return;
+  }
+  const std::vector<int> &pos = positions_of[party];
+  const int m = (int)pos.size();
+  if (m == 0) return;
+  std::vector<unsigned char> lam((size_t)m);
+  io->recv_bool(1, (bool *)lam.data(), m);
+  io->recv_data(1, h, FsHash::DIGEST_SIZE);
+  BlockVec active((size_t)m);
+  for (int k = 0; k < m; ++k)
+    active[k] = out.label0[pos[k]] ^ (select_mask[lam[k] & 1] & Delta);
+  char expect[FsHash::DIGEST_SIZE];
+  FsHash::hash_once(expect, active.data(), (size_t)m * sizeof(block));
+  expecting(memcmp(expect, h, FsHash::DIGEST_SIZE) == 0,
+            "WRK: P1's output masks do not match its labels");
+  for (int k = 0; k < m; ++k) out.Lambda[pos[k]] = (unsigned char)(lam[k] & 1);
 }
 
 }  // namespace emp::ag

@@ -185,6 +185,84 @@ class AGMPCEngine {
     return result;
   }
 
+  // ---- Computation (circuit mode): the same prepared material, with declared
+  // owners and recipients.  `owner[w]` is the party that supplies input wire w,
+  // or PUBLIC.  Offline, after prepare_program: open each Party input's mask to
+  // its owner and each Public input's to every party.  Returns per input wire
+  // the mask where it was opened to this party.
+  std::vector<unsigned char> open_input_masks(const Material &material,
+                                              const std::vector<int> &owner) {
+    expecting(material.program != nullptr,
+              "open_input_masks: prepared material was already consumed");
+    expecting(owner.size() == (size_t)material.ctx.num_in,
+              "open_input_masks: owner count differs from the circuit input width");
+    return mpc->open_computation_input_masks_(material.target_inputs, owner);
+  }
+
+  // Online.  `lambda[w]` is Lambda for the input wires this party knows (its own
+  // and the Public ones); `open_to[t]` lists the output positions party t
+  // receives.  The inputs bind, P1 evaluates the stored rows, and every output
+  // position opens to its recipients in one MAC-checked round: under KRRW after
+  // the output check, under WRK in the first flight after the inputs are fixed,
+  // so P1 decodes as soon as it has evaluated.  Under WRK, P1 then hands each
+  // garbler the masked values of the positions it receives.  Returns per output
+  // position this party's bit where it is a recipient, 0 elsewhere.
+  std::vector<unsigned char> run_computation(
+      Material &material, const std::vector<int> &owner,
+      const std::vector<unsigned char> &lambda,
+      const std::vector<std::vector<int>> &open_to) {
+    expecting(material.program != nullptr,
+              "run_computation: prepared material was already consumed");
+    expecting(owner.size() == (size_t)material.ctx.num_in &&
+                  lambda.size() == owner.size(),
+              "run_computation: input width differs from the prepared circuit");
+    expecting(open_to.size() == (size_t)nP + 1,
+              "run_computation: open_to must have one list per party");
+    const int party = mpc->party;
+    const size_t n_out = material.output_ids.size();
+    for (int t = 1; t <= nP; ++t)
+      for (int pos : open_to[(size_t)t])
+        expecting(pos >= 0 && (size_t)pos < n_out,
+                  "run_computation: output position out of range");
+
+    ComputeCtx &st = material.ctx;
+    [[maybe_unused]] auto *io = mpc->io;
+    AG_PHASE_BEGIN();
+    mpc->bind_computation_inputs_(material.target_inputs, owner, lambda);
+    AG_PHASE("computation-bind");
+    load_bound_prepared_inputs_(st, material.target_inputs);
+
+    std::vector<unsigned char> mask;   // this party's opened output masks, in open_to[party] order
+    if constexpr (Cfg::auth == Auth::WRK)
+      mask = open_output_masks_(material.output_static.wire_bundle, open_to);
+
+    Wires out;
+    with_prepared_source_(material, [&](auto &source) {
+      if (party == 1)
+        mpc->evaluate_prepared(st, source, std::move(material.rows));
+      AG_PHASE("computation-eval");
+      if constexpr (Cfg::auth == Auth::KRRW) {
+        mpc->open_and_masks(st, source);
+        mpc->output_check(st, source);
+        AG_PHASE("output_check[SPDZ]");
+      }
+      out = gather_prepared_outputs_(material);
+    });
+    if constexpr (Cfg::auth == Auth::KRRW)
+      mask = open_output_masks_(out.wire_bundle, open_to);
+    if constexpr (Cfg::auth == Auth::WRK) {
+      mpc->deliver_output_masks_to_(out, open_to);
+      AG_PHASE("deliver_output_masks");
+    }
+
+    std::vector<unsigned char> bits(n_out, 0);
+    const std::vector<int> &mine = open_to[(size_t)party];
+    for (size_t j = 0; j < mine.size(); ++j)
+      bits[(size_t)mine[j]] = (unsigned char)((mask[j] ^ out.Lambda[(size_t)mine[j]]) & 1);
+    material.program.reset();
+    return bits;
+  }
+
   // ---- DENSE core: liveness -> input load -> slot/mask seed -> shared tail ----
   template <class Source>
   Wires run_source(const Wires &in_wires, Source &source) {
@@ -456,6 +534,26 @@ class AGMPCEngine {
       }
     }
     return out;
+  }
+
+  // One MAC-checked round that opens output masks to their recipients
+  // (open_to[t] = the output positions party t receives).  Every share a party
+  // receives is checked against its own keys before use, whoever sent it.
+  std::vector<unsigned char> open_output_masks_(
+      const AShareBundleVec<nP> &bundles,
+      const std::vector<std::vector<int>> &open_to) {
+    mpc->fpre->abit.maybe_flush_cot_check();
+    mpc->fpre->abit.settle_check2();
+#ifdef EMP_AG_TEST_FLIP_OUTPUT_SHARE
+    // TEST-ONLY (never in production): the last party flips its share of the
+    // first output position, keeping its MACs. Every recipient must abort.
+    if (mpc->party == nP && !bundles.empty()) {
+      AShareBundleVec<nP> bad = bundles;
+      bad[0].mac(0) = bad[0].mac(0) ^ makeBlock(0, 1);
+      return mpc->open_to_targets(bad.data(), open_to);
+    }
+#endif
+    return mpc->open_to_targets(bundles.data(), open_to);
   }
 
   // Raw BooleanProgram references have no immutable lifetime identity. They are

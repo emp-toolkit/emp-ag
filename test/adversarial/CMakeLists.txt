@@ -188,3 +188,24 @@ add_np_variant(agmpc_cheat_cnc_open_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS 
 add_np_variant(agmpc_cheat_cnc_open_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_TEST_CNC_FLIP_OPEN EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "cut-and-choose: MAC tag mismatch")
 add_np_variant(agmpc_cheat_cnc_product_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_TEST_CNC_FLIP_PRODUCT EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "cut-and-choose")
 add_np_variant(agmpc_cheat_cnc_residual_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_TEST_CNC_FLIP_RESIDUAL EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "cut-and-choose: MAC tag mismatch")
+
+# Circuit mode (Computation, ../agmpc_computation.cpp). FLIP_OUTPUT_SHARE: the last party
+# flips its share of the first output position, keeping its MACs; the recipient's MAC check
+# aborts, under KRRW after the output check and under WRK before evaluation.
+# FLIP_DELIVERED_LAMBDA: P1 hands garbler 2 a flipped masked value; garbler 2's label check
+# aborts. FLIP_INPUT_LAMBDA: an owner equivocates a masked input; the echo aborts.
+foreach(_np 2 3)
+    add_np_variant(agmpc_computation_flip_share_np${_np} ../agmpc_computation.cpp ${_np}
+                   DEFS COMP_NP=${_np} EMP_AG_TEST_FLIP_OUTPUT_SHARE PASS_RE "share-MAC hash mismatch")
+    add_np_variant(agmpc_computation_flip_share_wrk_np${_np} ../agmpc_computation.cpp ${_np}
+                   DEFS COMP_NP=${_np} EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_OUTPUT_SHARE
+                   PASS_RE "share-MAC hash mismatch")
+    add_np_variant(agmpc_computation_flip_handoff_np${_np} ../agmpc_computation.cpp ${_np}
+                   DEFS COMP_NP=${_np} EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_DELIVERED_LAMBDA
+                   PASS_RE "WRK: P1's output masks do not match its labels")
+endforeach()
+add_np_variant(agmpc_computation_equiv_np3 ../agmpc_computation.cpp 3
+               DEFS COMP_NP=3 EMP_AG_TEST_FLIP_INPUT_LAMBDA PASS_RE "input Lambda equivocation")
+add_np_variant(agmpc_computation_equiv_wrk_np3 ../agmpc_computation.cpp 3
+               DEFS COMP_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_INPUT_LAMBDA
+               PASS_RE "input Lambda equivocation")

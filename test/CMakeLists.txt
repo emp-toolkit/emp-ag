@@ -192,6 +192,35 @@ foreach(_agmpc2 agmpc_context_api agmpc_direct_chunks agmpc_program_replay agmpc
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 endforeach()
 
+# Circuit mode (Computation): the knob matrix, Auth x Delivery x triple source x nP
+# (the two Delivery options coincide at nP = 2), plus a non-default ssp, and the
+# misuse cases that must stop before any traffic.
+foreach(_np 2 3 4)
+    foreach(_auth KRRW WRK)
+        foreach(_src leaky cnc)
+            string(TOLOWER "agmpc_computation_${_auth}_${_src}_np${_np}" _name)
+            set(_defs COMP_NP=${_np} EMP_AG_GARBLE_AUTH=${_auth})
+            if(_src STREQUAL "cnc")
+                list(APPEND _defs EMP_AG_CUT_AND_CHOOSE_BATCH=16384)
+            endif()
+            add_np_variant(${_name} agmpc_computation.cpp ${_np} DEFS ${_defs})
+            if(NOT _np EQUAL 2)
+                add_np_variant(${_name}_direct agmpc_computation.cpp ${_np}
+                               DEFS ${_defs} EMP_AG_GARBLE_DELIVERY=DIRECT)
+            endif()
+        endforeach()
+    endforeach()
+endforeach()
+add_np_variant(agmpc_computation_ssp60_np3 agmpc_computation.cpp 3 DEFS COMP_NP=3 COMP_SSP=60)
+add_np_variant(agmpc_computation_wrk_ssp60_np2 agmpc_computation.cpp 2
+               DEFS COMP_NP=2 COMP_SSP=60 EMP_AG_GARBLE_AUTH=WRK)
+add_np_variant(agmpc_computation_busy_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 COMP_BUSY
+               PASS_RE "a Computation job is outstanding")
+add_np_variant(agmpc_computation_bad_owner_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 COMP_BAD_OWNER
+               PASS_RE "an input owner is above the party count")
+add_np_variant(agmpc_computation_full_reuse_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 COMP_FULL_REUSE
+               PASS_RE "WireReuse::Full is not supported")
+
 # Fault-injection / adversarial tests: compile the production-guarded EMP_AG_TEST_FLIP_*
 # hooks and assert the protocol aborts.
 add_subdirectory(adversarial)
