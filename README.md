@@ -98,7 +98,7 @@ cmake -S emp-ag -B emp-ag/build \
 | `EMP_AG_BUILD_TESTS`    | `ON` when top-level | Build the test suite under `test/` (incl. `test/adversarial/`). |
 | `EMP_AG_BUILD_BENCHES`  | `OFF` | Build the benchmarks under `bench/` (opt-in; not run by ctest). |
 | `EMP_AG_BUILD_EXAMPLES` | `ON` when top-level | Build the examples under `example/` (smoke-run by ctest). |
-| `EMP_AG_OT_BACKEND`     | `SoftSpoken` | COT backend for aShare generation: `SoftSpoken`, `IKNP`, `Ferret`, or `SilentFerret`. `SilentFerret` sends every message for a planned number of COTs when the session starts (the session's planned COT counts), after which drawing COTs moves no bytes. |
+| `EMP_AG_OT_BACKEND`     | `SoftSpoken` | COT backend for aShare generation: `SoftSpoken`, `IKNP`, `Ferret`, or `SilentFerret`. `SilentFerret` sends every message for a planned number of COTs when the session starts (the session's planned COT counts), after which drawing COTs moves no bytes. All of a session's COT streams share one public LPN matrix, so each party applies it to all of its streams in one pass. |
 | `EMP_AG_SOFTSPOKEN_K`   | `8` | With `SoftSpoken`, the field parameter `k`. |
 | `EMP_AG_DEBUG`          | `OFF` | Enable internal MAC / correctness checks. |
 | `EMP_AG_PROFILE`        | `OFF` | Protocol timing / communication profiling (`[ag]` / `[ag-tp]` phase markers); zero-cost when off. |
@@ -206,11 +206,14 @@ built over.
   party must pass the same one and logically distinct sessions need distinct
   ids. A benchmark that leaves out setup costs can pass a fixed id.
   The following `base_ot_kind` argument selects the one public-key base OT per
-  unordered party pair and defaults to `BaseOtKind::CSW`. When a one-lane
-  session's total COT demand is known in advance, the caller may additionally
-  pass exact local sender and receiver COT counts; each count includes emp-ag's
-  128-COT bootstrap prefix, matching peers must agree, and the default `-1`
-  keeps the reusable unbounded stream.
+  unordered party pair (with `SilentFerret`, per COT stream) and defaults to
+  `BaseOtKind::CSW`. When a session's total COT demand is known in advance, the
+  caller may additionally pass exact local sender and receiver COT counts; the
+  default `-1` keeps the reusable unbounded stream. With `SoftSpoken`, `IKNP` and
+  `Ferret` each count includes emp-ag's 128-COT bootstrap prefix and matching
+  peers must agree, and a `SoftSpoken` session must be one-lane. With
+  `SilentFerret` the two counts are equal, count only the COTs drawn, and set what
+  every stream prepays at setup.
 
 ### Offline preparation and online execution
 

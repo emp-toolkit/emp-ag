@@ -209,16 +209,17 @@ public:
   // derived OT ids. Left empty (the default), the parties agree on a fresh one
   // here with a two-round commit-then-open coin; a given id is used as is, so
   // related sessions need distinct ids. `base_ot_kind` selects the one
-  // public-key base OT per unordered party pair (CSW by default); the reverse
-  // COT direction remains derived from its primary direction, and every party
-  // must select the same kind. `planned_sender_cots` / `planned_receiver_cots`
-  // optionally bound each one-lane local COT stream when its total demand
-  // is known; counts include emp-ag's 128-COT bootstrap prefix. -1 keeps the
-  // ordinary reusable stream. With SilentFerret a plan is instead the batch the
-  // stream prepays at setup, and a stream that runs past it prepays another
-  // batch of the same size. Each local sender count must match the peer's
-  // receiver count and vice versa; using one identical pair at every party is
-  // valid only when sender == receiver.
+  // public-key base OT per unordered party pair (CSW by default), from which the
+  // reverse COT direction is derived (with SilentFerret, one per COT stream);
+  // every party must select the same kind. `planned_sender_cots` /
+  // `planned_receiver_cots` optionally bound each local COT stream when its total
+  // demand is known; -1 keeps the ordinary reusable stream. With SoftSpoken, IKNP
+  // and Ferret the counts include emp-ag's 128-COT bootstrap prefix, each local
+  // sender count must match the peer's receiver count and vice versa (so one
+  // identical pair at every party is valid only when sender == receiver), and a
+  // SoftSpoken session must be one-lane. With SilentFerret the two counts are
+  // equal and count only the COTs drawn: a plan is the batch every stream prepays
+  // at setup, and a stream that runs past it prepays another batch of that size.
   // The worker pool is mandatory and needs
   // at least two workers because interactive send/receive progress runs as
   // mutually-dependent tasks. Invalid party/port/security/lane/pool settings

@@ -58,6 +58,7 @@ add_test_case(bucketing_test)              # bucket_size matches the n-party lea
 add_test_case(cut_and_choose_bound_test)   # cut-and-choose parameters vs exact small-batch bounds
 add_test_case(laand_window_test)           # exact bit windows, independent codec oracle
 add_test_case(feq_test)                    # nonce-only F_eq wire count and adversarial openings
+add_test_case(ashare_joint_fold)           # the SilentFerret mint's joint LPN step == emp-ot's Lpn, per stream
 set_tests_properties(feq_test PROPERTIES TIMEOUT 15)
 add_test_case(ev_records_equiv)            # P1 draw-time record extraction == live-bundle kernels
 add_test_case(halfgate_hash_test)          # each AND half under its own gid; evaluator streams match

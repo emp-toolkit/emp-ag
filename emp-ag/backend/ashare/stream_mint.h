@@ -60,6 +60,9 @@ namespace emp::ag {
 //                 one round at a time, and a stream that runs past its batch
 //                 prepays another of the same size. EMP_AG_FERRET_THREADS
 //                 sizes the pool each stream prepares a batch with.
+//                 StreamMint runs one SilentFerret per stream; the share pool's
+//                 default for this backend is SilentFerretMint, which applies
+//                 one public LPN matrix to all of a party's streams at once.
 #ifndef EMP_AG_OT_BACKEND
 #define EMP_AG_OT_BACKEND 1
 #endif
