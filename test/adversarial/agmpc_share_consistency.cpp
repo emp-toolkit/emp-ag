@@ -1,6 +1,6 @@
 // Adversarial: the aShare consistency check (check2) at nP >= 3, on a circuit with no AND.
 //
-// Built with ONE of the production-guarded hooks in backend/preproc/auth_share_pool.h:
+// Built with ONE of the production-guarded hooks in backend/ashare/auth_share_pool.h:
 //   EMP_AG_TEST_SPLIT_CHOICE -- party 2 holds different bits toward party 3 than toward
 //     everyone else, so its shares disagree across peers while every MAC stays valid.
 //   EMP_AG_TEST_FLIP_BW -- party 2 sends party 3 a different consistency value bw than it

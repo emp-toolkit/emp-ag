@@ -9,7 +9,7 @@
 //   4. the parameter search: valid, optimal over (B, T), and at known operating points.
 //
 // Pure-math test: includes only the header, no protocol run.
-#include "emp-ag/backend/crypto/cut_and_choose_bound.h"
+#include "emp-ag/backend/triple/cut_and_choose_bound.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>

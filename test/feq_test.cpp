@@ -1,5 +1,5 @@
-#include "emp-ag/backend/crypto/feq.h"
-#include "emp-ag/backend/crypto/protocols.h"
+#include "emp-ag/backend/common/feq.h"
+#include "emp-ag/backend/common/protocols.h"
 
 #include <cstdio>
 #include <cstdlib>

@@ -1,4 +1,4 @@
-// Half-gate hash layout (crypto/halfgate.h): per AND gate, a sender's stream hashes
+// Half-gate hash layout (garble/halfgate.h): per AND gate, a sender's stream hashes
 // both halves of every destination under distinct gids, and the evaluator's stream for
 // that sender reproduces the garbler's hashes gate after gate.
 //
@@ -11,8 +11,8 @@
 // and 10: one call per gate up to nP = 5 (6 lanes in an aligned run of 8 at nP = 4),
 // then whole 8-lane calls with a shorter last one (8 + 2 lanes at nP = 6, 8 + 6 at
 // nP = 8, 8 + 8 + 2 at nP = 10) or without (8 + 8 at nP = 9).
-#include "emp-ag/backend/crypto/halfgate.h"
-#include "emp-ag/backend/shares.h"
+#include "emp-ag/backend/garble/halfgate.h"
+#include "emp-ag/backend/ashare/share.h"
 #include "emp-tool/emp-tool.h"
 #include <cstdio>
 #include <cstdlib>

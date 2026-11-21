@@ -6,7 +6,7 @@
 // AuthSharePool::compute is the full Π_aShare protocol: rcot extension + the check2
 // universal-hash MAC-consistency check + an EchoBC sync. check_MAC at each length
 // confirms the relation holds.
-#include "emp-ag/backend/preproc/auth_share_pool.h"
+#include "emp-ag/backend/ashare/auth_share_pool.h"
 using namespace std;
 using namespace emp;
 using namespace emp::ag;  // white-box test: reaches into the backend (AuthSharePool, check_MAC)

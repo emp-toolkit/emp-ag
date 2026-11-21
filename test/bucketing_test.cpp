@@ -4,7 +4,7 @@
 // residual-leakage bound.
 //
 // Pure-math test: includes only the header, no protocol run, no emp deps.
-#include "emp-ag/backend/crypto/bucketing.h"
+#include "emp-ag/backend/triple/bucketing.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>

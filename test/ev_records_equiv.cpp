@@ -1,4 +1,4 @@
-// Value-identity guard for P1's draw-time record extraction (passes/draw_beaver.h
+// Value-identity guard for P1's draw-time record extraction (garble/passes/draw_beaver.h
 // in-walk capture + sigma sweep -> state.h ev_tg/ev_mu) against the live-bundle kernels
 // (tgamma_witness_garbler / collapse_cgamma_witness) that compute the same per-AND terms.
 //
@@ -16,9 +16,9 @@
 // bit-for-bit at nP=2/3/4 for all 8 (La, Lb, Lg) selections. trace_np2 pins the
 // transcript only at nP==2; at nP>=3 a divergence would surface only as a
 // poorly-localized MACCheck abort, so the identity is pinned here directly.
-#include "emp-ag/backend/shares.h"
-#include "emp-ag/backend/crypto/spdz.h"
-#include "emp-ag/backend/crypto/halfgate.h"
+#include "emp-ag/backend/ashare/share.h"
+#include "emp-ag/backend/garble/spdz.h"
+#include "emp-ag/backend/garble/halfgate.h"
 #include "emp-tool/emp-tool.h"
 #include <cstdio>
 #include <cstdlib>
@@ -64,7 +64,7 @@ static void check() {
     for (int m = 0; m < 8; ++m) {
       bool La = m & 1, Lb = m & 2, Lg = m & 4;
       const block mLa = select_mask[La], mLb = select_mask[Lb];
-      // tgamma rows: record fold (passes/evaluate.h) vs live-bundle kernel.
+      // tgamma rows: record fold (garble/passes/evaluate.h) vs live-bundle kernel.
       for (int i = 2; i <= nP; ++i) {
         const block *r = tg + 3 * (i - 2);
         block rec = r[2] ^ (r[0] & mLa) ^ (r[1] & mLb);

@@ -27,10 +27,10 @@
 #include "emp-tool/circuits/frontend/circuit_fn.h"  // frontend::compile / is_circuit_v
 #include "emp-tool/circuits/frontend/compose.h"     // frontend::compose (record a ComposePlan)
 #include "emp-tool/ir/session/chunked_session.h"     // ChunkedSession<Derived> (ctx_t = ChunkRecorderCtx)
-#include "emp-ag/backend/protocol.h"             // AGMPCProtocol, SecureWires, AShareBundle
-#include "emp-ag/backend/engine.h"                   // emp::ag::AGMPCEngine<nP>
-#include "emp-ag/backend/netmp.h"                    // NetIOMP / NetIOMPGroup (owned below)
-#include "emp-ag/backend/runtime.h"                  // ag::lanes_for (production lane count)
+#include "emp-ag/backend/garble/protocol.h"             // AGMPCProtocol, SecureWires, AShareBundle
+#include "emp-ag/backend/garble/engine.h"                   // emp::ag::AGMPCEngine<nP>
+#include "emp-ag/backend/common/netmp.h"                    // NetIOMP / NetIOMPGroup (owned below)
+#include "emp-ag/backend/common/runtime.h"                  // ag::lanes_for (production lane count)
 #include <memory>                                    // owned NetIOMP / NetIOMPGroup
 
 #include <array>
@@ -95,7 +95,7 @@ using emp::ag::AShareBundle;
 using emp::ag::SecureWires;
 using emp::ag::AGMPCProtocol;
 
-// Cfg (backend/garble_config.h) fixes the garbling options; every party must use the same.
+// Cfg (backend/garble/garble_config.h) fixes the garbling options; every party must use the same.
 template <int nP, class Cfg = emp::ag::GarbleConfig<>>
 class AGMPCSession : public ChunkedSession<AGMPCSession<nP, Cfg>> {
   friend class ChunkedSession<AGMPCSession<nP, Cfg>>;
@@ -108,7 +108,7 @@ public:
   // duplicate counter.
   static constexpr bool kCountsAndsInternally = true;
 
-  // The engine (backend/engine.h) drives the AGMPCProtocol<nP> passes; it exposes
+  // The engine (backend/garble/engine.h) drives the AGMPCProtocol<nP> passes; it exposes
   // run_source/run_program/run_composed over SecureWires bundles.
   using Engine = emp::ag::AGMPCEngine<nP, Cfg>;
 
@@ -284,7 +284,7 @@ public:
 
   // Output goes to every party: under Auth::KRRW the symmetric SPDZ c_gamma MACCheck
   // certifies every party; under Auth::WRK P1 checks every gate and each garbler the
-  // outputs' Lambda against its labels (backend/garble_config.h). Choose who
+  // outputs' Lambda against its labels (backend/garble/garble_config.h). Choose who
   // reconstructs a given value at reveal time via reveal(..., recipient) / PUBLIC.
 
   using Base::run;
@@ -565,7 +565,7 @@ public:
   // If a prepared execution is active, source garbling labels are unnecessary:
   // soldering uses only the authenticated mask. They are generated lazily only
   // if a later ordinary circuit actually consumes this value.
-  // See backend/input_auth.h::adopt_authenticated_input.
+  // See backend/garble/input_auth.h::adopt_authenticated_input.
   template <class V>
   V adopt_authenticated_input(const AShareBundle<nP>* bundles) {
     require_no_computation_job_("AGMPCSession::adopt_authenticated_input");
