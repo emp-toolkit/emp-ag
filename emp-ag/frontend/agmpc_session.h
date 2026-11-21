@@ -117,45 +117,64 @@ public:
   // mismatched signature.
   struct PreparedExecutionTag {};
 
+  // A session holds at most one prepared job, of either kind.
+  enum class JobKind : uint8_t { None, Prepared, Computation };
+
+  // What every job handle holds: the session's job slot (owner, kind, token)
+  // and the offline material. Move-only; a handle destroyed unrun frees the slot.
+  class JobSlot_ {
+    friend class AGMPCSession<nP, Cfg>;
+    using Material = typename Engine::Material;
+
+    AGMPCSession *owner_ = nullptr;
+    JobKind kind_ = JobKind::None;
+    uint64_t token_ = 0;
+    std::unique_ptr<Material> material_;
+
+    JobSlot_(AGMPCSession *owner, JobKind kind, uint64_t token,
+             std::unique_ptr<Material> material)
+        : owner_(owner), kind_(kind), token_(token), material_(std::move(material)) {}
+    void release_() {
+      if (owner_ != nullptr) owner_->end_job_(kind_, token_);
+      owner_ = nullptr;
+      kind_ = JobKind::None;
+      token_ = 0;
+      material_.reset();
+    }
+
+  public:
+    JobSlot_(const JobSlot_ &) = delete;
+    JobSlot_ &operator=(const JobSlot_ &) = delete;
+    JobSlot_(JobSlot_ &&other) noexcept
+        : owner_(std::exchange(other.owner_, nullptr)),
+          kind_(std::exchange(other.kind_, JobKind::None)),
+          token_(std::exchange(other.token_, 0)),
+          material_(std::move(other.material_)) {}
+    JobSlot_ &operator=(JobSlot_ &&other) noexcept {
+      if (this != &other) {
+        release_();
+        owner_ = std::exchange(other.owner_, nullptr);
+        kind_ = std::exchange(other.kind_, JobKind::None);
+        token_ = std::exchange(other.token_, 0);
+        material_ = std::move(other.material_);
+      }
+      return *this;
+    }
+    ~JobSlot_() { release_(); }
+  };
+
   // Same-session, one-use owner for an offline-prepared circuit execution.
   // The type carries the circuit's typed signature, so run(std::move(p), ...)
   // accepts exactly the same argument/return types as run(circuit, ...).
   template <frontend::RecordValue RetV, frontend::RecordValue... ArgVs>
   class PreparedExecution : private PreparedExecutionTag {
     friend class AGMPCSession<nP, Cfg>;
-    using Material = typename Engine::Material;
-
-    AGMPCSession *owner_ = nullptr;
-    uint64_t token_ = 0;
-    std::unique_ptr<Material> material_;
-
-    PreparedExecution(AGMPCSession *owner, uint64_t token,
-                      std::unique_ptr<Material> material)
-        : owner_(owner), token_(token), material_(std::move(material)) {}
-    void release_() {
-      if (owner_ != nullptr) owner_->abandon_prepared_(token_);
-      owner_ = nullptr;
-      token_ = 0;
-      material_.reset();
-    }
+    JobSlot_ slot_;
+    explicit PreparedExecution(JobSlot_ slot) : slot_(std::move(slot)) {}
 
   public:
-    PreparedExecution(const PreparedExecution &) = delete;
-    PreparedExecution &operator=(const PreparedExecution &) = delete;
-    PreparedExecution(PreparedExecution &&other) noexcept
-        : owner_(std::exchange(other.owner_, nullptr)),
-          token_(std::exchange(other.token_, 0)),
-          material_(std::move(other.material_)) {}
-    PreparedExecution &operator=(PreparedExecution &&other) noexcept {
-      if (this != &other) {
-        release_();
-        owner_ = std::exchange(other.owner_, nullptr);
-        token_ = std::exchange(other.token_, 0);
-        material_ = std::move(other.material_);
-      }
-      return *this;
-    }
-    ~PreparedExecution() { release_(); }
+    PreparedExecution(PreparedExecution &&) noexcept = default;
+    PreparedExecution &operator=(PreparedExecution &&) noexcept = default;
   };
 
   // Circuit mode (emp-tool ComputationSession): a prepared Computation, one use,
@@ -163,50 +182,18 @@ public:
   // reused, and the session continues.
   class ComputationJob {
     friend class AGMPCSession<nP, Cfg>;
-    using Material = typename Engine::Material;
-
-    AGMPCSession *owner_ = nullptr;
-    uint64_t token_ = 0;
-    std::unique_ptr<Material> material_;
+    JobSlot_ slot_;
     std::shared_ptr<const circuit::ComputationArtifact> artifact_;
     std::vector<unsigned char> mask_;   // per input wire: its mask where opened to this party
 
-    ComputationJob(AGMPCSession *owner, uint64_t token,
-                   std::unique_ptr<Material> material,
+    ComputationJob(JobSlot_ slot,
                    std::shared_ptr<const circuit::ComputationArtifact> artifact,
                    std::vector<unsigned char> mask)
-        : owner_(owner), token_(token), material_(std::move(material)),
-          artifact_(std::move(artifact)), mask_(std::move(mask)) {}
-    void release_() {
-      if (owner_ != nullptr) owner_->abandon_computation_(token_);
-      owner_ = nullptr;
-      token_ = 0;
-      material_.reset();
-      artifact_.reset();
-      mask_.clear();
-    }
+        : slot_(std::move(slot)), artifact_(std::move(artifact)), mask_(std::move(mask)) {}
 
   public:
-    ComputationJob(const ComputationJob &) = delete;
-    ComputationJob &operator=(const ComputationJob &) = delete;
-    ComputationJob(ComputationJob &&other) noexcept
-        : owner_(std::exchange(other.owner_, nullptr)),
-          token_(std::exchange(other.token_, 0)),
-          material_(std::move(other.material_)),
-          artifact_(std::move(other.artifact_)),
-          mask_(std::move(other.mask_)) {}
-    ComputationJob &operator=(ComputationJob &&other) noexcept {
-      if (this != &other) {
-        release_();
-        owner_ = std::exchange(other.owner_, nullptr);
-        token_ = std::exchange(other.token_, 0);
-        material_ = std::move(other.material_);
-        artifact_ = std::move(other.artifact_);
-        mask_ = std::move(other.mask_);
-      }
-      return *this;
-    }
-    ~ComputationJob() { release_(); }
+    ComputationJob(ComputationJob &&) noexcept = default;
+    ComputationJob &operator=(ComputationJob &&) noexcept = default;
   };
   using job_t = ComputationJob;
 
@@ -274,9 +261,9 @@ public:
   AGMPCSession(const AGMPCSession&) = delete;
   AGMPCSession& operator=(const AGMPCSession&) = delete;
   ~AGMPCSession() {
-    expecting(!prepared_outstanding_,
+    expecting(job_ != JobKind::Prepared,
               "AGMPCSession: a prepared execution outlived its session");
-    expecting(!computation_outstanding_,
+    expecting(job_ != JobKind::Computation,
               "AGMPCSession: a Computation job outlived its session");
   }
 
@@ -308,16 +295,14 @@ public:
   template <frontend::RecordValue RetV, frontend::RecordValue... ArgVs>
   PreparedExecution<RetV, ArgVs...>
   prepare(const frontend::Circuit<RetV, ArgVs...> &c) {
-    expecting(!prepared_outstanding_,
+    expecting(job_ != JobKind::Prepared,
               "AGMPCSession::prepare: another prepared execution is outstanding");
     require_no_computation_job_("AGMPCSession::prepare");
     materialize_deferred_inputs_();
     std::unique_ptr<typename Engine::Material> material =
         engine_.prepare_program(c.program_shared());
-    prepared_outstanding_ = true;
-    active_prepared_token_ = ++next_prepared_token_;
     return PreparedExecution<RetV, ArgVs...>(
-        this, active_prepared_token_, std::move(material));
+        begin_job_(JobKind::Prepared, std::move(material)));
   }
 
   // Bind staged sess.input() values and/or existing authenticated values to the
@@ -330,14 +315,12 @@ public:
       const typename ArgVs::template rebind<ctx_t> &...args) {
     using Out = typename RetV::template rebind<ctx_t>;
     require_no_computation_job_("AGMPCSession::run(prepared)");
-    expecting(prepared.owner_ == this && prepared.material_ != nullptr &&
-                  prepared_outstanding_ &&
-                  prepared.token_ == active_prepared_token_,
+    expecting(holds_job_(prepared.slot_, JobKind::Prepared),
               "AGMPCSession::run: invalid, foreign, abandoned, or consumed prepared execution");
 
     std::vector<uint32_t> in_ids;
     (append_prepared_arg_ids_(in_ids, args), ...);
-    expecting(in_ids.size() == prepared.material_->program->num_inputs,
+    expecting(in_ids.size() == prepared.slot_.material_->program->num_inputs,
               "AGMPCSession::run: total argument width != prepared circuit input count");
 
     typename Engine::Binding binding;
@@ -355,7 +338,7 @@ public:
       if (sit != staged_by_id_.end()) {
         const StagedLoc loc = sit->second;
         const StagedInput &s = staged_inputs_[loc.record];
-        expecting(s.token == prepared.token_,
+        expecting(s.token == prepared.slot_.token_,
                   "AGMPCSession::run: staged input belongs to another prepared execution");
         binding.owner[w] = s.owner;
         binding.clear[w] = s.bits[loc.bit];
@@ -373,12 +356,7 @@ public:
     }
     // Consume before the first online message: transcript advancement makes a
     // failed or aborted prepared run non-retryable.
-    std::unique_ptr<typename Engine::Material> material =
-        std::move(prepared.material_);
-    prepared.owner_ = nullptr;
-    prepared.token_ = 0;
-    prepared_outstanding_ = false;
-    active_prepared_token_ = 0;
+    std::unique_ptr<typename Engine::Material> material = take_job_(prepared.slot_);
     typename Engine::PreparedRunResult result =
         engine_.run_prepared(*material, binding);
 
@@ -415,7 +393,7 @@ public:
     for (const circuit::OutputRole &r : art->io.outputs)
       expecting(r.kind == circuit::OutputKind::Public || r.recipient <= nP,
                 "AGMPCSession::prepare_computation: an output recipient is above the party count");
-    expecting(!prepared_outstanding_,
+    expecting(job_ != JobKind::Prepared,
               "AGMPCSession::prepare_computation: a prepared execution is outstanding");
     require_no_computation_job_("AGMPCSession::prepare_computation");
 
@@ -423,10 +401,8 @@ public:
         engine_.prepare_program(art->program);
     std::vector<int> owner = computation_input_owners_(*art);
     std::vector<unsigned char> mask = engine_.open_input_masks(*material, owner);
-    computation_outstanding_ = true;
-    active_computation_token_ = ++next_prepared_token_;
-    return job_t(this, active_computation_token_, std::move(material),
-                 std::move(art), std::move(mask));
+    return job_t(begin_job_(JobKind::Computation, std::move(material)), std::move(art),
+                 std::move(mask));
   }
 
   // The online half: this party binds its own Party slots and every Public slot
@@ -437,9 +413,7 @@ public:
   // output check, under WRK in the first flight after the inputs, with P1's
   // masked values handed to each garbler recipient after evaluation.
   session::RawResult run_computation(job_t &&job, const session::RawBindings &b) {
-    expecting(job.owner_ == this && job.material_ != nullptr &&
-                  computation_outstanding_ &&
-                  job.token_ == active_computation_token_,
+    expecting(holds_job_(job.slot_, JobKind::Computation),
               "AGMPCSession::run_computation: invalid, foreign, abandoned, or consumed job");
     const std::shared_ptr<const circuit::ComputationArtifact> art = job.artifact_;
     const circuit::IoSignature &io_sig = art->io;
@@ -466,13 +440,9 @@ public:
             open_to[(size_t)t].push_back((int)(out_off[s] + k));
 
     // Consume before the first online message: an aborted run is not retryable.
-    std::unique_ptr<typename Engine::Material> material = std::move(job.material_);
-    job.owner_ = nullptr;
-    job.token_ = 0;
+    std::unique_ptr<typename Engine::Material> material = take_job_(job.slot_);
     job.artifact_.reset();
     job.mask_.clear();
-    computation_outstanding_ = false;
-    active_computation_token_ = 0;
     const std::vector<unsigned char> bits =
         engine_.run_computation(*material, owner, lambda, open_to);
 
@@ -600,7 +570,7 @@ public:
   V adopt_authenticated_input(const AShareBundle<nP>* bundles) {
     require_no_computation_job_("AGMPCSession::adopt_authenticated_input");
     std::vector<uint32_t> ids = this->ctx_.reserve_ids(V::width());
-    if (!prepared_outstanding_) {
+    if (job_ != JobKind::Prepared) {
       materialize_into_(
           ids, proto_.adopt_authenticated_input(bundles, (int)V::width()));
     } else {
@@ -678,11 +648,9 @@ private:
   std::unordered_map<uint32_t, CarriedState> carried_;
   std::vector<StagedInput> staged_inputs_;
   std::unordered_map<uint32_t, StagedLoc> staged_by_id_;
-  uint64_t next_prepared_token_ = 0;
-  uint64_t active_prepared_token_ = 0;
-  bool prepared_outstanding_ = false;
-  uint64_t active_computation_token_ = 0;
-  bool computation_outstanding_ = false;
+  JobKind job_ = JobKind::None;      // the outstanding job's kind, if any
+  uint64_t job_token_ = 0;            // and the token that names it
+  uint64_t next_job_token_ = 0;
   size_t lazy_label_count_ = 0;
   int process_input_calls_ = 0;
 
@@ -690,7 +658,7 @@ private:
   void authenticate_into_(int owner, const std::vector<uint8_t>& bits,
                           const std::vector<uint32_t>& ids) {
     require_no_computation_job_("AGMPCSession::input");
-    if (prepared_outstanding_ && owner != PUBLIC)
+    if (job_ == JobKind::Prepared && owner != PUBLIC)
       stage_input_(owner, bits, ids);
     else
       materialize_into_(ids, authenticate_(owner, bits));
@@ -699,7 +667,7 @@ private:
                                 const std::vector<std::vector<uint8_t>>& bits,
                                 const std::vector<std::vector<uint32_t>>& ids) {
     require_no_computation_job_("AGMPCSession::input_batch");
-    if (!prepared_outstanding_) {
+    if (job_ != JobKind::Prepared) {
       batch_finish_eager_(owners, bits, ids);
       return;
     }
@@ -803,7 +771,7 @@ private:
               "AGMPCSession::input: encoded bit/id width mismatch");
     const size_t record = staged_inputs_.size();
     staged_inputs_.push_back(
-        StagedInput{owner, active_prepared_token_, bits, ids});
+        StagedInput{owner, job_token_, bits, ids});
     for (size_t bit = 0; bit < ids.size(); ++bit) {
       auto [it, inserted] = staged_by_id_.emplace(
           ids[bit], StagedLoc{record, bit});
@@ -856,26 +824,42 @@ private:
                    r.kind == circuit::InputKind::Public ? (int)PUBLIC : r.owner);
     return owner;
   }
-  void abandon_computation_(uint64_t token) {
-    if (!computation_outstanding_ || token != active_computation_token_) return;
-    computation_outstanding_ = false;
-    active_computation_token_ = 0;
+  // The session's one job slot. begin_job_ fills it, take_job_ consumes a job
+  // before its first online message (an aborted run is not retryable), and
+  // end_job_ frees it when a handle is dropped unrun.
+  JobSlot_ begin_job_(JobKind kind, std::unique_ptr<typename Engine::Material> material) {
+    job_ = kind;
+    job_token_ = ++next_job_token_;
+    return JobSlot_(this, kind, job_token_, std::move(material));
+  }
+  bool holds_job_(const JobSlot_ &slot, JobKind kind) const {
+    return slot.owner_ == this && slot.kind_ == kind && slot.material_ != nullptr &&
+           job_ == kind && slot.token_ == job_token_;
+  }
+  std::unique_ptr<typename Engine::Material> take_job_(JobSlot_ &slot) {
+    std::unique_ptr<typename Engine::Material> material = std::move(slot.material_);
+    slot.owner_ = nullptr;
+    slot.kind_ = JobKind::None;
+    slot.token_ = 0;
+    job_ = JobKind::None;
+    job_token_ = 0;
+    return material;
+  }
+  // A dropped prepared execution leaves its staged descriptors usable: the next
+  // ordinary boundary authenticates them through materialize_deferred_inputs_,
+  // and new inputs are eager again.
+  void end_job_(JobKind kind, uint64_t token) {
+    if (job_ != kind || token != job_token_) return;
+    job_ = JobKind::None;
+    job_token_ = 0;
   }
   // While a Computation job is outstanding, nothing else of this session sends:
   // the job's openings and checks then stand alone, and no value crosses between
   // a Computation and the direct-mode paths. Recording gates sends nothing and
   // stays allowed.
   void require_no_computation_job_(const char *what) const {
-    expecting(!computation_outstanding_,
+    expecting(job_ != JobKind::Computation,
               [&] { return std::string(what) + ": a Computation job is outstanding"; });
-  }
-  void abandon_prepared_(uint64_t token) {
-    if (!prepared_outstanding_ || token != active_prepared_token_) return;
-    prepared_outstanding_ = false;
-    active_prepared_token_ = 0;
-    // Staged descriptors remain usable: the next ordinary boundary authenticates
-    // them through materialize_deferred_inputs_.  New inputs are eager now that no
-    // prepared execution is active.
   }
   void carry_load_(CarriedState& c, const SecureWires<nP>& s, size_t i) const {
     const int party = proto_.party;
