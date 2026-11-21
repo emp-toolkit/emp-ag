@@ -273,7 +273,7 @@ void check_shared_zero_p2p(NetIOMP<nP> *io, ThreadPool *pool, PRG *prg, int part
 // DEBUG-ONLY MAC-consistency check. WARNING: broadcasts each party's Delta in the CLEAR (line
 // below) -- a malicious party could then forge any MAC and defeat the c_gamma MACCheck. The
 // DEFINITIONS below are compiled ONLY under EMP_AG_DEBUG_CHECKS, so a production build cannot
-// even instantiate them; the white-box tests (auth_share, three_party_iknp) opt in. Must NEVER
+// even instantiate them; the white-box tests that use them opt in. Must NEVER
 // ship enabled.
 #ifdef EMP_AG_DEBUG_CHECKS
 template <int nP>
