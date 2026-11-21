@@ -11,6 +11,9 @@
 #include "emp-ag/backend/ashare/open_check.h"   // SymmetricOpenCheck (settle_check2)
 #include "emp-ag/backend/ashare/share.h"
 #include "emp-ag/backend/ashare/stream_mint.h"   // StreamMint, the COT backend selection
+#if EMP_AG_OT_BACKEND == 3
+#include "emp-ag/backend/ashare/silent_ferret_mint.h"   // SilentFerretMint
+#endif
 #include <algorithm>
 #include <climits>
 #include <cstdint>
@@ -20,8 +23,13 @@
 
 namespace emp::ag {
 
-// The mint the pool draws its COTs from: what a mint offers is in stream_mint.h.
+// The mint the pool draws its COTs from (what a mint offers is in stream_mint.h):
+// SilentFerretMint for EMP_AG_OT_BACKEND=3, StreamMint for the others.
+#if EMP_AG_OT_BACKEND == 3
+template <int nP> using DefaultMint = SilentFerretMint<nP>;
+#else
 template <int nP> using DefaultMint = StreamMint<nP>;
+#endif
 
 // Π_aShare. Despite the "Pool" in the class name, this type keeps no pool —
 // each call mints fresh shares. check1 is the gadget-tail Δ-consistency check
@@ -104,14 +112,14 @@ class AuthSharePool {
 	// L lanes: the parent COT on mesh 0 + clones on meshes 1..L-1. null => the
 	// single-mesh path (L == 1). `base_ot_kind` selects the public-key base OT
 	// for each pair's primary direction; every party must select the same kind.
-	// Optional planned sender/receiver counts include the 128-COT bootstrap prefix
-	// and are forwarded to OTExtension::begin(n_ots), allowing a one-lane
-	// SoftSpoken stream to shorten its terminal transfer and a SilentFerret
-	// stream to prepay all of its COTs. For every pair, this
-	// party's sender count must equal its peer's receiver count and vice versa;
-	// passing one identical (sender,receiver) pair at every party is therefore
-	// valid only when the two counts are equal. -1 keeps the ordinary unbounded
-	// streaming path.
+	// Optional planned sender/receiver counts bound each COT stream when its demand is
+	// known; -1 keeps the ordinary unbounded streaming path. With StreamMint they
+	// include the 128-COT bootstrap prefix and go to OTExtension::begin(n_ots),
+	// letting a one-lane SoftSpoken stream shorten its terminal transfer; for every
+	// pair, this party's sender count must equal its peer's receiver count and vice
+	// versa, so one identical (sender, receiver) pair at every party is valid only when
+	// the two counts are equal. With SilentFerretMint the two counts must be equal,
+	// count only the pool's draws, and size every stream's prepay.
 	AuthSharePool(NetIOMP<nP> *io, ThreadPool *pool, int party,
 			NetIOMPGroup<nP> *grp_in = nullptr,
 			block session_id_in = zero_block,
@@ -181,8 +189,8 @@ class AuthSharePool {
 		mint_->maybe_flush_check();
 	}
 
-	// COTs drawn so far from each COT stream, the 128-COT bootstrap prefix
-	// included. Every stream, toward every peer and in both directions, draws the
+	// COTs drawn so far from each COT stream, any bootstrap prefix included
+	// (StreamMint's 128 COTs). Every stream, toward every peer and in both directions, draws the
 	// same count, so a run's final value is the planned count for the same run.
 	int64_t cots_per_stream() const { return cots_per_stream_; }
 
