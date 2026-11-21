@@ -533,52 +533,21 @@ SecureWires<nP> AGMPCProtocol<nP, Cfg>::gather_outputs(ComputeCtx &ctx,
 }
 
 // Auth::WRK: after evaluation only P1 knows the masked values Lambda of AND-derived
-// wires. P1 sends each garbler the outputs' Lambda and a hash of that garbler's active
-// labels on them; the garbler rebuilds those labels from its 0-labels and checks the
-// hash. Changing a bit would take the garbler's label for the other value, hence its
-// Delta.
+// wires. The direct paths hand every garbler every output: the hand-off below with
+// all positions for every garbler.
 template <int nP, class Cfg>
 void AGMPCProtocol<nP, Cfg>::deliver_output_masks_(SecureWires<nP> &out) {
-  const int n = (int)out.size();
-  if (n == 0) return;
-  char h[FsHash::DIGEST_SIZE];
-  if (party == 1) {
-    for (int i = 2; i <= nP; ++i) {
-      FsHash::hash_once(h, out.eval_label[i].data(), (size_t)n * sizeof(block));
-#ifdef EMP_AG_TEST_FLIP_DELIVERED_LAMBDA
-      // TEST-ONLY (never in production): P1 sends garbler 2 the first output's Lambda
-      // flipped, with the honest hash. Garbler 2's check must fail.
-      if (i == 2) {
-        std::vector<unsigned char> bad(out.Lambda);
-        bad[0] ^= 1;
-        io->send_bool(i, (const bool *)bad.data(), n);
-        io->send_data(i, h, FsHash::DIGEST_SIZE);
-        io->flush(i);
-        continue;
-      }
-#endif
-      io->send_bool(i, (const bool *)out.Lambda.data(), n);
-      io->send_data(i, h, FsHash::DIGEST_SIZE);
-      io->flush(i);
-    }
-    return;
-  }
-  std::vector<unsigned char> lam((size_t)n);
-  io->recv_bool(1, (bool *)lam.data(), n);
-  io->recv_data(1, h, FsHash::DIGEST_SIZE);
-  BlockVec active((size_t)n);
-  for (int k = 0; k < n; ++k) active[k] = out.label0[k] ^ (select_mask[lam[k] & 1] & Delta);
-  char expect[FsHash::DIGEST_SIZE];
-  FsHash::hash_once(expect, active.data(), (size_t)n * sizeof(block));
-  expecting(memcmp(expect, h, FsHash::DIGEST_SIZE) == 0,
-            "WRK: P1's output masks do not match its labels");
-  out.Lambda = std::move(lam);
+  std::vector<int> all(out.size());
+  for (size_t k = 0; k < all.size(); ++k) all[k] = (int)k;
+  deliver_output_masks_to_(out, std::vector<std::vector<int>>(nP + 1, all));
 }
 
-// Auth::WRK, Computation: the hand-off to recipients only.  Garbler i gets the
-// Lambda of the output positions it receives, never of another's, and checks
-// them against its own labels as above.  A computation with no AND gate takes
-// the same path: garblers never derive a masked value themselves.
+// Auth::WRK hand-off. P1 sends garbler i the Lambda of the output positions in
+// positions_of[i] and a hash of that garbler's active labels on them; the garbler
+// rebuilds those labels from its 0-labels and checks the hash. Changing a bit would
+// take the garbler's label for the other value, hence its Delta. A Computation
+// lists only the positions a garbler receives, never another's, and takes this path
+// with or without AND gates: its garblers never derive a masked value themselves.
 template <int nP, class Cfg>
 void AGMPCProtocol<nP, Cfg>::deliver_output_masks_to_(
     SecureWires<nP> &out, const std::vector<std::vector<int>> &positions_of) {

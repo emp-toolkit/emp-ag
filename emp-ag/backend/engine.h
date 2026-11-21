@@ -161,26 +161,11 @@ class AGMPCEngine {
     load_bound_prepared_inputs_(st, material.target_inputs);
     PreparedRunResult result;
     result.bound_inputs = std::move(material.target_inputs);
-
-    with_prepared_source_(material, [&](auto &source) {
-      if (mpc->party == 1)
-        mpc->evaluate_prepared(st, source, std::move(material.rows));
-      AG_PHASE("prepared-eval");
-      if constexpr (Cfg::auth == Auth::KRRW) {
-        mpc->open_and_masks(st, source);
-        AG_PHASE("open_and_masks");
-        mpc->output_check(st, source);
-        AG_PHASE("output_check[SPDZ]");
-      }
-      if constexpr (Cfg::auth == Auth::WRK)   // P1 checked every gate during evaluation
-        if (st.num_ands == 0) mpc->linear_masks_(st, source);
-      result.outputs = gather_prepared_outputs_(material);
-      AG_PHASE("gather_outputs");
-      if constexpr (Cfg::auth == Auth::WRK) {
-        if (st.num_ands > 0) mpc->deliver_output_masks_(result.outputs);
-        AG_PHASE("deliver_output_masks");
-      }
-    });
+    result.outputs = evaluate_stored_(material, /*linear_masks=*/true);
+    if constexpr (Cfg::auth == Auth::WRK) {
+      if (st.num_ands > 0) mpc->deliver_output_masks_(result.outputs);
+      AG_PHASE("deliver_output_masks");
+    }
     material.program.reset();
     return result;
   }
@@ -236,18 +221,7 @@ class AGMPCEngine {
     if constexpr (Cfg::auth == Auth::WRK)
       mask = open_output_masks_(material.output_static.wire_bundle, open_to);
 
-    Wires out;
-    with_prepared_source_(material, [&](auto &source) {
-      if (party == 1)
-        mpc->evaluate_prepared(st, source, std::move(material.rows));
-      AG_PHASE("computation-eval");
-      if constexpr (Cfg::auth == Auth::KRRW) {
-        mpc->open_and_masks(st, source);
-        mpc->output_check(st, source);
-        AG_PHASE("output_check[SPDZ]");
-      }
-      out = gather_prepared_outputs_(material);
-    });
+    Wires out = evaluate_stored_(material, /*linear_masks=*/false);
     if constexpr (Cfg::auth == Auth::KRRW)
       mask = open_output_masks_(out.wire_bundle, open_to);
     if constexpr (Cfg::auth == Auth::WRK) {
@@ -533,6 +507,36 @@ class AGMPCEngine {
               st.EVAL(j, (int)material.output_ids[i]);
       }
     }
+    return out;
+  }
+
+  // The evaluation half shared by the prepared paths: P1 evaluates the stored
+  // rows, the KRRW output check follows, and the outputs are gathered (P1: masked
+  // values and labels; garblers: labels, plus the masked values the KRRW check
+  // gave them). `linear_masks`: under WRK with no AND gate, the garblers walk the
+  // outputs' masked values forward, as the direct paths do; a Computation never
+  // does, and hands them over instead.
+  Wires evaluate_stored_(Material &material, bool linear_masks) {
+    ComputeCtx &st = material.ctx;
+    [[maybe_unused]] auto *io = mpc->io;
+    [[maybe_unused]] int party = mpc->party;
+    AG_PHASE_BEGIN();
+    Wires out;
+    with_prepared_source_(material, [&](auto &source) {
+      if (mpc->party == 1)
+        mpc->evaluate_prepared(st, source, std::move(material.rows));
+      AG_PHASE("prepared-eval");
+      if constexpr (Cfg::auth == Auth::KRRW) {
+        mpc->open_and_masks(st, source);
+        AG_PHASE("open_and_masks");
+        mpc->output_check(st, source);
+        AG_PHASE("output_check[SPDZ]");
+      }
+      if constexpr (Cfg::auth == Auth::WRK)   // P1 checked every gate during evaluation
+        if (linear_masks && st.num_ands == 0) mpc->linear_masks_(st, source);
+      out = gather_prepared_outputs_(material);
+      AG_PHASE("gather_outputs");
+    });
     return out;
   }
 

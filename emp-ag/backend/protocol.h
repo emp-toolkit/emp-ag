@@ -261,9 +261,10 @@ private:
   // (deliver_output_masks_, input_auth.h).
   template <class Source> void linear_masks_(ComputeCtx &ctx, Source &source);
   void deliver_output_masks_(SecureWires<nP> &out);
-  // The same hand-off for a Computation: garbler i receives only the outputs'
-  // Lambda at positions_of[i], with a hash of its labels on them, and sets
-  // out.Lambda there.
+  // The general form: garbler i receives the outputs' Lambda at positions_of[i]
+  // only, with a hash of its labels on them, and sets out.Lambda there.
+  // deliver_output_masks_ lists every position for every garbler; a Computation
+  // lists each garbler's own.
   void deliver_output_masks_to_(SecureWires<nP> &out,
                                 const std::vector<std::vector<int>> &positions_of);
 
