@@ -112,15 +112,17 @@ a tweak per row; this is unconditional for every `nP`.
 `session_id` can select another base OT (e.g. the post-quantum `BMM`); every
 party must select the same base OT.
 
-The AND triples behind each chunk come, by default, from half-gate leaky ANDs
-bucketed per chunk. `TriplePool::use_cut_and_choose(batch)`, or compiling with
-`-DEMP_AG_CUT_AND_CHOOSE_BATCH=<batch>`, serves them instead from a bank of
-cut-and-choose triples (`backend/triple/cut_and_choose_triples.h`), generated
-`batch` at a time and checked before use. This sends fewer bytes per triple when
-COTs are cheap (`Ferret`) and batches are large, at the cost of more computation
-and of memory proportional to the batch. `TriplePool::use_source` installs any
-other source of authenticated random triples (`backend/triple/triple_source.h`
-states what a source must guarantee). Every party must make the same choice.
+The products of the AND gates' masks behind each chunk come, by default, from
+half-gate leaky ANDs bucketed per chunk (`backend/triple/leaky_and_prep.h`).
+Passing `ag::cut_and_choose_prep<nP>(batch)` as the session's last constructor
+argument, or compiling with `-DEMP_AG_CUT_AND_CHOOSE_BATCH=<batch>`, computes them
+instead from a bank of cut-and-choose triples
+(`backend/triple/cut_and_choose_triples.h`), generated `batch` at a time and
+checked before use. This sends fewer bytes per triple when COTs are cheap
+(`Ferret`) and batches are large, at the cost of more computation and of memory
+proportional to the batch. Any other protocol for the AND gates can be passed the
+same way (`backend/triple/and_prep.h` states what it must guarantee). Every party
+must make the same choice.
 
 The garbling options are compile-time: `AGMPCSession<nP, ag::GarbleConfig<A, D, C>>`
 (`backend/garble_config.h`). Every party must use the same options; a session binds
@@ -366,19 +368,20 @@ root (`<emp-ag/...>`):
 - **`frontend/agmpc_session.h`** — `emp::AGMPCSession<nP>`, the public session
   (the only piece a caller needs), and its live-body replay.
 - **`backend/`** — the building blocks, each including only the ones below it:
-  - **`common/`** — the party mesh (`netmp.h`), the threading plumbing
-    (`runtime.h`), profiling, and the generic sub-protocols every layer uses:
+  - **`common/`** — the party mesh (`netmp.h`, with `lane_mesh.h` for the bulk
+    openings' fan-out), the threading plumbing (`runtime.h`), profiling, and the
+    generic sub-protocols every layer uses:
     `fs_hash.h`, `protocols.h` (`EchoBC`, `sampleRandom`, `check_MAC`),
     `feq.h` / `fzero.h`, and `laand_window.h` (exact bit windows for packed rows).
   - **`ashare/`** — authenticated shares: the share type (`share.h`, aShares
     `MAC = KEY ⊕ x·Δ`), the share pool over emp-ot COT (`ashare_gen.h`,
     with `buffer_ot.h` for the base OTs), checked openings (`open.h`), and the
     open checks (`open_check.h`: pairwise and symmetric).
-  - **`triple/`** — authenticated AND triples over the share pool:
-    `triple_pool.h` (independent leaky ANDs, bucketing, and the Beaver product
-    of two authenticated sharings), the `TripleSource` interface
-    (`triple_source.h`), and the cut-and-choose bank (`cut_and_choose_triples.h`,
-    `cut_and_choose_bound.h`, `bucketing.h`).
+  - **`triple/`** — the products of the AND gates' masks, over the share pool:
+    the interface (`and_prep.h`), the leaky ANDs (`laand.h`), bucketing
+    (`merge.h`, with the leaky ANDs' bound in `bucketing.h`), Beaver
+    (`beaver.h`), and the two protocols, `leaky_and_prep.h` and the
+    cut-and-choose bank (`cut_and_choose_triples.h`, `cut_and_choose_bound.h`).
   - **`garble/`** — authenticated garbling: the options (`garble_config.h`),
     `protocol.h` (`AGMPCProtocol<nP>`), `engine.h` (`AGMPCEngine<nP>`, which
     drives the gate passes over a BooleanProgram / ComposePlan / live body — the

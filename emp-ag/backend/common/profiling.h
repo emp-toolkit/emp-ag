@@ -22,16 +22,15 @@ namespace emp::ag {
 inline uint64_t g_ag_cot_bytes = 0;
 inline uint64_t g_ag_phi_bytes = 0;
 
-// Sub-phase wall accumulators for the layered leaky-AND triple generation
-// (compute_and_shares resets them per call and prints the [ag-tp] breakdown at
-// the end):
+// Sub-phase wall accumulators for the leaky-AND path (LeakyAndPrep::run resets them
+// per call and prints the [ag-tp] breakdown at the end):
 //   cot    = COT / aShare draw (abit.compute / compute_deferred; a deferred check2's
 //            fold runs at the triple coin, outside it)
-//   hg     = half-gate phi exchange + hash (produce_leaky_ands_halfgate)
+//   hg     = half-gate phi exchange + hash (LeakyAnd::produce_row / produce_rows_2pc)
 //   sopen  = leaky-AND s-bit open
 //   acheck = d-combine + the LaAND consistency accumulation (the striped F_eq
 //            window fold at nP==2 / the windowed-RLC stash at nP>=3)
-//   bkt    = bucket_one_layer (cyclic-shift fold + its d-open)
+//   bkt    = the bucket differences' opening + the merge (triple/merge.h)
 //   open   = final Beaver x/y open + sigma assembly
 inline uint64_t g_ag_tp_cot_ns = 0, g_ag_tp_hg_ns = 0;
 inline uint64_t g_ag_tp_sopen_ns = 0, g_ag_tp_acheck_ns = 0;

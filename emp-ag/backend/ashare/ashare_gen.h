@@ -102,8 +102,8 @@ class AShareGen final : public AShareSource<nP> {
  public:
 	// Δ_me, the party's global MAC key, fixed by the ctor. Every party's generator pins
 	// two of its bits, and the layers above rely on both: bit 0 of every Δ_p is 1 (the
-	// share encoding above), and bit 1 of the XOR of all of them is 1 (TriplePool
-	// decodes a leaky AND's d, and the evaluator b_γ, from that bit).
+	// share encoding above), and bit 1 of the XOR of all of them is 1 (the leaky ANDs,
+	// triple/laand.h, decode their d, and the evaluator b_γ, from that bit).
 	block delta() const override { return Delta; }
 
  private:
@@ -202,7 +202,7 @@ class AShareGen final : public AShareSource<nP> {
 			//                the authenticated bit when bit0(K)=0).
 			//   bit 1 of Δ — half-gate Λ_γ recovery: bit1(Δ_j)=1 for j≠1,
 			//                bit1(Δ_1) = nP mod 2. So bit1(⊕_p Δ_p) = 1, which
-			//                TriplePool's LaAND decoding d = LSB1(⊕ s^p) and
+			//                the leaky ANDs' decoding d = LSB1(⊕ s^p) and
 			//                AGMPCSession's b_γ = LSB1(m_{γ,0}^2) both rely on.
 			// The lemma checked at compile time, colocated with the pinning it
 			// governs: the per-party bit-1 choices below must XOR to 1.

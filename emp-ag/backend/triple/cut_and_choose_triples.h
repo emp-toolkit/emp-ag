@@ -49,11 +49,14 @@
 // its zero test's commitments; with the pairwise check at nP > 2 they are exchanged). At
 // nP == 2 there is no second honest view.
 //
-// Outputs are banked: take(n), the TripleSource interface (triple/triple_source.h), serves
-// n triples, generating batches of `batch` outputs as the bank runs dry. Batch i of the
-// session is held to 2^-ssp / (i (i + 1)). A batch keeps the MAC and key of all 3 pop
-// candidates toward every peer until its outputs are built, 32 (nP - 1) bytes per aShare,
-// and pop is about B T times the batch.
+// Outputs are banked: take(n) serves n triples, generating batches of `batch` outputs as
+// the bank runs dry. Batch i of the session is held to 2^-ssp / (i (i + 1)). A batch keeps
+// the MAC and key of all 3 pop candidates toward every peer until its outputs are built,
+// 32 (nP - 1) bytes per aShare, and pop is about B T times the batch.
+//
+// CutAndChoosePrep (below) computes the AND gates' products from the bank
+// (triple/and_prep.h): it takes a triple per gate, draws the call's coin, and runs Beaver
+// (triple/beaver.h).
 //
 #include "emp-ag/backend/triple/cut_and_choose_bound.h"
 #include "emp-ag/backend/common/feq.h"          // fs_coin_pair_group
@@ -62,7 +65,9 @@
 #include "emp-ag/backend/common/protocols.h"    // sampleRandom
 #include "emp-ag/backend/common/netmp.h"
 #include "emp-ag/backend/ashare/ashare_gen.h"
-#include "emp-ag/backend/triple/triple_source.h"
+#include "emp-ag/backend/triple/and_prep.h"
+#include "emp-ag/backend/triple/beaver.h"
+#include "emp-ag/backend/common/lane_mesh.h"
 #include "emp-ag/backend/common/runtime.h"             // parallel_for
 #include "emp-tool/runtime/crypto/mitccrh.h"
 #include <algorithm>
@@ -76,7 +81,7 @@
 namespace emp::ag {
 
 template <int nP, class OpenCheck = DefaultOpenCheck<nP>>
-class CutAndChooseTriples : public TripleSource<nP> {
+class CutAndChooseTriples {
 public:
   // Opens through kings (else all to all).
   static constexpr bool kKings = nP > 2 && !OpenCheck::kPerPeerOperands;
@@ -98,7 +103,7 @@ public:
 
   // Write n triples into mac[peer] and key[peer], resized to 3n: a at [0, n), b at [n, 2n),
   // c at [2n, 3n), this party's share in bit 0 of its MACs, as AShareGen's aShares.
-  void take(int64_t n, BlockVec mac[nP + 1], BlockVec key[nP + 1]) override {
+  void take(int64_t n, BlockVec mac[nP + 1], BlockVec key[nP + 1]) {
     expecting(n >= 0, "cut-and-choose: negative count");
     for (int p = 1; p <= nP; ++p) if (p != party_) {
       mac[p].resize((size_t)(3 * n));
@@ -612,6 +617,77 @@ private:
     bank_pos_ = 0;
   }
 };
+
+// The AND gates' products from cut-and-choose triples (triple/and_prep.h). Per call: take
+// one banked triple per gate, draw the call's coin (Fiat-Shamir at nP == 2,
+// commit-then-open at nP > 2) and fold at it the consistency check of the shares drawn
+// since the last call (a no-op when a batch generated in take() folded them at its own
+// coin), then Beaver (triple/beaver.h). Every banked triple was checked before it was
+// banked, and none is served twice.
+template <int nP, class OpenCheck = DefaultOpenCheck<nP>>
+class CutAndChoosePrep : public AndPrep<nP> {
+public:
+  using open_check_t = OpenCheck;
+
+  // Triples generated `batch` at a time.
+  CutAndChoosePrep(const AndPrepContext<nP> &ctx, int64_t batch)
+      : mesh_(ctx.io, ctx.grp, ctx.pool, ctx.party), party_(ctx.party),
+        sid_(ctx.session_id), abit_(*ctx.abit), Delta_(abit_.delta()),
+        check_(ctx.io, ctx.pool, ctx.party, Delta_, ctx.session_id, &prg_, ctx.grp),
+        bank_(ctx.io, ctx.pool, ctx.party, abit_, ctx.session_id,
+              checked_statistical_security(ctx.ssp), batch, ctx.grp),
+        beaver_(mesh_, Delta_) {}
+
+  void validate(int64_t n) override {
+    expecting(n >= 0, "cut-and-choose: negative batch length");
+    expecting(3 * n <= (int64_t)INT_MAX, "cut-and-choose: chunk too large -- split into chunks");
+  }
+
+  AndInputs<nP> inputs(int64_t n) override { return beaver_.inputs((int)n); }
+
+  block run(int64_t n, AShareBundleVec<nP> &out) override {
+    validate(n);
+    out.clear();
+    if (n == 0) return zero_block;
+    const int L = (int)n;
+    bank_.take(n, mac_, key_);
+    const int any_peer = (party_ == 1) ? 2 : 1;
+    block coin;
+    if constexpr (nP == 2)
+      coin = fs_coin_pair_group<nP>(mesh_.io, mesh_.grp, any_peer, "AGMPC halfgate coin", sid_);
+    else
+      coin = sampleRandom<nP>(mesh_.io, &prg_, mesh_.pool, party_, sid_);
+    abit_.fold_check2(coin);
+    beaver_.open(mac_, L);
+    beaver_.finish(check_, abit_, mac_, key_, L, 0, [](const typename OpenCheck::Run &) {}, out);
+    return coin;
+  }
+
+  // The bank's parameters and totals (CutAndChooseTriples).
+  const CutAndChooseTriples<nP, OpenCheck> &bank() const { return bank_; }
+
+private:
+  LaneMesh<nP> mesh_;
+  int party_;
+  block sid_;
+  AShareSource<nP> &abit_;   // the session's share pool; its owner outlives this
+  block Delta_;
+  PRG prg_;
+  OpenCheck check_;          // checks x and y against their MACs
+  CutAndChooseTriples<nP, OpenCheck> bank_;
+  Beaver<nP, OpenCheck> beaver_;
+  BlockVec mac_[nP + 1], key_[nP + 1];   // the call's triples, a | b | c
+};
+
+// The factory for CutAndChoosePrep with batches of `batch` (AGMPCSession's constructor
+// takes one).
+template <int nP>
+AndPrepFactory<nP> cut_and_choose_prep(int64_t batch) {
+  expecting(batch >= 1, "cut-and-choose: batch must be positive");
+  return [batch](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
+    return std::make_unique<CutAndChoosePrep<nP>>(c, batch);
+  };
+}
 
 }  // namespace emp::ag
 #endif  // EMP_AG_BACKEND_TRIPLE_CUT_AND_CHOOSE_TRIPLES_H__

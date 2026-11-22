@@ -202,7 +202,7 @@ void AGMPCProtocol<nP, Cfg>::garble_and_ship(ComputeCtx &ctx, Source &source) {
   });
 
   std::thread drain([&]() {
-    ship_garbling<nP, Cfg>(io, party, pipe, num_ands, cap, laand_window_bits(fpre->ssp));
+    ship_garbling<nP, Cfg>(io, party, pipe, num_ands, cap, laand_window_bits(ssp));
   });
 
   dispatch_party<nP>(party, [&]<int Party>() {

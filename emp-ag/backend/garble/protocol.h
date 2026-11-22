@@ -3,7 +3,9 @@
 #include "emp-ag/backend/common/protocols.h"   // sampleRandom
 #include "emp-ag/backend/garble/garble_config.h"      // GarbleConfig, bind_garble_config
 #include "emp-ag/backend/ashare/ashare_gen.h"
-#include "emp-ag/backend/triple/triple_pool.h"
+#include "emp-ag/backend/triple/and_prep.h"
+#include "emp-ag/backend/triple/cut_and_choose_triples.h"
+#include "emp-ag/backend/triple/leaky_and_prep.h"
 #include "emp-ag/backend/garble/state.h"            // emp::ag::ComputeCtx<nP>
 #include "emp-ag/backend/garble/material.h"         // PreparedInputBinding
 #include "emp-ag/backend/common/netmp.h"
@@ -17,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <thread>
 #include <utility>
@@ -47,8 +50,20 @@ template <int nP, class Cfg = GarbleConfig<>> class AGMPCEngine;
 // Circuit execution is owned by the AGMPCEngine<nP> (backend/garble/engine.h), which
 // consumes emp-tool's canonical BooleanProgram and drives the private step helpers
 // below in protocol order. process_input() and the engine's circuit walks draw
-// aShares/triples on demand from TriplePool and its inner AShareGen, which
-// mint fresh material per call (neither keeps a pool).
+// aShares on demand from AShareGen, and the AND gates' products from the session's
+// AndPrep (triple/and_prep.h); both mint fresh material per call (neither keeps a pool).
+
+// The build's protocol for the AND gates: leaky ANDs (triple/leaky_and_prep.h), or
+// cut-and-choose triples (triple/cut_and_choose_triples.h) generated <batch> at a time
+// under -DEMP_AG_CUT_AND_CHOOSE_BATCH=<batch>.
+template <int nP>
+std::unique_ptr<AndPrep<nP>> default_and_prep(const AndPrepContext<nP> &c) {
+#ifdef EMP_AG_CUT_AND_CHOOSE_BATCH
+  return std::make_unique<CutAndChoosePrep<nP>>(c, (int64_t)(EMP_AG_CUT_AND_CHOOSE_BATCH));
+#else
+  return std::make_unique<LeakyAndPrep<nP>>(c);
+#endif
+}
 
 template <int nP, class Cfg = GarbleConfig<>>
 class AGMPCProtocol {
@@ -56,24 +71,19 @@ class AGMPCProtocol {
 public:
   // Long-lived setup, constructed once per session and reused across all input,
   // circuit-run and decode calls: the share generator over the session's COT streams
-  // (Cfg::cot; ashare/ashare_gen.h) and the triple pool over it (triple/triple_pool.h).
+  // (Cfg::cot; ashare/ashare_gen.h) and the protocol for the AND gates over it
+  // (triple/and_prep.h).
   using ashare_t = AShareGen<nP, MintFor<nP, Cfg::cot>>;
   ashare_t *abit = nullptr;
-  TriplePool<nP> *fpre = nullptr;
+  std::unique_ptr<AndPrep<nP>> and_prep;
   NetIOMP<nP> *io;
   ThreadPool *pool;
   int party;
+  int ssp = 40;   // statistical security parameter (bucket sizes, the leaky-AND and WRK row windows)
   block session_id;
   block Delta;
   PRG prg;
 
-  // Reused per-chunk pass scratch (grow-only; persists across chunks via this
-  // long-lived protocol object).
-  // DrawBeaverPass: every AND's operand mask shares -- the share bits, and the MACs and
-  // keys per peer or the mu_i blocks, as the open check needs (garble/passes/draw_beaver.h).
-  std::vector<unsigned char> bp_abit_, bp_bbit_;
-  BlockVec bp_amac_[nP + 1], bp_akey_[nP + 1], bp_bmac_[nP + 1], bp_bkey_[nP + 1];
-  BlockVec bp_amu_, bp_bmu_;
   // The ordinary fused path swaps these grow-only buffers into its stack
   // ComputeCtx and back at the call boundary. Prepared jobs keep their own
   // context-resident copies across phases. This keeps the fused path's steady
@@ -91,16 +101,18 @@ public:
 
   // grp (optional): a NetIOMPGroup (mesh(0) == io_) enabling lane-parallel COT;
   // null => single mesh. session_id_: used as given; empty => the
-  // parties agree on a fresh one here (see AGMPCSession).
+  // parties agree on a fresh one here (see AGMPCSession). make_and_prep builds the
+  // protocol for the AND gates after setup; empty => default_and_prep.
   AGMPCProtocol(NetIOMP<nP> *io_, ThreadPool *pool_, int party_, int ssp_ = 40,
                 NetIOMPGroup<nP> *grp = nullptr,
                 std::optional<block> session_id_ = std::nullopt,
                 BaseOtKind base_ot_kind = BaseOtKind::CSW,
                 int64_t planned_sender_cots = -1,
-                int64_t planned_receiver_cots = -1)
+                int64_t planned_receiver_cots = -1,
+                const AndPrepFactory<nP> &make_and_prep = {})
       : io(io_), pool(pool_), party(party_) {
     ag::validate_protocol_runtime(pool_, party_, nP);
-    (void)ag::checked_statistical_security(ssp_);
+    ssp = ag::checked_statistical_security(ssp_);
     expecting(io_ != nullptr, "AGMPCProtocol: NetIOMP must not be null");
     expecting(io_->party == party_,
               "AGMPCProtocol: NetIOMP party does not match protocol party");
@@ -111,19 +123,21 @@ public:
     session_id = session_id_ ? *session_id_ : sampleRandom<nP>(io_, &prg, pool_, party_);
     // Parties that disagree on the garbling options then disagree on the id, and setup fails.
     session_id = bind_garble_config<nP, Cfg>(session_id);
-    // The share pool first (base OTs and COT setup), then the triple pool over it.
+    // The share pool first (base OTs and COT setup), then the AND gates' protocol over it.
     abit = new ashare_t(io_, pool_, party_, grp, session_id, base_ot_kind,
                                  planned_sender_cots, planned_receiver_cots);
-    fpre = new TriplePool<nP>(*abit, io_, pool_, party_, ssp_, grp, session_id);
+    const AndPrepContext<nP> pc{io_, grp, pool_, party_, ssp, session_id, abit};
+    and_prep = make_and_prep ? make_and_prep(pc) : default_and_prep<nP>(pc);
+    expecting(and_prep != nullptr, "AGMPCProtocol: the AND-gate protocol factory returned null");
     Delta = abit->delta();
   }
   ~AGMPCProtocol() {
-    delete fpre;
+    and_prep.reset();   // it borrows abit
     delete abit;
   }
 
-  // Owns abit and fpre (and borrows io/pool); non-copyable / non-movable so the raw
-  // owning pointers are never double-deleted.
+  // Owns abit and and_prep (and borrows io/pool); non-copyable / non-movable so the raw
+  // owning pointer is never double-deleted.
   AGMPCProtocol(const AGMPCProtocol &) = delete;
   AGMPCProtocol &operator=(const AGMPCProtocol &) = delete;
   AGMPCProtocol(AGMPCProtocol &&) = delete;
@@ -196,13 +210,11 @@ private:
   using ComputeCtx = emp::ag::ComputeCtx<nP>;
 
   // The half-gate hash seed is not drawn on a round of its own. It is piggybacked off
-  // the per-chunk post-commitment triple coin: draw_and_seed squeezes one
-  // domain-separated block from TriplePool::call_coin_ into ctx.halfgate_seed after
-  // compute_and_shares. That coin is globally
-  // agreed (FS pair at nP==2 / commit-reveal at nP>2), so the evaluator's re-hash matches
-  // every garbler; being fresh per chunk, the hash's (start point, gid) -- one stream per
-  // sender, garble/halfgate.h -- never repeats across chunks under the fixed long-lived
-  // Delta.
+  // the per-chunk coin of the AND gates' protocol: draw_and_seed squeezes one
+  // domain-separated block from the coin AndPrep::run returns into ctx.halfgate_seed.
+  // That coin is held by every party, so the evaluator's re-hash matches every garbler;
+  // being fresh per chunk, the hash's (start point, gid) -- one stream per sender,
+  // garble/halfgate.h -- never repeats across chunks under the fixed long-lived Delta.
 
   // The checked opening of ashare/open.h over this session's mesh and keys: targets[t]
   // (t in 1..nP) lists the wire indices into `base` to open to party t, in one round;
