@@ -112,6 +112,14 @@ a tweak per row; this is unconditional for every `nP`.
 `session_id` can select another base OT (e.g. the post-quantum `BMM`); every
 party must select the same base OT.
 
+An application can also supply the COT streams themselves, as the session's last
+argument: an `ag::CotExtensionFactory` (`backend/ashare/cot_extension_factory.h`,
+which states what the streams must guarantee) builds each pair's primary stream,
+with its own base OTs, and its reverse stream, over the base OTs derived from the
+primary's checked prefix. Supplied streams need the SoftSpoken mint and run on one
+lane; a session binds the factory's id into its session id, so a mismatch fails
+setup.
+
 The products of the AND gates' masks behind each chunk come, by default, from
 half-gate leaky ANDs bucketed per chunk (`backend/triple/leaky_and_prep.h`).
 Passing `ag::cut_and_choose_prep<nP>(batch)` as the session's last constructor

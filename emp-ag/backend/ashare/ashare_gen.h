@@ -165,13 +165,16 @@ class AShareGen final : public AShareSource<nP> {
 	// pair, this party's sender count must equal its peer's receiver count and vice
 	// versa, so one identical (sender, receiver) pair at every party is valid only when
 	// the two counts are equal. With SilentFerretMint the two counts must be equal,
-	// count only the pool's draws, and size every stream's prepay.
+	// count only the pool's draws, and size every stream's prepay. `cot` supplies the
+	// COT streams (cot_extension_factory.h), empty keeping the mint's own; only the
+	// SoftSpoken mint takes supplied streams, on one lane.
 	AShareGen(NetIOMP<nP> *io, ThreadPool *pool, int party,
 			NetIOMPGroup<nP> *grp_in = nullptr,
 			block session_id_in = zero_block,
 			BaseOtKind base_ot_kind = BaseOtKind::CSW,
 			int64_t planned_sender_cots = -1,
-			int64_t planned_receiver_cots = -1)
+			int64_t planned_receiver_cots = -1,
+			const CotExtensionFactory &cot = {})
 		: io(io), pool(pool), party(party), session_id(session_id_in) {
 			ag::validate_protocol_runtime(pool, party, nP);
 			expecting(io != nullptr, "AShareGen: NetIOMP must not be null");
@@ -224,7 +227,7 @@ class AShareGen final : public AShareSource<nP> {
 
 			// The COT streams: base OTs, bootstrap, and (SoftSpoken) lanes.
 			mint_ = std::make_unique<Mint>(io, pool, party, grp, session_id, base_ot_kind,
-			                               planned_sender_cots, planned_receiver_cots, tmp);
+			                               planned_sender_cots, planned_receiver_cots, tmp, cot);
 			Delta = mint_->delta();
 			cots_per_stream_ = mint_->bootstrap_cots();
 

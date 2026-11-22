@@ -146,6 +146,14 @@ add_np_variant(agmpc_long_offline_np4 agmpc_long_offline.cpp 4 DEFS LONG_NP=4)
 # leaky triples whose first takes the gate's second input mask as its b) in both
 # execution paths. One fewer COT must be rejected by the live stream; a construction
 # that reused any other circuit mask would stay below that budget.
+# COT streams the application supplies (ashare/cot_extension_factory.h): SoftSpoken over a
+# BMM base OT at nP = 2 and 3, and the two misuses the session refuses.
+add_np_variant(agmpc_cot_extension_factory_np2 agmpc_cot_extension_factory.cpp 2 DEFS COT_FACTORY_NP=2)
+add_np_variant(agmpc_cot_extension_factory_np3 agmpc_cot_extension_factory.cpp 3 DEFS COT_FACTORY_NP=3)
+add_np_variant(agmpc_cot_extension_factory_lanes agmpc_cot_extension_factory.cpp 2
+               DEFS COT_FACTORY_NP=2 COT_FACTORY_CASE=1 PASS_RE "supplied streams run on one lane")
+add_np_variant(agmpc_cot_extension_factory_noid agmpc_cot_extension_factory.cpp 2
+               DEFS COT_FACTORY_NP=2 COT_FACTORY_CASE=2 PASS_RE "supplied factory needs an id")
 add_np_variant(agmpc_independent_triples_direct_np2 agmpc_independent_triples.cpp 2)
 add_np_variant(agmpc_independent_triples_prepared_np2 agmpc_independent_triples.cpp 2
                DEFS INDEPENDENT_TRIPLES_PREPARED=1)

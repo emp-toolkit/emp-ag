@@ -103,16 +103,19 @@ public:
   // grp (optional): a NetIOMPGroup (mesh(0) == io_) enabling lane-parallel COT;
   // null => single mesh. session_id_: used as given; empty => the
   // parties agree on a fresh one here (see AGMPCSession). make_and_prep builds the
-  // protocol for the AND gates after setup; empty => default_and_prep. Its id is bound
-  // into the session id before setup.
+  // protocol for the AND gates after setup; empty => default_and_prep. cot supplies the
+  // COT streams (ashare/cot_extension_factory.h); empty => the mint's own. Both ids are
+  // bound into the session id before setup.
   AGMPCProtocol(NetIOMP<nP> *io_, ThreadPool *pool_, int party_, int ssp_ = 40,
                 NetIOMPGroup<nP> *grp = nullptr,
                 std::optional<block> session_id_ = std::nullopt,
                 BaseOtKind base_ot_kind = BaseOtKind::CSW,
                 int64_t planned_sender_cots = -1,
                 int64_t planned_receiver_cots = -1,
-                const AndPrepFactory<nP> &make_and_prep = {})
+                const AndPrepFactory<nP> &make_and_prep = {},
+                const CotExtensionFactory &cot = {})
       : io(io_), pool(pool_), party(party_) {
+    validate_cot_extension_factory(cot);
     ag::validate_protocol_runtime(pool_, party_, nP);
     ssp = ag::checked_statistical_security(ssp_);
     expecting(io_ != nullptr, "AGMPCProtocol: NetIOMP must not be null");
@@ -125,13 +128,14 @@ public:
     session_id = session_id_ ? *session_id_ : sampleRandom<nP>(io_, &prg, pool_, party_);
     // Parties that disagree on the garbling options then disagree on the id, and setup
     // fails; likewise on the AND gates' protocol, every one of which but the leaky ANDs
-    // binds its id.
+    // binds its id, and on supplied COT streams.
     session_id = bind_garble_config<nP, Cfg>(session_id);
     const AndPrepFactory<nP> prep = make_and_prep.make ? make_and_prep : default_and_prep<nP>();
     session_id = bind_and_prep(session_id, prep.id);
+    session_id = bind_cot_extension(session_id, cot.id);
     // The share pool first (base OTs and COT setup), then the AND gates' protocol over it.
     abit = new ashare_t(io_, pool_, party_, grp, session_id, base_ot_kind,
-                                 planned_sender_cots, planned_receiver_cots);
+                                 planned_sender_cots, planned_receiver_cots, cot);
     const AndPrepContext<nP> pc{io_, grp, pool_, party_, ssp, session_id, abit};
     and_prep = prep.make(pc);
     expecting(and_prep != nullptr, "AGMPCProtocol: the AND-gate protocol factory returned null");

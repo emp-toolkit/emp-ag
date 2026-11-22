@@ -224,7 +224,10 @@ public:
   // (triple/and_prep.h: leaky_and_prep(), cut_and_choose_prep(batch), or an
   // application's own); empty selects the build default (default_and_prep). Every party
   // must make the same choice: a session binds every protocol but the leaky ANDs into
-  // its session id, so a mismatch fails setup.
+  // its session id, so a mismatch fails setup. `cot` supplies the COT streams
+  // (ashare/cot_extension_factory.h states what they must guarantee); empty keeps
+  // emp-ag's own. Supplied streams need the SoftSpoken mint and run on one lane, so with
+  // them lanes = -1 selects one lane; the session binds their id into its session id.
   // The worker pool is mandatory and needs
   // at least two workers because interactive send/receive progress runs as
   // mutually-dependent tasks. Invalid party/port/security/lane/pool settings
@@ -237,8 +240,10 @@ public:
               BaseOtKind base_ot_kind = BaseOtKind::CSW,
               int64_t planned_sender_cots = -1,
               int64_t planned_receiver_cots = -1,
-              const ag::AndPrepFactory<nP>& and_prep = {})
-      : L_(checked_owned_lanes_(party, port, pool, ssp, lanes)),
+              const ag::AndPrepFactory<nP>& and_prep = {},
+              const ag::CotExtensionFactory& cot = {})
+      : L_(checked_owned_lanes_(party, port, pool, ssp,
+                                cot.supplied() && lanes < 0 ? 1 : lanes)),
         owned_io_(L_ > 1 ? nullptr
                          : std::make_unique<NetIOMP<nP>>(party, port, ip)),
         owned_grp_(L_ > 1 ? std::make_unique<NetIOMPGroup<nP>>(party, port, L_, ip)
@@ -246,7 +251,7 @@ public:
         io_view_(L_ > 1 ? &owned_grp_->mesh(0) : owned_io_.get()),
         group_view_(owned_grp_.get()),
         proto_(io_view_, pool, party, ssp, group_view_, session_id,
-               base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep),
+               base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep, cot),
         engine_{&proto_} {
     io().flush();
   }
@@ -262,11 +267,12 @@ public:
               BaseOtKind base_ot_kind = BaseOtKind::CSW,
               int64_t planned_sender_cots = -1,
               int64_t planned_receiver_cots = -1,
-              const ag::AndPrepFactory<nP>& and_prep = {})
+              const ag::AndPrepFactory<nP>& and_prep = {},
+              const ag::CotExtensionFactory& cot = {})
       : L_(checked_borrowed_lanes_(io, pool, party, ssp, grp)),
         io_view_(io), group_view_(grp),
         proto_(io_view_, pool, party, ssp, group_view_, session_id,
-               base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep),
+               base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep, cot),
         engine_{&proto_} {}
   AGMPCSession(const AGMPCSession&) = delete;
   AGMPCSession& operator=(const AGMPCSession&) = delete;
