@@ -47,7 +47,12 @@ class AShareSource {
 	virtual void compute_deferred(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) = 0;
 	virtual void fold_check2(block coin) = 0;
 	virtual void maybe_flush_cot_check() = 0;
+	// Take check2's pending view to agree on it inside an agreement the caller runs anyway.
+	// The caller must then run that agreement: this clears the view, so settle_check2()
+	// no longer sees it, and nothing else checks it.
 	virtual PendingCheck2 take_pending_check2() = 0;
+	// Agree on check2's pending view on its own (one round); a no-op if nothing is
+	// pending.
 	virtual void settle_check2() = 0;
 };
 
@@ -244,7 +249,8 @@ class AShareGen final : public AShareSource<nP> {
 
 	// Hand the pending view to an agreement the caller runs anyway
 	// (SymmetricOpenCheck::agree, whose check_result() aborts unless every party handed in
-	// the same one). Every deferred draw must be folded first.
+	// the same one). Every deferred draw must be folded first. The caller must then run
+	// that agreement: the view is cleared here, so settle_check2() no longer sees it.
 	PendingCheck2 take_pending_check2() override {
 		expecting(deferred_.empty(), "AShareGen: check2 view taken with deferred draws not yet folded");
 		PendingCheck2 p;
