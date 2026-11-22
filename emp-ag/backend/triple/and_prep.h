@@ -11,8 +11,8 @@
 //
 // emp-ag has two: LeakyAndPrep (triple/leaky_and_prep.h: leaky AND triples merged by
 // bucketing, then Beaver) and CutAndChoosePrep (triple/cut_and_choose_triples.h:
-// cut-and-choose triples, then Beaver). A session can be given its own through its
-// constructor. Whichever it is, the protocol alone is responsible for its products: the
+// cut-and-choose triples, then Beaver). A session can be given another through its
+// constructor (AndPrepFactory, below). Whichever it is, the protocol alone is responsible for its products: the
 // garbling's checks certify the garbled circuit against them, not the products
 // themselves. So a protocol guarantees:
 //   1. out[i] is lambda_alpha * lambda_beta of gate i, authenticated under the Deltas.
@@ -36,9 +36,12 @@
 #include "emp-ag/backend/ashare/share.h"        // AShareBundleVec
 #include "emp-ag/backend/common/netmp.h"
 #include "emp-tool/runtime/core/block.h"
+#include "emp-tool/runtime/crypto/ro.h"
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
+#include <string_view>
 
 namespace emp::ag {
 
@@ -79,10 +82,21 @@ public:
   virtual block run(int64_t n, AShareBundleVec<nP> &out) = 0;
 };
 
-// Builds a session's protocol for its AND gates, after setup.
+// How a session builds its protocol for the AND gates, after setup. `id` names the
+// protocol and its parameters: a session binds a nonempty id into its session id before
+// setup (garble/protocol.h), so parties that chose differently fail setup. The leaky ANDs
+// (LeakyAndPrep), the default, have the empty id; any other protocol needs its own.
 template <int nP>
-using AndPrepFactory =
-    std::function<std::unique_ptr<AndPrep<nP>>(const AndPrepContext<nP> &)>;
+struct AndPrepFactory {
+  std::string id;
+  std::function<std::unique_ptr<AndPrep<nP>>(const AndPrepContext<nP> &)> make;
+};
+
+// The session id under the protocol `id` names: unchanged for the empty id.
+inline block bind_and_prep(block session_id, const std::string &id) {
+  if (id.empty()) return session_id;
+  return RO("emp-ag:and-prep", session_id).absorb(std::string_view(id)).squeeze_block();
+}
 
 }  // namespace emp::ag
 #endif  // EMP_AG_BACKEND_TRIPLE_AND_PREP_H__

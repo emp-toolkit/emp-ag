@@ -272,12 +272,13 @@ private:
   }
 };
 
-// The factory for LeakyAndPrep (AGMPCSession's constructor takes one).
+// The factory for LeakyAndPrep (AGMPCSession's constructor takes one): the default, with
+// the empty id.
 template <int nP>
 AndPrepFactory<nP> leaky_and_prep() {
-  return [](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
-    return std::make_unique<LeakyAndPrep<nP>>(c);
-  };
+  return {"", [](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
+            return std::make_unique<LeakyAndPrep<nP>>(c);
+          }};
 }
 
 }  // namespace emp::ag

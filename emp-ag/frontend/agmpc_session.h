@@ -222,8 +222,9 @@ public:
   // at setup, and a stream that runs past it prepays another batch of that size.
   // `and_prep` builds the protocol that gives the AND gates' products
   // (triple/and_prep.h: leaky_and_prep(), cut_and_choose_prep(batch), or an
-  // application's own); empty selects the build default (default_and_prep), and every
-  // party must make the same choice.
+  // application's own); empty selects the build default (default_and_prep). Every party
+  // must make the same choice: a session binds a non-default one into its session id,
+  // so a mismatch fails setup.
   // The worker pool is mandatory and needs
   // at least two workers because interactive send/receive progress runs as
   // mutually-dependent tasks. Invalid party/port/security/lane/pool settings

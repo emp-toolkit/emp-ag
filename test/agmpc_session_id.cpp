@@ -1,7 +1,8 @@
 // AGMPCSession's session id. Left empty, the parties agree on a fresh id at
 // setup: both hold the same one, it is not zero, and two sessions get
 // different ids. A given id is used as is, bound to the session's options when they
-// are not the defaults (ag::bind_garble_config). The sessions share one mesh, as the
+// are not the defaults (ag::bind_garble_config) and to its protocol for the AND gates
+// unless that is the leaky ANDs (ag::bind_and_prep). The sessions share one mesh, as the
 // golden-snapshot cases do.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
@@ -50,8 +51,29 @@ int main(int argc, char **argv) {
   {
     AGMPCSession<nP> sess(&io, &pool, party, 40, nullptr, given);
     const block kept = sess.protocol().session_id;
-    const block want = ag::bind_garble_config<nP, ag::GarbleConfig<>>(given);
+    const block want = ag::bind_and_prep(ag::bind_garble_config<nP, ag::GarbleConfig<>>(given),
+                                         ag::default_and_prep<nP>().id);
     expecting(cmpBlock(&kept, &want, 1), "agmpc_session_id: a given id was replaced");
+  }
+  {
+    // The leaky ANDs keep the id; cut-and-choose triples bind theirs. One session at a
+    // time, as a process holds one chunk recorder.
+    const block base = ag::bind_garble_config<nP, ag::GarbleConfig<>>(given);
+    block kept, bound;
+    {
+      AGMPCSession<nP> leaky(&io, &pool, party, 40, nullptr, given, BaseOtKind::CSW, -1, -1,
+                             ag::leaky_and_prep<nP>());
+      kept = leaky.protocol().session_id;
+    }
+    {
+      AGMPCSession<nP> cnc(&io, &pool, party, 40, nullptr, given, BaseOtKind::CSW, -1, -1,
+                           ag::cut_and_choose_prep<nP>(1024));
+      bound = cnc.protocol().session_id;
+    }
+    expecting(cmpBlock(&kept, &base, 1), "agmpc_session_id: the leaky ANDs changed the id");
+    const block want = ag::bind_and_prep(base, ag::cut_and_choose_prep<nP>(1024).id);
+    expecting(cmpBlock(&bound, &want, 1) && !cmpBlock(&bound, &base, 1),
+              "agmpc_session_id: cut-and-choose triples did not bind the id");
   }
   if (party == 1) printf("agmpc_session_id: OK\n");
   return 0;
