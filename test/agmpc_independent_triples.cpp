@@ -1,8 +1,9 @@
-// Live COT-demand check for WRK preprocessing: each AND consumes
-// one output mask and B triples whose three authenticated inputs are all fresh.
-// Exact budgets must suffice in both direct and prepared execution.  A prepared
-// run with one COT less must fail; reusing circuit masks as triple operands
-// would consume fewer COTs and incorrectly let that run complete.
+// Live COT-demand check for WRK preprocessing: each AND consumes one output mask and B
+// leaky triples, all fresh but the b of the first, which is the gate's second input
+// mask: 3B COTs. Exact budgets must suffice in both direct and prepared execution. A
+// prepared run with one COT less must fail; reusing any other circuit mask (above all as
+// a leaky AND's a, the operand its selective failure leaks) would consume fewer COTs and
+// incorrectly let that run complete.
 #include "emp-ag/emp-ag.h"
 #include "emp-tool/emp-tool.h"
 
@@ -41,10 +42,10 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // The exact budget: 128 prefix COTs, one COT per input pad, and 3B+1 COTs per
-  // AND, in EACH direction.
+  // The exact budget: 128 prefix COTs, one COT per input pad, and 3B COTs per AND, in
+  // EACH direction.
   const int B = ag::bucket_size(width, ssp);
-  const std::int64_t expected_cots = 128 + input_pads + width * (3LL * B + 1);
+  const std::int64_t expected_cots = 128 + input_pads + width * 3LL * B;
 
   const std::int64_t planned_cots = expected_cots - INDEPENDENT_TRIPLES_SHORT;
   ThreadPool pool(2);

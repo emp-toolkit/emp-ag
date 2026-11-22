@@ -142,10 +142,10 @@ add_np_variant(agmpc_prepared_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3)
 add_np_variant(agmpc_long_offline_np3 agmpc_long_offline.cpp 3 DEFS LONG_NP=3)
 add_np_variant(agmpc_long_offline_np4 agmpc_long_offline.cpp 4 DEFS LONG_NP=4)
 
-# WRK generation must consume the independently planned 3B+1 COTs per AND in
-# both execution paths.  One fewer COT must be rejected by the live stream; a
-# construction that reused circuit masks as triple operands would stay below
-# that budget.
+# WRK generation must consume the planned 3B COTs per AND (one output mask, and B
+# leaky triples whose first takes the gate's second input mask as its b) in both
+# execution paths. One fewer COT must be rejected by the live stream; a construction
+# that reused any other circuit mask would stay below that budget.
 add_np_variant(agmpc_independent_triples_direct_np2 agmpc_independent_triples.cpp 2)
 add_np_variant(agmpc_independent_triples_prepared_np2 agmpc_independent_triples.cpp 2
                DEFS INDEPENDENT_TRIPLES_PREPARED=1)
