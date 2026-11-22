@@ -14,10 +14,10 @@
 // their MACs in its own open check.
 //
 #include "emp-ag/backend/common/runtime.h"   // parallel_for
+#include "emp-ag/backend/triple/triple_row.h"
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/crypto/prg.h"
 #include <algorithm>
-#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -67,29 +67,25 @@ inline Buckets draw_buckets(PRG &prg, int B, int64_t ell) {
   return bk;
 }
 
-// B rows of leaky triples as aShares. Toward peer p, row m's a, b and c start at
-// mac[m][p] + {0, stride, 2 stride}, and the keys at key[m][p] likewise.
+// Difference (m, j) as an aShare toward p: the XOR of the two b's MACs (keys).
 template <int nP>
-struct TripleRows {
-  int64_t stride = 0;
-  std::vector<std::array<block *, nP + 1>> mac, key;
-  // Difference (m, j) as an aShare toward p: the XOR of the two b's MACs (keys).
-  block diff_mac(const Buckets &bk, int m, int64_t j, int p) const {
-    return mac[0][p][stride + j] ^ mac[(size_t)m][p][stride + bk.member(m, j)];
-  }
-  block diff_key(const Buckets &bk, int m, int64_t j, int p) const {
-    return key[0][p][stride + j] ^ key[(size_t)m][p][stride + bk.member(m, j)];
-  }
-};
+block merge_diff_mac(const std::vector<TripleRow<nP>> &rows, const Buckets &bk, int m,
+                     int64_t j, int p) {
+  return rows[0].mac[1][p][j] ^ rows[(size_t)m].mac[1][p][bk.member(m, j)];
+}
+template <int nP>
+block merge_diff_key(const std::vector<TripleRow<nP>> &rows, const Buckets &bk, int m,
+                     int64_t j, int p) {
+  return rows[0].key[1][p][j] ^ rows[(size_t)m].key[1][p][bk.member(m, j)];
+}
 
 // This party's shares of the differences, row-major, into out[0, (B - 1) ell): bit 0 of
 // its MACs toward any one peer (`peer`), where share.h keeps its share.
 template <int nP>
-void merge_difference_shares(const TripleRows<nP> &rows, const Buckets &bk, int peer,
-                             unsigned char *out, ThreadPool *pool) {
-  const int64_t s = rows.stride;
+void merge_difference_shares(const std::vector<TripleRow<nP>> &rows, const Buckets &bk,
+                             int peer, unsigned char *out, ThreadPool *pool) {
   for (int m = 1; m < bk.B; ++m) {
-    const block *b0 = rows.mac[0][peer] + s, *bm = rows.mac[(size_t)m][peer] + s;
+    const block *b0 = rows[0].mac[1][peer], *bm = rows[(size_t)m].mac[1][peer];
     unsigned char *o = out + (size_t)(m - 1) * bk.ell;
     ag::parallel_for(pool, (int)bk.ell, [&, b0, bm, o, m](int lo, int hi) {
       for (int j = lo; j < hi; ++j)
@@ -102,9 +98,9 @@ void merge_difference_shares(const TripleRows<nP> &rows, const Buckets &bk, int 
 // MACs and keys toward each peer, so no party adds a public constant. Width-split: each
 // task owns one peer's range of buckets, and every row's member is read once.
 template <int nP>
-void merge_combine(TripleRows<nP> &rows, const Buckets &bk, const unsigned char *d,
-                   int party, ThreadPool *pool) {
-  const int64_t ell = bk.ell, s = rows.stride;
+void merge_combine(const std::vector<TripleRow<nP>> &rows, const Buckets &bk,
+                   const unsigned char *d, int party, ThreadPool *pool) {
+  const int64_t ell = bk.ell;
   if (bk.B < 2 || ell == 0) return;
   const int per_peer = std::max(1, (int)pool->size() / (nP - 1));
   const int64_t step = (ell + per_peer - 1) / per_peer;
@@ -112,23 +108,24 @@ void merge_combine(TripleRows<nP> &rows, const Buckets &bk, const unsigned char 
   for (int p = 1; p <= nP; ++p) if (p != party)
     for (int64_t i0 = 0; i0 < ell; i0 += step) {
       const int64_t i1 = std::min(i0 + step, ell);
-      res.push_back(pool->enqueue([&rows, &bk, d, p, i0, i1, ell, s]() {
-        block *am = rows.mac[0][p], *ak = rows.key[0][p];
+      res.push_back(pool->enqueue([&rows, &bk, d, p, i0, i1, ell]() {
+        block *am = rows[0].mac[0][p], *ak = rows[0].key[0][p];
+        block *cm = rows[0].mac[2][p], *ck = rows[0].key[2][p];
         for (int64_t j = i0; j < i1; ++j) {
-          block ma = am[j], ka = ak[j], mc = am[2 * s + j], kc = ak[2 * s + j];
+          block ma = am[j], ka = ak[j], mc = cm[j], kc = ck[j];
           for (int m = 1; m < bk.B; ++m) {
             const int64_t q = bk.member(m, j);
-            const block *lm = rows.mac[(size_t)m][p], *lk = rows.key[(size_t)m][p];
+            const TripleRow<nP> &r = rows[(size_t)m];
             const block sel = select_mask[d[(size_t)(m - 1) * ell + j]];
-            ma = ma ^ lm[q];
-            ka = ka ^ lk[q];
-            mc = mc ^ lm[2 * s + q] ^ (lm[q] & sel);
-            kc = kc ^ lk[2 * s + q] ^ (lk[q] & sel);
+            ma = ma ^ r.mac[0][p][q];
+            ka = ka ^ r.key[0][p][q];
+            mc = mc ^ r.mac[2][p][q] ^ (r.mac[0][p][q] & sel);
+            kc = kc ^ r.key[2][p][q] ^ (r.key[0][p][q] & sel);
           }
           am[j] = ma;
           ak[j] = ka;
-          am[2 * s + j] = mc;
-          ak[2 * s + j] = kc;
+          cm[j] = mc;
+          ck[j] = kc;
         }
       }));
     }

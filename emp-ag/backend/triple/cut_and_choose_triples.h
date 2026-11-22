@@ -571,15 +571,8 @@ private:
 
     // 6. The combine (triple/merge.h): output j merges head j of group 0 with its members
     //    in groups 1..B-1, in place into group 0, which is then banked.
-    TripleRows<nP> rows;
-    rows.stride = pop;
-    rows.mac.resize((size_t)B);
-    rows.key.resize((size_t)B);
-    for (int m = 0; m < B; ++m)
-      for (int p = 0; p <= nP; ++p) {
-        rows.mac[(size_t)m][p] = (p == party_) ? nullptr : mac[p].data() + (size_t)m * ell;
-        rows.key[(size_t)m][p] = (p == party_) ? nullptr : key[p].data() + (size_t)m * ell;
-      }
+    std::vector<TripleRow<nP>> rows((size_t)B);
+    for (int m = 0; m < B; ++m) rows[(size_t)m] = strided_row<nP>(mac, key, m * ell, pop, party_);
     merge_combine(rows, bk, opened.data() + n_cut + n_sac, party_, pool_);
     for (int p = 1; p <= nP; ++p) if (p != party_) {
       bank_mac_[p].resize((size_t)(3 * ell));
@@ -636,8 +629,9 @@ public:
     else
       coin = sampleRandom<nP>(mesh_.io, &prg_, mesh_.pool, party_, sid_);
     abit_.fold_check2(coin);
-    beaver_.open(mac_, L);
-    beaver_.finish(check_, abit_, mac_, key_, L, 0, [](const typename OpenCheck::Run &) {}, out);
+    const TripleRow<nP> t = strided_row<nP>(mac_, key_, 0, L, party_);
+    beaver_.open(t, L);
+    beaver_.finish(check_, abit_, t, L, 0, [](const typename OpenCheck::Run &) {}, out);
     return coin;
   }
 
