@@ -286,8 +286,8 @@ std::vector<unsigned char> AGMPCProtocol<nP, Cfg>::open_computation_input_masks_
       targets[owner[w]].push_back(w);
   }
   // Every check of the job's preprocessing completes before its first opening;
-  // the guards also settle anything an earlier call deferred, and are wire-free
-  // on the clean path.
+  // the guards also settle anything an earlier call left pending, and are
+  // wire-free on the clean path.
   abit->maybe_flush_cot_check();
   abit->settle_check2();
   std::vector<unsigned char> lam = open_to_targets(target.wire_bundle.data(), targets);

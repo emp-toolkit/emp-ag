@@ -9,7 +9,7 @@
 // Deltas. For every peer p, mac[p] and key[p] are resized to 3n, with a at [0, n), b at
 // [n, 2n) and c at [2n, 3n). mac[p][i] = K_p[x_i] ^ x_i * Delta_p is this party's MAC on
 // its share x_i, so bit 0 of it is x_i, and key[p][i] is this party's key on p's share
-// (shares.h).
+// (share.h).
 //
 // The source alone is responsible for its triples. TriplePool opens a ^ lambda_alpha and
 // b ^ lambda_beta, where lambda_alpha and lambda_beta are the circuit masks, and checks

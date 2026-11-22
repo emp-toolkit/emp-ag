@@ -86,10 +86,13 @@ class AShareSource {
 //     Δ-consistency on the first call) then check2 (share consistency, nP>2 only),
 //     seeded by an internal post-commitment sampleRandom; it leaves the view of its
 //     opening pending.
+//   - compute_deferred(MAC, KEY, length) / fold_check2(coin) — compute() with check2
+//     left to a later coin, and check2 of every such draw at that coin.
 //   - draw(n, out) — one-shot convenience: compute() into the reusable draw
 //     scratch, transposed into caller's AoS bundles. At nP>2 every call also
 //     mints check2's kCheck2Pad hiding shares, and the first call check1's
-//     csp = 128 gadget tail; neither reaches the output.
+//     csp = 128 gadget tail; neither reaches the output. draw_soa(n, mac, key,
+//     defer) gives the scratch itself, with check2 optionally deferred.
 //   - maybe_flush_cot_check() — flush the deferred long-lived-COT consistency check
 //     before a reveal (no-op when nothing was minted since the last flush).
 //   - take_pending_check2() / settle_check2() — hand check2's pending view to another
@@ -121,8 +124,8 @@ class AShareGen final : public AShareSource<nP> {
 	// the ctor, used once by check1.
 	block check1_u_[nP];
 
-	// check2's hiding shares per call at nP>2: one per bit of the 128-bit value
-	// it broadcasts (see check2).
+	// check2's hiding shares per call at nP>2: one per bit of the 128-bit hash value
+	// it opens (see check2).
 	static constexpr int kCheck2Pad = 128;
 	// The running digest of the views of check2's openings not yet agreed (every party's
 	// bw as this party received it), and whether there is any.
@@ -240,8 +243,10 @@ class AShareGen final : public AShareSource<nP> {
 	int64_t cots_per_stream() const { return cots_per_stream_; }
 
 	// Hand the pending view to an agreement the caller runs anyway
-	// (SymmetricOpenCheck::agree), which aborts unless every party hands in the same one.
+	// (SymmetricOpenCheck::agree, whose check_result() aborts unless every party handed in
+	// the same one). Every deferred draw must be folded first.
 	PendingCheck2 take_pending_check2() override {
+		expecting(deferred_.empty(), "AShareGen: check2 view taken with deferred draws not yet folded");
 		PendingCheck2 p;
 		p.any = std::exchange(pending_views_, false);
 		pending_check2_view_.digest(p.view);   // and resets
@@ -252,9 +257,11 @@ class AShareGen final : public AShareSource<nP> {
 	// peer and every peer's back, aborting on any mismatch. Two honest parties compare
 	// over their own channel, so a party that sent them different hash values is caught.
 	// No-op when nothing is pending. Call before garbling with, or revealing anything
-	// computed from, shares whose view no other agreement took. Deferred draws are not
-	// covered: their views join the pending one only at fold_check2().
+	// computed from, shares whose view no other agreement took. A deferred draw's view
+	// joins the pending one only at fold_check2(), so every deferred draw must be folded
+	// first.
 	void settle_check2() override {
+		expecting(deferred_.empty(), "AShareGen: settle_check2() with deferred draws not yet folded");
 		if (!pending_views_) return;
 		const PendingCheck2 pending = take_pending_check2();
 		char recv[nP + 1][FsHash::DIGEST_SIZE];
@@ -282,6 +289,7 @@ class AShareGen final : public AShareSource<nP> {
 	// MAC check, nP>2 only).
 	void compute(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) override {
 		constexpr int pad = (nP > 2) ? kCheck2Pad : 0;
+		expecting(length >= 0, "AShareGen: negative length");
 		expecting((int64_t)length + pad <= INT_MAX, "auth_share: padded length overflow");
 		process_phase1(MAC, KEY, length + pad);
 
@@ -324,6 +332,7 @@ class AShareGen final : public AShareSource<nP> {
 	// d, a cut-and-choose candidate's opened z ^ r), until the fold. At nP = 2 there is no
 	// check2, and this is compute().
 	void compute_deferred(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) override {
+		expecting(length >= 0, "AShareGen: negative length");
 		if constexpr (nP == 2) {
 			compute(MAC, KEY, length);
 		} else {
@@ -505,7 +514,8 @@ class AShareGen final : public AShareSource<nP> {
 	};
 
 	// check2 over one or more draws. The outputs of all of them take coefficients from
-	// PRG(`seed`) in draw order, so one draw gets PRG position k for its output k; the
+	// PRG(`seed`) in draw order, a draw's output k at PRG position (its first position + k),
+	// so a draw checked alone gets PRG position k for its output k; the
 	// hiding shares of every draw take X^0..X^127 (a sum of distinct X^k is still never
 	// zero within one draw, and several draws' hiding bits only add to the pad on bw).
 	void check2(block seed, const Check2Segment *segs, int nsegs) {

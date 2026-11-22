@@ -25,7 +25,8 @@ inline uint64_t g_ag_phi_bytes = 0;
 // Sub-phase wall accumulators for the layered leaky-AND triple generation
 // (compute_and_shares resets them per call and prints the [ag-tp] breakdown at
 // the end):
-//   cot    = COT / aShare draw (abit.compute -- includes check2's folds at nP>2)
+//   cot    = COT / aShare draw (abit.compute / compute_deferred; a deferred check2's
+//            fold runs at the triple coin, outside it)
 //   hg     = half-gate phi exchange + hash (produce_leaky_ands_halfgate)
 //   sopen  = leaky-AND s-bit open
 //   acheck = d-combine + the LaAND consistency accumulation (the striped F_eq
