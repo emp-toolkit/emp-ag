@@ -28,6 +28,7 @@
 #include "emp-ot/base_ot/base_ot_select.h"  // BaseOtKind / make_base_ot
 #include "emp-ot/ot_extension/softspoken/softspoken.h"
 #include "emp-ag/backend/ashare/buffer_ot.h"   // BufferOT (one base OT per unordered pair)
+#include "emp-ag/backend/ashare/cot_extension_factory.h"
 #include "emp-ag/backend/ashare/fix.h"         // the Fix exchange's two halves
 #include "emp-tool/runtime/crypto/mitccrh.h"     // MITCCRH (COT->ROT for the derived base OTs)
 #include <algorithm>
@@ -53,10 +54,16 @@ class SoftSpokenMint {
  public:
 	// Planned sender/receiver counts include the 128-COT bootstrap prefix and are
 	// forwarded to OTExtension::begin(n_ots); see AShareGen.
+	// `cot` supplies the streams in place of SoftSpoken over a public-key base OT
+	// (cot_extension_factory.h); empty keeps them.
 	SoftSpokenMint(NetIOMP<nP> *io, ThreadPool *pool, int party, NetIOMPGroup<nP> *grp_in,
 	           block session_id, BaseOtKind base_ot_kind, int64_t planned_sender_cots,
-	           int64_t planned_receiver_cots, const bool delta_bits[128])
-		: grp(grp_in), io(io), pool(pool), party(party), session_id(session_id) {
+	           int64_t planned_receiver_cots, const bool delta_bits[128],
+	           const CotExtensionFactory &cot = {})
+		: grp(grp_in), io(io), pool(pool), party(party), session_id(session_id), cot_(cot) {
+			validate_cot_extension_factory(cot_);
+			expecting(!cot_.supplied() || grp_in == nullptr || grp_in->size() == 1,
+			          "COT streams: supplied streams run on one lane");
 			expecting(planned_sender_cots == -1 || planned_sender_cots >= 128,
 			          "AShareGen: planned sender COT count must be -1 or include the 128-COT bootstrap prefix");
 			expecting(planned_receiver_cots == -1 || planned_receiver_cots >= 128,
@@ -188,6 +195,7 @@ class SoftSpokenMint {
 	ThreadPool *pool;
 	int party;
 	block session_id;
+	CotExtensionFactory cot_;   // supplied streams, or empty for SoftSpoken's own
 	block Delta_;   // Δ_me, as the sender streams hold it
 	// Fix exchange scratch (grow-only): the corrections sent to and received from each peer.
 	std::vector<uint8_t> fix_out_[nP + 1], fix_in_[nP + 1];
@@ -268,6 +276,23 @@ class SoftSpokenMint {
 			role, channel, /*malicious=*/true, std::move(base));
 	}
 
+	// A pair's primary stream: the supplied one, or SoftSpoken over a public-key base OT.
+	std::unique_ptr<OTExt> make_primary_(int role, NetIO *channel, BaseOtKind base_ot_kind) {
+		if (cot_.supplied()) return supplied_stream_(cot_.primary(role, channel));
+		return make_cot_extension_(role, channel, make_base_ot(base_ot_kind, channel));
+	}
+
+	// A pair's reverse stream, over the base OTs derived from the primary's checked prefix.
+	std::unique_ptr<OTExt> make_reverse_(int role, NetIO *channel, std::unique_ptr<OT> base) {
+		if (cot_.supplied()) return supplied_stream_(cot_.reverse(role, channel, std::move(base)));
+		return make_cot_extension_(role, channel, std::move(base));
+	}
+
+	static std::unique_ptr<OTExt> supplied_stream_(std::unique_ptr<OTExt> stream) {
+		expecting(stream != nullptr, "COT streams: the factory returned no stream");
+		return stream;
+	}
+
 	// Bootstrap one direction per unordered pair with its normal public-key base
 	// OT, then derive the reverse direction's 128 base OTs from its first 128 COTs.
 	// The higher-numbered party is the primary sender. The prefix is check()ed
@@ -323,8 +348,7 @@ class SoftSpokenMint {
 				NetIO* ch_recv = io->get(peer, /*swap=*/me_smaller);
 				if (!me_smaller) {
 					// Higher party: primary sender.
-					abit1[peer] = make_cot_extension_(
-						ALICE, ch_send, make_base_ot(base_ot_kind, ch_send));
+					abit1[peer] = make_primary_(ALICE, ch_send, base_ot_kind);
 					abit1[peer]->set_sid(primary_sid[(size_t)peer]);
 					bool split_delta[128];
 					abit1[peer]->set_delta(test_split_delta(delta_me, party, peer, split_delta));
@@ -335,8 +359,7 @@ class SoftSpokenMint {
 					abit1[peer]->check(); ch_send->flush();   // certify the prefix
 				} else {
 					// Lower party: primary receiver.
-					abit2[peer] = make_cot_extension_(
-						BOB, ch_recv, make_base_ot(base_ot_kind, ch_recv));
+					abit2[peer] = make_primary_(BOB, ch_recv, base_ot_kind);
 					abit2[peer]->set_sid(primary_sid[(size_t)peer]);
 					if (planned_receiver_cots >= 0) abit2[peer]->begin(planned_receiver_cots);
 					else                            abit2[peer]->begin();
@@ -383,7 +406,7 @@ class SoftSpokenMint {
 							m1[(size_t)(i + j)] = pad[2 * j + 1];
 						}
 					}
-					abit2[peer] = make_cot_extension_(
+					abit2[peer] = make_reverse_(
 						BOB, ch_recv,
 						std::make_unique<BufferOT>(ch_recv, std::move(m0), std::move(m1)));
 					abit2[peer]->set_sid(reverse_sid[(size_t)peer]);
@@ -404,7 +427,7 @@ class SoftSpokenMint {
 						hash.hash<8, 1>(pad);
 						for (int j = 0; j < 8; ++j) mc[(size_t)(i + j)] = pad[j];
 					}
-					abit1[peer] = make_cot_extension_(
+					abit1[peer] = make_reverse_(
 						ALICE, ch_send,
 						std::make_unique<BufferOT>(ch_send, std::move(c), std::move(mc)));
 					abit1[peer]->set_sid(reverse_sid[(size_t)peer]);

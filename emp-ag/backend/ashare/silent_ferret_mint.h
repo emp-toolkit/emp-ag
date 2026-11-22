@@ -31,6 +31,7 @@
 //
 #include "emp-ag/backend/common/netmp.h"
 #include "emp-ag/backend/common/runtime.h"            // peer_order, parallel_for
+#include "emp-ag/backend/ashare/cot_extension_factory.h"
 #include "emp-ag/backend/ashare/fix.h"         // the Fix exchange's two halves
 #include "emp-ag/backend/ashare/joint_lpn.h"   // the joint fold and its index words
 #include "emp-ag/backend/ashare/share.h"       // peer_slot
@@ -60,8 +61,10 @@ class SilentFerretMint {
 
 	SilentFerretMint(NetIOMP<nP> *io, ThreadPool *pool, int party, NetIOMPGroup<nP> * /*grp*/,
 	                 block session_id, BaseOtKind base_ot_kind, int64_t planned_sender_cots,
-	                 int64_t planned_receiver_cots, const bool delta_bits[128])
+	                 int64_t planned_receiver_cots, const bool delta_bits[128],
+	                 const CotExtensionFactory &cot = {})
 		: io_(io), pool_(pool), party_(party) {
+		expecting(!cot.supplied(), "COT streams: supplied streams need the SoftSpoken mint");
 		expecting(planned_sender_cots == planned_receiver_cots,
 		          "AShareGen: with SilentFerret every stream has one plan (sender == receiver)");
 		expecting(planned_sender_cots >= -1,
