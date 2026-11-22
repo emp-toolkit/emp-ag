@@ -15,7 +15,7 @@
 //      and opens every value they need in one round;
 //   5. checks every opened value, and every sacrifice residual against its claim, in one
 //      open check, whose zero test also agrees on the pending aShare consistency view;
-//   6. builds the ell outputs.
+//   6. combines the heads into the ell outputs by bucketing (triple/merge.h).
 //
 // Where it departs from FKOS15:
 //   - H hashes the correlation that authenticates a itself, where FKOS15 hashes a second,
@@ -59,6 +59,7 @@
 // (triple/beaver.h).
 //
 #include "emp-ag/backend/triple/cut_and_choose_bound.h"
+#include "emp-ag/backend/triple/merge.h"            // the combine
 #include "emp-ag/backend/common/feq.h"          // fs_coin_pair_group
 #include "emp-ag/backend/common/fs_hash.h"
 #include "emp-ag/backend/ashare/open_check.h"
@@ -164,25 +165,12 @@ private:
       return OpenCheck(io, pool, party, Delta, sid, prg, grp, "cut-and-choose: MAC tag mismatch");
   }
 
-  // An exactly uniform integer in [0, bound), by threshold rejection.
-  static int64_t uniform_(PRG &prg, int64_t bound) {
-    const uint64_t n = (uint64_t)bound, threshold = (uint64_t(0) - n) % n;
-    uint64_t x;
-    do {
-      unsigned char bytes[8];
-      prg.random_data_unaligned(bytes, sizeof(bytes));
-      x = 0;
-      for (int i = 0; i < 8; ++i) x |= (uint64_t)bytes[i] << (8 * i);
-    } while (x < threshold);
-    return (int64_t)(x % n);
-  }
-
   // A uniform k-subset of [0, n), ascending (Floyd's algorithm).
   static std::vector<int64_t> uniform_subset_(PRG &prg, int64_t n, int64_t k) {
     std::vector<int64_t> out;
     out.reserve((size_t)k);
     for (int64_t j = n - k; j < n; ++j) {
-      const int64_t x = uniform_(prg, j + 1);
+      const int64_t x = uniform_index(prg, j + 1);
       out.push_back(std::find(out.begin(), out.end(), x) == out.end() ? x : j);
     }
     std::sort(out.begin(), out.end());
@@ -425,9 +413,9 @@ private:
     abit_.fold_check2(coin);
     PRG cp(&coin);
     const std::vector<int64_t> subset = uniform_subset_(cp, pop, P.cut);
-    std::vector<int64_t> s((size_t)T, 0), rot((size_t)B, 0);
-    for (int k = 1; k < T; ++k) s[(size_t)k] = uniform_(cp, t);
-    for (int m = 1; m < B; ++m) rot[(size_t)m] = uniform_(cp, ell);
+    std::vector<int64_t> s((size_t)T, 0);
+    for (int k = 1; k < T; ++k) s[(size_t)k] = uniform_index(cp, t);
+    const Buckets bk = draw_buckets(cp, B, ell);
     // Move the cut to the tail [body, pop), so sacrifice group k is [k t, (k + 1) t).
     for (const auto &[q, w] : cut_and_choose_tail_swaps(pop, body, subset))
       for (int r = 0; r < 3; ++r) {
@@ -442,13 +430,13 @@ private:
       const int64_t q = h + s[(size_t)k];
       return k * t + (q < t ? q : q - t);
     };
-    auto head = [&](int64_t j, int m) {
-      const int64_t q = j + rot[(size_t)m];
-      return m * ell + (q < ell ? q : q - ell);
-    };
+    // Combine member m of output j: row m of the merge (triple/merge.h) is group m of the
+    // heads, [m ell, (m + 1) ell).
+    auto head = [&](int64_t j, int m) { return m * ell + bk.member(m, j); };
 
     // The values opened: the cut's a, b, c; each sacrifice pair's a_h ^ a_k and b_h ^ b_k;
-    // each combine member's b_head ^ b_member. Value v is entry e0, XOR entry e1 if e1 >= 0.
+    // the combine's differences b_head ^ b_member, row-major as merge.h orders them. Value v
+    // is entry e0, XOR entry e1 if e1 >= 0.
     const int64_t n_cut = 3 * P.cut, n_sac = 2 * t * (T - 1), n_cmb = ell * (B - 1);
     const int64_t n_open = n_cut + n_sac + n_cmb, n_res = t * (T - 1);
     auto entries = [&](int64_t v) -> std::pair<int64_t, int64_t> {
@@ -459,8 +447,9 @@ private:
         return {off + h, off + partner(h, (int)(pr % (T - 1)) + 1)};
       }
       v -= n_sac;
-      const int64_t j = v / (B - 1);
-      return {pop + head(j, 0), pop + head(j, (int)(v % (B - 1)) + 1)};
+      const int m = (int)(v / ell) + 1;
+      const int64_t j = v % ell;
+      return {pop + head(j, 0), pop + head(j, m)};
     };
     std::vector<uint8_t> mine((size_t)n_open), opened((size_t)n_open);
     parallel_for(pool_, (int)n_open, [&](int lo, int hi) {
@@ -580,39 +569,28 @@ private:
       expecting((opened[(size_t)(3 * i)] & opened[(size_t)(3 * i + 1)]) == opened[(size_t)(3 * i + 2)],
                 "cut-and-choose: a cut triple is incorrect");
 
-    // 6. Output j: a = XOR of its members' a, b = b_head, c = c_head ^ XOR over members m
-    //    of c_m ^ (b_head ^ b_m) a_m.
+    // 6. The combine (triple/merge.h): output j merges head j of group 0 with its members
+    //    in groups 1..B-1, in place into group 0, which is then banked.
+    TripleRows<nP> rows;
+    rows.stride = pop;
+    rows.mac.resize((size_t)B);
+    rows.key.resize((size_t)B);
+    for (int m = 0; m < B; ++m)
+      for (int p = 0; p <= nP; ++p) {
+        rows.mac[(size_t)m][p] = (p == party_) ? nullptr : mac[p].data() + (size_t)m * ell;
+        rows.key[(size_t)m][p] = (p == party_) ? nullptr : key[p].data() + (size_t)m * ell;
+      }
+    merge_combine(rows, bk, opened.data() + n_cut + n_sac, party_, pool_);
     for (int p = 1; p <= nP; ++p) if (p != party_) {
       bank_mac_[p].resize((size_t)(3 * ell));
       bank_key_[p].resize((size_t)(3 * ell));
-    }
-    const uint8_t *d = opened.data() + n_cut + n_sac;
-    parallel_for(pool_, (int)ell, [&](int lo, int hi) {
-      for (int j = lo; j < hi; ++j) {
-        for (int p = 1; p <= nP; ++p) if (p != party_) {
-          const block *M = mac[p].data(), *K = key[p].data();
-          const int64_t h0 = j;   // head(j, 0)
-          block am = M[h0], ak = K[h0], cm = M[2 * pop + h0], ck = K[2 * pop + h0];
-          for (int m = 1; m < B; ++m) {
-            const int64_t hm = head(j, m);
-            am = am ^ M[hm];
-            ak = ak ^ K[hm];
-            cm = cm ^ M[2 * pop + hm];
-            ck = ck ^ K[2 * pop + hm];
-            if (d[(size_t)j * (B - 1) + (m - 1)]) {
-              cm = cm ^ M[hm];
-              ck = ck ^ K[hm];
-            }
-          }
-          bank_mac_[p][(size_t)j] = am;
-          bank_key_[p][(size_t)j] = ak;
-          bank_mac_[p][(size_t)(ell + j)] = M[pop + h0];
-          bank_key_[p][(size_t)(ell + j)] = K[pop + h0];
-          bank_mac_[p][(size_t)(2 * ell + j)] = cm;
-          bank_key_[p][(size_t)(2 * ell + j)] = ck;
-        }
+      for (int r = 0; r < 3; ++r) {
+        memcpy(bank_mac_[p].data() + (size_t)r * ell, mac[p].data() + (size_t)r * pop,
+               (size_t)ell * sizeof(block));
+        memcpy(bank_key_[p].data() + (size_t)r * ell, key[p].data() + (size_t)r * pop,
+               (size_t)ell * sizeof(block));
       }
-    });
+    }
     bank_ell_ = ell;
     bank_pos_ = 0;
   }
@@ -680,13 +658,14 @@ private:
 };
 
 // The factory for CutAndChoosePrep with batches of `batch` (AGMPCSession's constructor
-// takes one).
+// takes one). Its id carries the batch, since the triples served depend on it.
 template <int nP>
 AndPrepFactory<nP> cut_and_choose_prep(int64_t batch) {
   expecting(batch >= 1, "cut-and-choose: batch must be positive");
-  return [batch](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
-    return std::make_unique<CutAndChoosePrep<nP>>(c, batch);
-  };
+  return {"emp-ag:cut-and-choose:" + std::to_string(batch),
+          [batch](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
+            return std::make_unique<CutAndChoosePrep<nP>>(c, batch);
+          }};
 }
 
 }  // namespace emp::ag

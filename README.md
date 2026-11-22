@@ -122,7 +122,8 @@ checked before use. This sends fewer bytes per triple when COTs are cheap
 (`Ferret`) and batches are large, at the cost of more computation and of memory
 proportional to the batch. Any other protocol for the AND gates can be passed the
 same way (`backend/triple/and_prep.h` states what it must guarantee). Every party
-must make the same choice.
+must make the same choice; a session binds any choice but the default into its
+session id, so a mismatch fails setup.
 
 The garbling options are compile-time: `AGMPCSession<nP, ag::GarbleConfig<A, D, C>>`
 (`backend/garble_config.h`). Every party must use the same options; a session binds
