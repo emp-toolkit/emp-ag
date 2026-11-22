@@ -51,7 +51,8 @@ template <int nP, class Cfg = GarbleConfig<>> class AGMPCEngine;
 // consumes emp-tool's canonical BooleanProgram and drives the private step helpers
 // below in protocol order. process_input() and the engine's circuit walks draw
 // aShares on demand from AShareGen, and the AND gates' products from the session's
-// AndPrep (triple/and_prep.h); both mint fresh material per call (neither keeps a pool).
+// AndPrep (triple/and_prep.h): the leaky ANDs make them per call, the cut-and-choose
+// protocol from a bank of triples checked a batch at a time.
 
 // The build's protocol for the AND gates: leaky ANDs (triple/leaky_and_prep.h), or
 // cut-and-choose triples (triple/cut_and_choose_triples.h) generated <batch> at a time
@@ -123,7 +124,8 @@ public:
     // so none of them picks it.
     session_id = session_id_ ? *session_id_ : sampleRandom<nP>(io_, &prg, pool_, party_);
     // Parties that disagree on the garbling options then disagree on the id, and setup
-    // fails; likewise on the AND gates' protocol, unless both run the default.
+    // fails; likewise on the AND gates' protocol, every one of which but the leaky ANDs
+    // binds its id.
     session_id = bind_garble_config<nP, Cfg>(session_id);
     const AndPrepFactory<nP> prep = make_and_prep.make ? make_and_prep : default_and_prep<nP>();
     session_id = bind_and_prep(session_id, prep.id);

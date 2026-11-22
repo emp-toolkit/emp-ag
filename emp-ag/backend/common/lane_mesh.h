@@ -2,8 +2,8 @@
 #define EMP_AG_BACKEND_COMMON_LANE_MESH_H__
 //
 // The session's meshes as a bulk opening uses them: mesh 0 (io) and, with lanes, the
-// other meshes of the group. fan_out() is the one enqueue order of every bulk opening
-// (the leaky ANDs' s-bits, the bucket differences, Beaver's d and e).
+// other meshes of the group. fan_out() is the one enqueue order of the leaky ANDs' and
+// Beaver's bulk openings (the s-bits, the bucket differences, Beaver's x and y).
 //
 #include "emp-ag/backend/common/netmp.h"
 #include "emp-ag/backend/common/runtime.h"   // lane_range
@@ -31,8 +31,9 @@ struct LaneMesh {
   // Splits [0,n) into T=min(lanes,n) contiguous ag::lane_range slices; lane t rides mesh
   // t (lane 0 == mesh 0). `send_slice(ch,peer,lo,hi)` and `recv_slice(...)` do the
   // transfer for that slice on channel ch. Order = peer-major, lanes 0..T-1, send+recv
-  // adjacent: THE deadlock-safe enqueue contract, defined once here for every bulk
-  // opening. n==0 is a no-op; T==1 keeps everything on mesh 0.
+  // adjacent: THE deadlock-safe enqueue contract for those openings. n == 0 still runs
+  // one (empty) slice on mesh 0, so a caller's bytes riding mesh 0 still go; T == 1 keeps
+  // everything on mesh 0.
   template <class SendF, class RecvF>
   void fan_out(int n, SendF &&send_slice, RecvF &&recv_slice) const {
     const int T = std::min(lanes, std::max(1, n));
@@ -41,8 +42,10 @@ struct LaneMesh {
       for (int t = 0; t < T; ++t) {
         auto pr = ag::lane_range(t, n, T);
         NetIOMP<nP> *ch = mesh(t);
-        res.push_back(pool->enqueue([&send_slice, ch, peer, pr]() { send_slice(ch, peer, pr.first, pr.second); }));
-        res.push_back(pool->enqueue([&recv_slice, ch, peer, pr]() { recv_slice(ch, peer, pr.first, pr.second); }));
+        res.push_back(pool->enqueue(
+            [&send_slice, ch, peer, pr]() { send_slice(ch, peer, pr.first, pr.second); }));
+        res.push_back(pool->enqueue(
+            [&recv_slice, ch, peer, pr]() { recv_slice(ch, peer, pr.first, pr.second); }));
       }
     }
     joinNclean(res);

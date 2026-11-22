@@ -12,9 +12,9 @@
 // emp-ag has two: LeakyAndPrep (triple/leaky_and_prep.h: leaky AND triples merged by
 // bucketing, then Beaver) and CutAndChoosePrep (triple/cut_and_choose_triples.h:
 // cut-and-choose triples, then Beaver). A session can be given another through its
-// constructor (AndPrepFactory, below). Whichever it is, the protocol alone is responsible for its products: the
-// garbling's checks certify the garbled circuit against them, not the products
-// themselves. So a protocol guarantees:
+// constructor (AndPrepFactory, below). Whichever it is, the protocol alone is responsible
+// for its products: the garbling's checks certify the garbled circuit against them, not
+// the products themselves. So a protocol guarantees:
 //   1. out[i] is lambda_alpha * lambda_beta of gate i, authenticated under the Deltas.
 //   2. lambda_alpha never enters a position whose leakage the protocol does not remove
 //      (above all, a leaky AND's hashed operand a), and lambda_beta at most one whose
