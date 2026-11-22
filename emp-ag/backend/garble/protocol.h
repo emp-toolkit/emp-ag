@@ -253,12 +253,16 @@ private:
   // input wire the mask where it was opened to this party (0 elsewhere).
   // Online, bind_computation_inputs_ takes Lambda for the wires this party knows
   // (its own and the Public ones), broadcasts the owners' masked values and
-  // exchanges the input labels.
+  // exchanges the input labels. A wire with an authenticated source (source != null,
+  // from_source[w] set) takes no broadcast: every party opens d = source ^ mask under a
+  // MAC check, and Lambda = d.
   std::vector<unsigned char> open_computation_input_masks_(
       const SecureWires<nP> &target, const std::vector<int> &owner);
   void bind_computation_inputs_(SecureWires<nP> &target,
                                 const std::vector<int> &owner,
-                                const std::vector<unsigned char> &lambda);
+                                const std::vector<unsigned char> &lambda,
+                                const AShareBundle<nP> *source = nullptr,
+                                const std::vector<unsigned char> *from_source = nullptr);
 
   // One method per protocol phase over a shared ComputeCtx; AGMPCEngine<nP>
   // sequences them in protocol order.

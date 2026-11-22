@@ -166,6 +166,13 @@ class SoftSpokenMint {
 #endif
 	}
 
+	// n raw COTs from lane 0's stream with `peer` (AShareGen::draw_cots).
+	void draw_cots(int peer, bool as_sender, block *out, int64_t n) {
+		cot(peer, as_sender, 0)->next_n(out, n);
+		cot_chan(peer, as_sender, 0)->flush();
+		cots_minted_since_check = true;
+	}
+
 	// Flush the deferred COT consistency check before a reveal; no-op when
 	// nothing was minted since the last flush.
 	void maybe_flush_check() {
