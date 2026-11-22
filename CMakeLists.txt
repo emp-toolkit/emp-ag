@@ -36,10 +36,10 @@ option(EMP_AG_PROFILE       "Enable protocol timing / communication profiling" O
 option(EMP_AG_INSTALL
        "Generate install / find_package(emp-ag) export rules" ${PROJECT_IS_TOP_LEVEL})
 set(EMP_AG_OT_BACKEND "SoftSpoken" CACHE STRING
-    "COT backend for aShare generation: SoftSpoken, IKNP, Ferret, or SilentFerret")
-set_property(CACHE EMP_AG_OT_BACKEND PROPERTY STRINGS SoftSpoken IKNP Ferret SilentFerret)
+    "The default COT streams behind aShare generation: SoftSpoken or SilentFerret")
+set_property(CACHE EMP_AG_OT_BACKEND PROPERTY STRINGS SoftSpoken SilentFerret)
 set(EMP_AG_SOFTSPOKEN_K "8" CACHE STRING
-    "SoftSpoken k parameter when EMP_AG_OT_BACKEND=SoftSpoken (8 = fewest COT bytes; smaller k trades COT bytes for less compute)")
+    "SoftSpoken's k (8 = fewest COT bytes; smaller k trades COT bytes for less compute)")
 set_property(CACHE EMP_AG_SOFTSPOKEN_K PROPERTY STRINGS 2 4 8)
 
 # ---------------------------------------------------------------------
@@ -66,17 +66,12 @@ target_include_directories(emp-ag INTERFACE
 
 target_link_libraries(emp-ag INTERFACE emp-tool::emp-tool emp-ot::emp-ot)
 
-if(EMP_AG_OT_BACKEND STREQUAL "IKNP")
-    target_compile_definitions(emp-ag INTERFACE EMP_AG_OT_BACKEND=0)
-elseif(EMP_AG_OT_BACKEND STREQUAL "SoftSpoken")
+# The build's default Cot (emp-ag/backend/ashare/cot.h); a session can choose either.
+if(EMP_AG_OT_BACKEND STREQUAL "SoftSpoken" OR EMP_AG_OT_BACKEND STREQUAL "SilentFerret")
     target_compile_definitions(emp-ag INTERFACE
-        EMP_AG_OT_BACKEND=1 EMP_AG_SOFTSPOKEN_K=${EMP_AG_SOFTSPOKEN_K})
-elseif(EMP_AG_OT_BACKEND STREQUAL "Ferret")
-    target_compile_definitions(emp-ag INTERFACE EMP_AG_OT_BACKEND=2)
-elseif(EMP_AG_OT_BACKEND STREQUAL "SilentFerret")
-    target_compile_definitions(emp-ag INTERFACE EMP_AG_OT_BACKEND=3)
+        EMP_AG_COT=${EMP_AG_OT_BACKEND} EMP_AG_SOFTSPOKEN_K=${EMP_AG_SOFTSPOKEN_K})
 else()
-    message(FATAL_ERROR "EMP_AG_OT_BACKEND must be one of: SoftSpoken, IKNP, Ferret, SilentFerret")
+    message(FATAL_ERROR "EMP_AG_OT_BACKEND must be SoftSpoken or SilentFerret")
 endif()
 
 if(EMP_AG_DEBUG)

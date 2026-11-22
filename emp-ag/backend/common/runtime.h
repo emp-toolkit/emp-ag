@@ -142,7 +142,7 @@ inline constexpr int lanes_for(int nP) {
 
 // Contiguous slice [lo, hi) of [0, n) for lane t of T lanes: an even split with the
 // first (n mod T) lanes taking one extra. THE single source of the lane partition —
-// COT (AuthSharePool) and every triple_pool bulk-open fan-out slice through this, so
+// COT (AShareGen) and every triple_pool bulk-open fan-out slice through this, so
 // both ends compute the same boundaries. Pure function of (t, n, T).
 inline std::pair<int, int> lane_range(int t, int n, int T) {
   const int base = n / T, rem = n % T;

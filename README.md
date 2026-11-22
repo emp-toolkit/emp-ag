@@ -98,7 +98,7 @@ cmake -S emp-ag -B emp-ag/build \
 | `EMP_AG_BUILD_TESTS`    | `ON` when top-level | Build the test suite under `test/` (incl. `test/adversarial/`). |
 | `EMP_AG_BUILD_BENCHES`  | `OFF` | Build the benchmarks under `bench/` (opt-in; not run by ctest). |
 | `EMP_AG_BUILD_EXAMPLES` | `ON` when top-level | Build the examples under `example/` (smoke-run by ctest). |
-| `EMP_AG_OT_BACKEND`     | `SoftSpoken` | COT backend for aShare generation: `SoftSpoken`, `IKNP`, `Ferret`, or `SilentFerret`. `SilentFerret` sends every message for a planned number of COTs when the session starts (the session's planned COT counts), after which drawing COTs moves no bytes. All of a session's COT streams share one public LPN matrix, so each party applies it to all of its streams in one pass. |
+| `EMP_AG_OT_BACKEND`     | `SoftSpoken` | The build's default COT streams for aShare generation: `SoftSpoken` or `SilentFerret`; a session can choose either through its `GarbleConfig`'s `Cot`. `SilentFerret` sends every message for a planned number of COTs when the session starts (the session's planned COT counts), after which drawing COTs moves no bytes. All of a session's COT streams share one public LPN matrix, so each party applies it to all of its streams in one pass. |
 | `EMP_AG_SOFTSPOKEN_K`   | `8` | With `SoftSpoken`, the field parameter `k`. |
 | `EMP_AG_DEBUG`          | `OFF` | Enable internal MAC / correctness checks. |
 | `EMP_AG_PROFILE`        | `OFF` | Protocol timing / communication profiling (`[ag]` / `[ag-tp]` phase markers); zero-cost when off. |
@@ -122,11 +122,11 @@ and of memory proportional to the batch. `TriplePool::use_source` installs any
 other source of authenticated random triples (`backend/triple/triple_source.h`
 states what a source must guarantee). Every party must make the same choice.
 
-The garbling options are compile-time: `AGMPCSession<nP, ag::GarbleConfig<A, D>>`
+The garbling options are compile-time: `AGMPCSession<nP, ag::GarbleConfig<A, D, C>>`
 (`backend/garble_config.h`). Every party must use the same options; a session binds
 any non-default choice into its session id, so a mismatch fails setup.
-`-DEMP_AG_GARBLE_AUTH=WRK` and `-DEMP_AG_GARBLE_DELIVERY=DIRECT` change the default
-for a whole build.
+`-DEMP_AG_GARBLE_AUTH=WRK`, `-DEMP_AG_GARBLE_DELIVERY=DIRECT` and
+`-DEMP_AG_OT_BACKEND=SilentFerret` change the default for a whole build.
 
 | Option | Values | Effect |
 |---|---|---|
@@ -134,6 +134,8 @@ for a whole build.
 | | `Auth::WRK` | Every garbler also sends party 1 three rows per AND gate, truncated to `ssp + 2` bits, and party 1 checks each gate while it evaluates. More bytes per gate, and no check after evaluation; the garblers then receive the outputs' masked values from party 1, authenticated by their labels. The check is statistical: a forged row passes with probability `2^-ssp`, and a failed attempt aborts the run. |
 | `D` (`nP >= 3`) | `Delivery::RING` (default) | The garblers sum their rows along a chain, so party 1 receives three rows per garbler. |
 | | `Delivery::DIRECT` | Each garbler sends its own rows to party 1, which sums them: no chain of hops, but every garbler's rows on party 1's link. |
+| `C` | `Cot::SoftSpoken` (default) | Each party runs one SoftSpoken extension per peer and direction: 16 bits per COT at `k = 8`, with each stream's consistency check deferred to before the next reveal. |
+| | `Cot::SilentFerret` | One SilentFerret instance per peer and direction, all of them prepaid at setup and folded together with one public LPN matrix: about 0.4 bits per COT, and drawing moves no bytes. |
 
 ## Consuming from another CMake project
 
@@ -209,9 +211,9 @@ built over.
   unordered party pair (with `SilentFerret`, per COT stream) and defaults to
   `BaseOtKind::CSW`. When a session's total COT demand is known in advance, the
   caller may additionally pass exact local sender and receiver COT counts; the
-  default `-1` keeps the reusable unbounded stream. With `SoftSpoken`, `IKNP` and
-  `Ferret` each count includes emp-ag's 128-COT bootstrap prefix and matching
-  peers must agree, and a `SoftSpoken` session must be one-lane. With
+  default `-1` keeps the reusable unbounded stream. With `SoftSpoken` each count
+  includes emp-ag's 128-COT bootstrap prefix, matching peers must agree, and the
+  session must be one-lane. With
   `SilentFerret` the two counts are equal, count only the COTs drawn, and set what
   every stream prepays at setup.
 
@@ -369,7 +371,7 @@ root (`<emp-ag/...>`):
     `fs_hash.h`, `protocols.h` (`EchoBC`, `sampleRandom`, `check_MAC`),
     `feq.h` / `fzero.h`, and `laand_window.h` (exact bit windows for packed rows).
   - **`ashare/`** — authenticated shares: the share type (`share.h`, aShares
-    `MAC = KEY ⊕ x·Δ`), the share pool over emp-ot COT (`auth_share_pool.h`,
+    `MAC = KEY ⊕ x·Δ`), the share pool over emp-ot COT (`ashare_gen.h`,
     with `buffer_ot.h` for the base OTs), checked openings (`open.h`), and the
     open checks (`open_check.h`: pairwise and symmetric).
   - **`triple/`** — authenticated AND triples over the share pool:

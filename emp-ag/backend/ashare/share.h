@@ -1,10 +1,10 @@
 #ifndef EMP_AG_BACKEND_ASHARE_SHARE_H__
 #define EMP_AG_BACKEND_ASHARE_SHARE_H__
 //
-// The authenticated-share data model: the physical per-wire share (SecureShare and its
-// ADL StorageTraits accessors) and the agmpc aliases (AShareBundle + peer_slot). The
-// garbling layer's per-circuit wire container, SecureWires, is in garble/wires.h. The
-// section comments below carry the detail.
+// The authenticated-share data model: the physical per-wire share (AShareBundle and its
+// ADL StorageTraits accessors) and peer_slot. The garbling layer's per-circuit wire
+// container, SecureWires, is in garble/wires.h. The section comments below carry the
+// detail.
 //
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/core/block_vector.h"
@@ -25,7 +25,7 @@ namespace emp::ag {
 // loop's scalar codegen with no n-party machinery forced onto it (the StorageTraits seam:
 // the ADL accessors below -- peer_key_sum / peer_mac_sum / own_bit / peer_mac / own_dot).
 //
-template <int nP> struct SecureShare {
+template <int nP> struct AShareBundle {
   static_assert(nP >= 2, "at least 2 parties");
   static constexpr int K = nP - 1;          // peers (everyone but self)
   static constexpr int N = 2 * (nP - 1);    // blocks: (mac,key) per peer
@@ -39,21 +39,21 @@ template <int nP> struct SecureShare {
 
 // StorageTraits accessors, found by ADL from the garble / output-check kernels. At nP=2
 // (K=1) the loop is one iteration and `zero_block ^ key(0)` folds to `key(0)`.
-template <int nP> inline block peer_key_sum(const SecureShare<nP> &b) {
+template <int nP> inline block peer_key_sum(const AShareBundle<nP> &b) {
   block s = zero_block;
-  for (int k = 0; k < SecureShare<nP>::K; ++k) s = s ^ b.key(k);
+  for (int k = 0; k < AShareBundle<nP>::K; ++k) s = s ^ b.key(k);
   return s;
 }
 // XOR of the local MACs over all peers = XOR_k M_k[x^me]. The MAC-side counterpart of
 // peer_key_sum, used by the BDOZ->SPDZ collapse (collapse_cgamma_witness, garble/spdz.h): the SPDZ MAC share of
 // x under the shared global key is own_dot(x,Delta_me) ^ peer_mac_sum(x) ^ peer_key_sum(x).
 // At nP=2 (K=1) this folds to the single scalar mac(0).
-template <int nP> inline block peer_mac_sum(const SecureShare<nP> &b) {
+template <int nP> inline block peer_mac_sum(const AShareBundle<nP> &b) {
   block s = zero_block;
-  for (int k = 0; k < SecureShare<nP>::K; ++k) s = s ^ b.mac(k);
+  for (int k = 0; k < AShareBundle<nP>::K; ++k) s = s ^ b.mac(k);
   return s;
 }
-template <int nP> inline bool own_bit(const SecureShare<nP> &b) {
+template <int nP> inline bool own_bit(const AShareBundle<nP> &b) {
   return getLSB(b.mac(0));
 }
 // own_bit * Delta, branchless via select_mask (folds the bit to 0 / Delta), as the
@@ -64,20 +64,13 @@ inline block own_dot(const B &b, const block &Delta) {
 }
 // MAC under a specific peer's key (slot s) -- the shared t_gamma garbler witness
 // over the evaluator's slot. At nP=2 the only slot is 0.
-template <int nP> inline block peer_mac(const SecureShare<nP> &b, int s) {
+template <int nP> inline block peer_mac(const AShareBundle<nP> &b, int s) {
   return b.mac(s);
 }
 
 template <int nP>
-using SecureShareVec =
-    std::vector<SecureShare<nP>, default_init_allocator<SecureShare<nP>>>;
-
-// AShareBundle is the per-wire share, emp::ag::SecureShare<nP>; its ADL traits
-// (peer_key_sum/own_bit/peer_mac) live above. peer_slot below is a plain-int index
-// helper (no ADL).
-template <int nP> using AShareBundle = emp::ag::SecureShare<nP>;
-
-template <int nP> using AShareBundleVec = emp::ag::SecureShareVec<nP>;
+using AShareBundleVec =
+    std::vector<AShareBundle<nP>, default_init_allocator<AShareBundle<nP>>>;
 
 // Free-XOR share propagation: recompute a fabric wire's share bundle as the
 // componentwise XOR of its (live) inputs. bit0 (the share-bit) rides along.
@@ -99,7 +92,7 @@ inline int peer_slot(int self, int peer) {
 
 // Bit 1 (second-lowest) of a block. Reserved for the half-gate Λ_γ recovery
 // invariant LSB1(⊕_p Δ_p) = 1; bit 0 is reserved for share-value encoding
-// (SecureShare, above).
+// (AShareBundle, above).
 inline uint8_t LSB1(const block &b) { return getBit(b, 1); }
 
 }  // namespace emp::ag

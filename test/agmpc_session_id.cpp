@@ -1,6 +1,7 @@
 // AGMPCSession's session id. Left empty, the parties agree on a fresh id at
 // setup: both hold the same one, it is not zero, and two sessions get
-// different ids. A given id is used as is. The sessions share one mesh, as the
+// different ids. A given id is used as is, bound to the session's options when they
+// are not the defaults (ag::bind_garble_config). The sessions share one mesh, as the
 // golden-snapshot cases do.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
@@ -49,7 +50,8 @@ int main(int argc, char **argv) {
   {
     AGMPCSession<nP> sess(&io, &pool, party, 40, nullptr, given);
     const block kept = sess.protocol().session_id;
-    expecting(cmpBlock(&kept, &given, 1), "agmpc_session_id: a given id was replaced");
+    const block want = ag::bind_garble_config<nP, ag::GarbleConfig<>>(given);
+    expecting(cmpBlock(&kept, &want, 1), "agmpc_session_id: a given id was replaced");
   }
   if (party == 1) printf("agmpc_session_id: OK\n");
   return 0;

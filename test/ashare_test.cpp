@@ -1,4 +1,4 @@
-// The share layer (backend/ashare) on its own: an AuthSharePool over every mint the build
+// The share layer (backend/ashare) on its own: an AShareGen over every mint the build
 // has, at ASHARE_NP parties. White-box: the parties reveal their Δ and their keys to each
 // other, which a real session never does.
 //
@@ -13,10 +13,9 @@
 //   - many draws of awkward sizes, enough for a SilentFerret stream to cross a round;
 //   - check2's residuals settle on their own, and inside another open check;
 //   - with SilentFerret prepaid at nP = 2, drawing moves no bytes.
-// StreamMint runs in every build. The SilentFerret build also runs SilentFerretMint, once
-// unplanned (its streams prepay the next round on the wire when one runs out) and once
-// prepaid for the whole test.
-#include "emp-ag/backend/ashare/auth_share_pool.h"
+// SoftSpokenMint runs once; SilentFerretMint twice, unplanned (its streams prepay the next
+// round on the wire when one runs out) and prepaid for the whole test.
+#include "emp-ag/backend/ashare/ashare_gen.h"
 #include <cstdio>
 #include <vector>
 using namespace emp;
@@ -127,7 +126,7 @@ struct Run {
 	bool first = true;
 
 	Run(NetIOMP<nP> *io_, Pool &ap_) : io(io_), ap(ap_) {
-		exchange_deltas(io, ap.Delta, all);
+		exchange_deltas(io, ap.delta(), all);
 		check_pins(all);
 		expect = ap.cots_per_stream();
 	}
@@ -192,9 +191,9 @@ struct Run {
 template <class Mint>
 static void exercise(NetIOMP<nP> *io, ThreadPool *pool, const char *name, block sid,
                      int64_t plan, int long_draws, bool silent) {
-	AuthSharePool<nP, Mint> ap(io, pool, party, nullptr, sid, BaseOtKind::CSW, plan, plan);
+	AShareGen<nP, Mint> ap(io, pool, party, nullptr, sid, BaseOtKind::CSW, plan, plan);
 	io->flush();
-	Run<AuthSharePool<nP, Mint>> run(io, ap);
+	Run<AShareGen<nP, Mint>> run(io, ap);
 	for (int n : kSizes) run.compute(n, 1);
 	run.draw(kDrawSize);
 	run.draw_soa(kDrawSoaSize);
@@ -209,7 +208,7 @@ static void exercise(NetIOMP<nP> *io, ThreadPool *pool, const char *name, block 
 	expecting(pending.residuals.empty() == (nP == 2),
 	          "ashare_test: check2 left no residual pending at nP > 2");
 	PRG prg;
-	SymmetricOpenCheck<nP> check(io, pool, party, ap.Delta, sid ^ makeBlock(0, 1), &prg,
+	SymmetricOpenCheck<nP> check(io, pool, party, ap.delta(), sid ^ makeBlock(0, 1), &prg,
 	                             nullptr, "emp-ag:ashare-test");
 	check.absorb(pending.residuals, pending.view);
 	check.check_result();
@@ -229,15 +228,13 @@ int main(int argc, char **argv) {
 	ThreadPool pool(ag::default_pool_size(nP));
 	if (party == 1) std::printf("ashare_test: nP=%d\n", nP);
 
-	// StreamMint draws no rounds, so a few long draws are enough.
-	exercise<StreamMint<nP>>(&io, &pool, "StreamMint", makeBlock(0xa5, 1), -1, 3, false);
-#if EMP_AG_OT_BACKEND == 3
+	// SoftSpokenMint draws no rounds, so a few long draws are enough.
+	exercise<SoftSpokenMint<nP>>(&io, &pool, "SoftSpokenMint", makeBlock(0xa5, 1), -1, 3, false);
 	exercise<SilentFerretMint<nP>>(&io, &pool, "SilentFerretMint, unplanned",
 	                               makeBlock(0xa5, 2), -1, kLongDraws, false);
 	exercise<SilentFerretMint<nP>>(&io, &pool, "SilentFerretMint, prepaid",
 	                               makeBlock(0xa5, 3), total_cots(kLongDraws), kLongDraws,
 	                               nP == 2);
-#endif
 	if (party == 1) std::printf("ashare_test: GOOD\n");
 	return 0;
 }

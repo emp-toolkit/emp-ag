@@ -18,9 +18,9 @@ constexpr int64_t kBatch = 1000;
 static int party;
 
 // Check n triples: their MACs, then a * b == c on every party's shares, at party 1.
-static bool check_triples(NetIOMP<nP> *io, AuthSharePool<nP> &abit, BlockVec mac[nP + 1],
+static bool check_triples(NetIOMP<nP> *io, AShareGen<nP> &abit, BlockVec mac[nP + 1],
                           BlockVec key[nP + 1], int64_t n) {
-  check_MAC<nP>(io, mac, key, abit.Delta, (int)(3 * n), party);
+  check_MAC<nP>(io, mac, key, abit.delta(), (int)(3 * n), party);
   const int any_peer = (party == 1) ? 2 : 1;
   std::vector<unsigned char> mine((size_t)(3 * n));
   for (int64_t e = 0; e < 3 * n; ++e) mine[(size_t)e] = (unsigned char)getLSB(mac[any_peer][(size_t)e]);
@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
   if (party > nP) return 0;
   NetIOMP<nP> io(party, peer_port());
   ThreadPool pool(ag::default_pool_size(nP));
-  AuthSharePool<nP> abit(&io, &pool, party);
+  AShareGen<nP> abit(&io, &pool, party);
   PRG prg;
   const block sid = sampleRandom<nP>(&io, &prg, &pool, party);
   CutAndChooseTriples<nP> cnc(&io, &pool, party, abit, sid, 40, kBatch);

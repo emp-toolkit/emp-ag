@@ -1,9 +1,9 @@
-#ifndef EMP_AG_BACKEND_ASHARE_STREAM_MINT_H__
-#define EMP_AG_BACKEND_ASHARE_STREAM_MINT_H__
+#ifndef EMP_AG_BACKEND_ASHARE_SOFTSPOKEN_MINT_H__
+#define EMP_AG_BACKEND_ASHARE_SOFTSPOKEN_MINT_H__
 //
-// A mint holds the COT streams behind the share pool (auth_share_pool.h): one stream
+// A mint holds the COT streams behind the share generator (ashare_gen.h): one stream
 // per peer and direction, this party sending toward peer j (its keys on j's bits) and
-// receiving from j (its MACs on its own bits). The pool turns the raw COTs into
+// receiving from j (its MACs on its own bits). The generator turns the raw COTs into
 // authenticated shares and checks them. Every mint offers
 //   Mint(io, pool, party, grp, session_id, base_ot_kind, planned_sender_cots,
 //        planned_receiver_cots, delta_bits)
@@ -17,17 +17,15 @@
 //   maybe_flush_check()  the streams' deferred consistency checks, before a reveal
 // and closes its streams when destroyed.
 //
-// StreamMint runs one OT extension per stream, of the type EMP_AG_OT_BACKEND selects. It
+// SoftSpokenMint runs one SoftSpoken<EMP_AG_SOFTSPOKEN_K> extension per stream. It
 // bootstraps one direction per unordered pair from a public-key base OT and derives the
-// other direction from it (dedup_bootstrap_pairs_), runs SoftSpoken on the session's
-// lanes, and defers each stream's consistency check to maybe_flush_check().
+// other direction from it (dedup_bootstrap_pairs_), runs on the session's lanes, and
+// defers each stream's consistency check to maybe_flush_check(). SilentFerretMint
+// (silent_ferret_mint.h) is the other mint.
 //
 #include "emp-ag/backend/common/netmp.h"
 #include "emp-ag/backend/common/runtime.h"            // peer_order, lane_range
 #include "emp-ot/base_ot/base_ot_select.h"  // BaseOtKind / make_base_ot
-#include "emp-ot/ot_extension/iknp.h"
-#include "emp-ot/ot_extension/ferret/ferret.h"
-#include "emp-ot/ot_extension/ferret/silent_ferret.h"
 #include "emp-ot/ot_extension/softspoken/softspoken.h"
 #include "emp-ag/backend/ashare/buffer_ot.h"   // BufferOT (one base OT per unordered pair)
 #include "emp-ag/backend/ashare/fix.h"         // the Fix exchange's two halves
@@ -41,70 +39,32 @@
 namespace emp::ag {
 
 
-// Choose the OT extension backend used for the per-pair COT streams.
-// EMP_AG_OT_BACKEND selects the backend. StreamMint drives it through
-// OTExtension's public API; SoftSpoken lane cloning is the only
-// backend-specific call. Candidates:
-//   IKNP        — low setup, ~κ B/COT, fastest on small batches.
-//   SoftSpoken<k> — k tunes compute vs. bandwidth (larger k sends fewer bytes
-//                   but costs more AES per OT); default k=8 minimizes COT
-//                   communication, the binding cost on bandwidth-bound and
-//                   egress-metered links; a smaller k trades COT bytes for
-//                   less AES compute.
-//   Ferret      — emp-ot's default parameter set (ferret_b12); smallest
-//                 steady-state bandwidth.
-//   SilentFerret — Ferret that sends, when a stream begins, every message for
-//                 a planned number n of COTs (begin(n): the corrections and
-//                 the consistency checks); drawing them then moves no bytes.
-//                 The planned COT counts set n. A stream with no plan prepays
-//                 one round at a time, and a stream that runs past its batch
-//                 prepays another of the same size. EMP_AG_FERRET_THREADS
-//                 sizes the pool each stream prepares a batch with.
-//                 StreamMint runs one SilentFerret per stream; the share pool's
-//                 default for this backend is SilentFerretMint, which applies
-//                 one public LPN matrix to all of a party's streams at once.
-#ifndef EMP_AG_OT_BACKEND
-#define EMP_AG_OT_BACKEND 1
-#endif
+// SoftSpoken<k>: k tunes compute against bandwidth. A larger k sends fewer bytes per COT
+// but costs more AES per OT; the default k = 8 minimizes COT communication, the binding
+// cost on bandwidth-bound and egress-metered links.
 #ifndef EMP_AG_SOFTSPOKEN_K
 #define EMP_AG_SOFTSPOKEN_K 8
 #endif
-#ifndef EMP_AG_FERRET_THREADS
-#define EMP_AG_FERRET_THREADS 2
-#endif
-#if EMP_AG_OT_BACKEND == 0
-using ConfiguredOTExt = emp::IKNP;
-#elif EMP_AG_OT_BACKEND == 1
-using ConfiguredOTExt = emp::SoftSpoken<EMP_AG_SOFTSPOKEN_K>;
-#elif EMP_AG_OT_BACKEND == 2
-using ConfiguredOTExt = emp::Ferret;
-#elif EMP_AG_OT_BACKEND == 3
-using ConfiguredOTExt = emp::SilentFerret;
-#else
-#error "EMP_AG_OT_BACKEND must be 0=IKNP, 1=SoftSpoken, 2=Ferret, or 3=SilentFerret"
-#endif
-
+using SoftSpokenCot = emp::SoftSpoken<EMP_AG_SOFTSPOKEN_K>;
 using OTExt = emp::OTExtension;
 
 template <int nP>
-class StreamMint {
+class SoftSpokenMint {
  public:
 	// Planned sender/receiver counts include the 128-COT bootstrap prefix and are
-	// forwarded to OTExtension::begin(n_ots); see AuthSharePool.
-	StreamMint(NetIOMP<nP> *io, ThreadPool *pool, int party, NetIOMPGroup<nP> *grp_in,
+	// forwarded to OTExtension::begin(n_ots); see AShareGen.
+	SoftSpokenMint(NetIOMP<nP> *io, ThreadPool *pool, int party, NetIOMPGroup<nP> *grp_in,
 	           block session_id, BaseOtKind base_ot_kind, int64_t planned_sender_cots,
 	           int64_t planned_receiver_cots, const bool delta_bits[128])
 		: grp(grp_in), io(io), pool(pool), party(party), session_id(session_id) {
 			expecting(planned_sender_cots == -1 || planned_sender_cots >= 128,
-			          "AuthSharePool: planned sender COT count must be -1 or include the 128-COT bootstrap prefix");
+			          "AShareGen: planned sender COT count must be -1 or include the 128-COT bootstrap prefix");
 			expecting(planned_receiver_cots == -1 || planned_receiver_cots >= 128,
-			          "AuthSharePool: planned receiver COT count must be -1 or include the 128-COT bootstrap prefix");
-#if EMP_AG_OT_BACKEND == 1
-			// Only SoftSpoken splits each draw across lanes; a plan counts one stream.
+			          "AShareGen: planned receiver COT count must be -1 or include the 128-COT bootstrap prefix");
+			// Lanes split each draw, and a plan counts one stream.
 			expecting((planned_sender_cots < 0 && planned_receiver_cots < 0) ||
 			              grp_in == nullptr || grp_in->size() == 1,
-			          "AuthSharePool: counted COT plans require one lane");
-#endif
+			          "AShareGen: counted COT plans require one lane");
 
 			// One public-key base OT per unordered pair: the higher-numbered
 			// party's COT direction bootstraps normally, then supplies hashed
@@ -112,22 +72,20 @@ class StreamMint {
 			dedup_bootstrap_pairs_(delta_bits, base_ot_kind,
 			                       planned_sender_cots, planned_receiver_cots);
 
-#if EMP_AG_OT_BACKEND == 1
-			// SoftSpoken lanes clone the now-bootstrapped parents, including the
-			// direction whose base OTs were derived above.
+			// Lanes clone the now-bootstrapped parents, including the direction whose
+			// base OTs were derived above.
 			if (grp != nullptr) {
 				L = std::max(1, grp->size());
 				if (L > 1) spawn_and_begin_lanes();
 			}
-#endif
 		}
 
-	~StreamMint() {
+	~SoftSpokenMint() {
 		if (cot_sessions_open)
 			close_cot_sessions();
 	}
-	StreamMint(const StreamMint &) = delete;
-	StreamMint &operator=(const StreamMint &) = delete;
+	SoftSpokenMint(const SoftSpokenMint &) = delete;
+	SoftSpokenMint &operator=(const SoftSpokenMint &) = delete;
 
 	block delta() const { return Delta_; }
 	int64_t bootstrap_cots() const { return kPrefix; }
@@ -204,9 +162,9 @@ class StreamMint {
 	static constexpr int64_t kPrefix = 128;   // each stream's checked bootstrap prefix
 	// Each party holds both COT directions against every peer: abit1 is always
 	// the local extension sender and abit2 is always the local receiver. Slot
-	// [party] is unused. The ConfiguredOTExt alias above selects the
-	// backend; its ctor takes the role, channel and owned base OT upfront, so the
-	// instances are unique_ptrs constructed per peer in the bootstrap.
+	// [party] is unused. A SoftSpoken ctor takes the role, channel
+	// and owned base OT upfront, so the instances are unique_ptrs constructed per peer
+	// in the bootstrap.
 	std::unique_ptr<OTExt> abit1[nP + 1];   // lane 0 (sender role), mesh 0
 	std::unique_ptr<OTExt> abit2[nP + 1];   // lane 0 (recv role),  mesh 0
 	// Lanes 1..L-1: clone_lane copies of the parent COT (lane 0 = abit1/abit2)
@@ -265,7 +223,6 @@ class StreamMint {
 		joinNclean(res);
 	}
 
-#if EMP_AG_OT_BACKEND == 1
 	// After the parents are bootstrapped and their prefixes checked, spawn lanes
 	// 1..L-1 as clone_lane copies on meshes 1..L-1 and begin() each (clones skip
 	// bootstrap; begin() just enters a session + guards FS on their fresh mesh
@@ -277,8 +234,8 @@ class StreamMint {
 			abit1_lane[peer].resize(L - 1);
 			abit2_lane[peer].resize(L - 1);
 			for (int t = 1; t < L; ++t) {
-				auto *send_parent = static_cast<ConfiguredOTExt *>(abit1[peer].get());
-				auto *recv_parent = static_cast<ConfiguredOTExt *>(abit2[peer].get());
+				auto *send_parent = static_cast<SoftSpokenCot *>(abit1[peer].get());
+				auto *recv_parent = static_cast<SoftSpokenCot *>(abit2[peer].get());
 				abit1_lane[peer][t - 1] = send_parent->clone_lane(cot_chan(peer, true, t));
 				abit2_lane[peer][t - 1] = recv_parent->clone_lane(cot_chan(peer, false, t));
 			}
@@ -293,19 +250,11 @@ class StreamMint {
 			}
 		joinNclean(res);
 	}
-#endif
 
 	std::unique_ptr<OTExt> make_cot_extension_(
 			int role, NetIO *channel, std::unique_ptr<OT> base) {
-#if EMP_AG_OT_BACKEND == 3
-		// SilentFerret takes its LPN parameters before the base OT, then its pool size.
-		return std::make_unique<ConfiguredOTExt>(
-			role, channel, /*malicious=*/true, emp::tuning::ferret_b12, std::move(base),
-			EMP_AG_FERRET_THREADS);
-#else
-		return std::make_unique<ConfiguredOTExt>(
+		return std::make_unique<SoftSpokenCot>(
 			role, channel, /*malicious=*/true, std::move(base));
-#endif
 	}
 
 	// Bootstrap one direction per unordered pair with its normal public-key base
@@ -482,4 +431,4 @@ class StreamMint {
 };
 
 }  // namespace emp::ag
-#endif  // EMP_AG_BACKEND_ASHARE_STREAM_MINT_H__
+#endif  // EMP_AG_BACKEND_ASHARE_SOFTSPOKEN_MINT_H__

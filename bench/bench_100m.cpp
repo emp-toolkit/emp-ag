@@ -129,7 +129,7 @@ int run_bench(char **argv) {
   ThreadPool pool(threads);
   // The session owns its network: `lanes` meshes over one port per party (the
   // owning ctor builds + flushes them). EMP_AG_LANES overrides the production
-  // L(nP). AuthSharePool uses L = grp->size().
+  // L(nP). AShareGen uses L = grp->size().
   const char *planned_env = std::getenv("EMP_AG_PLANNED_COTS");
   const int64_t planned_cots = (planned_env != nullptr && *planned_env != '\0')
                                    ? (int64_t)std::strtoll(planned_env, nullptr, 10)

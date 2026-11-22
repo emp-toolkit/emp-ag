@@ -29,11 +29,11 @@ template <int nP>
 static void check() {
   PRG prg;
   for (int iter = 0; iter < 4000; ++iter) {
-    ag::SecureShare<nP> in0, in1, out, sig;
-    prg.random_block(in0.km, ag::SecureShare<nP>::N);
-    prg.random_block(in1.km, ag::SecureShare<nP>::N);
-    prg.random_block(out.km, ag::SecureShare<nP>::N);
-    prg.random_block(sig.km, ag::SecureShare<nP>::N);
+    ag::AShareBundle<nP> in0, in1, out, sig;
+    prg.random_block(in0.km, ag::AShareBundle<nP>::N);
+    prg.random_block(in1.km, ag::AShareBundle<nP>::N);
+    prg.random_block(out.km, ag::AShareBundle<nP>::N);
+    prg.random_block(sig.km, ag::AShareBundle<nP>::N);
     block Delta;
     prg.random_block(&Delta, 1);
 

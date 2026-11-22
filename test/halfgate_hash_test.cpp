@@ -67,10 +67,10 @@ static void check_self_and_and_lockstep() {
 
         // Self row: both inputs carry the same share bundle, so only the hashes keep
         // G0 ^ G1 away from the garbler's 0-label (or its complement).
-        ag::SecureShare<nP> x, ab, out;
-        prg.random_block(x.km, ag::SecureShare<nP>::N);
-        prg.random_block(ab.km, ag::SecureShare<nP>::N);
-        prg.random_block(out.km, ag::SecureShare<nP>::N);
+        ag::AShareBundle<nP> x, ab, out;
+        prg.random_block(x.km, ag::AShareBundle<nP>::N);
+        prg.random_block(ab.km, ag::AShareBundle<nP>::N);
+        prg.random_block(out.km, ag::AShareBundle<nP>::N);
         const int s = sender - 2;
         block G0, G1, ml_g0;
         ag::self_halfgate_row(g[4 * s], g[4 * s + 1], g[4 * s + 2], g[4 * s + 3], a0,

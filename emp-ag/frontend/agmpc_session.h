@@ -213,11 +213,11 @@ public:
   // reverse COT direction is derived (with SilentFerret, one per COT stream);
   // every party must select the same kind. `planned_sender_cots` /
   // `planned_receiver_cots` optionally bound each local COT stream when its total
-  // demand is known; -1 keeps the ordinary reusable stream. With SoftSpoken, IKNP
-  // and Ferret the counts include emp-ag's 128-COT bootstrap prefix, each local
-  // sender count must match the peer's receiver count and vice versa (so one
-  // identical pair at every party is valid only when sender == receiver), and a
-  // SoftSpoken session must be one-lane. With SilentFerret the two counts are
+  // demand is known; -1 keeps the ordinary reusable stream. With SoftSpoken the
+  // counts include emp-ag's 128-COT bootstrap prefix, each local sender count must
+  // match the peer's receiver count and vice versa (so one identical pair at every
+  // party is valid only when sender == receiver), and the session must be one-lane.
+  // With SilentFerret the two counts are
   // equal and count only the COTs drawn: a plan is the batch every stream prepays
   // at setup, and a stream that runs past it prepays another batch of that size.
   // The worker pool is mandatory and needs
