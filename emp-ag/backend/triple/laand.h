@@ -100,6 +100,18 @@ public:
     alpha_u_ = zero_block;
   }
 
+  // Bytes a caller adds to the rows flight and to the s-bit flight on mesh 0, and where
+  // the peer's land (nP == 2 only: one peer). LeakyAndPrep's bucket coin rides here, its
+  // commitments with the rows and its openings with the s-bits.
+  struct Carry {
+    const void *rows_out = nullptr;
+    void *rows_in = nullptr;
+    size_t rows_len = 0;
+    const void *s_out = nullptr;
+    void *s_in = nullptr;
+    size_t s_len = 0;
+  };
+
   // The half-gate leaky AND on every row of a call, B rows of L candidates (a, b, r) whose
   // COTs are all fixed. On return each row's r has been folded into c = a AND b in place,
   // and the rows' check material is accumulated; finish_check() runs the check.
@@ -108,11 +120,14 @@ public:
   //   2. One transcript root per peer, RO-expanded by the batch shape and row index into
   //      each row's hash-stream seed.
   //   3. One flight: every row's half-gate rows to every peer, one sender and one receiver
-  //      task per (peer, lane) walking the rows in order.
-  //   4. One flight: every row's s-bits.
+  //      task per (peer, lane) walking the rows in order; carry's rows bytes on mesh 0.
+  //   4. One flight: every row's s-bits; carry's s bytes on mesh 0.
   //   5. Per row, the d-combine and the check material: the F_eq window fold at nP == 2,
   //      the windowed values for the RLC at nP > 2.
-  void produce_rows(const std::vector<TripleRow<nP>> &rows, int L, FsHash &feq) {
+  void produce_rows(const std::vector<TripleRow<nP>> &rows, int L, FsHash &feq,
+                    const Carry &carry = {}) {
+    expecting(nP == 2 || (carry.rows_len == 0 && carry.s_len == 0),
+              "leaky ANDs: carried bytes are for nP == 2");
     ThreadPool *pool = mesh_.pool;
     const int B = (int)rows.size();
     const int BL = B * L;
@@ -231,6 +246,8 @@ public:
               ch->send_data(peer, packed.data(), ag::laand_row_wire_bytes(ed - st, gw));
             }
           }
+          if (lane == 0 && carry.rows_len > 0)
+            ch->send_data(peer, carry.rows_out, carry.rows_len);
           ch->flush(peer);
         }));
         // Receiver: hash [mac, key] -> HM, HK on its MAC on its own a toward peer, and
@@ -296,6 +313,8 @@ public:
               }
             }
           }
+          if (lane == 0 && carry.rows_len > 0)
+            ch->recv_data(peer, carry.rows_in, carry.rows_len);
         }));
       }
     joinNclean(tasks);   // every lane's send+recv joined before the s flight
@@ -345,12 +364,14 @@ public:
 
     // 4. One flight: every row's s vector.
     mesh_.fan_out(BL,
-      [this, &s](NetIOMP<nP> *ch, int dst, int lo, int hi) {
+      [this, &s, &carry](NetIOMP<nP> *ch, int dst, int lo, int hi) {
         ch->send_bool(dst, (const bool *)(s[party_].data() + lo), hi - lo);
+        if (ch == mesh_.io && carry.s_len > 0) ch->send_data(dst, carry.s_out, carry.s_len);
         ch->flush(dst);
       },
-      [&s](NetIOMP<nP> *ch, int src, int lo, int hi) {
+      [this, &s, &carry](NetIOMP<nP> *ch, int src, int lo, int hi) {
         ch->recv_bool(src, (bool *)(s[src].data() + lo), hi - lo);
+        if (ch == mesh_.io && carry.s_len > 0) ch->recv_data(src, carry.s_in, carry.s_len);
       });
 #ifdef AG_PROFILE
     g_ag_tp_sopen_ns += agmpc_now_ns() - _tp_so0;

@@ -38,6 +38,11 @@ add_np_variant(agmpc_cheat_laand_high_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP
 add_np_variant(agmpc_cheat_laand_high_39_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 CHEAT_SSP=39 EMP_AG_TEST_FLIP_LAAND_HIGH PASS_RE "LaAND")
 add_np_variant(agmpc_cheat_laand_high_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_LAAND_HIGH PASS_RE "LaAND")
 
+# At nP = 2 the bucket coin is commit-then-open, its commitments riding the half-gate rows and
+# its openings the s-bits: a party that opens a seed other than the one it committed to must
+# be caught.
+add_np_variant(agmpc_cheat_bucket_seed_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_TEST_FLIP_BUCKET_SEED PASS_RE "bucket seed")
+
 # FLIP_D / FLIP_XY: a malicious party flips its share of one opened bucket d-bit / Beaver x
 # and sends it to everyone, keeping it itself. Every party then derives the same validly
 # authenticated but wrong sigma, which the c_gamma MACCheck cannot see, so the open check
