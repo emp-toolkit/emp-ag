@@ -429,18 +429,66 @@ public:
   // output check, under WRK in the first flight after the inputs, with P1's
   // masked values handed to each garbler recipient after evaluation.
   session::RawResult run_computation(job_t &&job, const session::RawBindings &b) {
+    return run_computation_(std::move(job), b, nullptr);
+  }
+
+  // run_computation, with some Party slots bound to values this session already holds
+  // authenticated: aShare bundles under its global keys, for example values another
+  // protocol proved on draw_cots() correlations. authenticated[s] is null for an
+  // ordinary slot and otherwise points to slot s's width() bundles, each party passing
+  // its own. Such a slot takes no bits, and its owner's entry in `b` is ignored: in place
+  // of the owner's broadcast of x ^ mask, every party opens d = value ^ mask under a MAC
+  // check, so the computation's input is exactly the authenticated value.
+  session::RawResult run_computation(job_t &&job, const session::RawBindings &b,
+                                     const std::vector<const AShareBundle<nP> *> &authenticated) {
+    return run_computation_(std::move(job), b, &authenticated);
+  }
+
+private:
+  session::RawResult run_computation_(job_t &&job, const session::RawBindings &b_in,
+                                      const std::vector<const AShareBundle<nP> *> *authenticated) {
     expecting(holds_job_(job.slot_, JobKind::Computation),
               "AGMPCSession::run_computation: invalid, foreign, abandoned, or consumed job");
     const std::shared_ptr<const circuit::ComputationArtifact> art = job.artifact_;
     const circuit::IoSignature &io_sig = art->io;
     const int me = party();
+    auto is_authenticated = [&](size_t s) {
+      return authenticated != nullptr && (*authenticated)[s] != nullptr;
+    };
+    session::RawBindings b = b_in;
+    if (authenticated != nullptr) {
+      expecting(authenticated->size() == io_sig.inputs.size(),
+                "AGMPCSession::run_computation: one authenticated entry per input slot");
+      if (b.inputs.size() < io_sig.inputs.size()) b.inputs.resize(io_sig.inputs.size());
+      for (size_t s = 0; s < io_sig.inputs.size(); ++s) {
+        if (!is_authenticated(s)) continue;
+        expecting(io_sig.inputs[s].kind == circuit::InputKind::Party,
+                  "AGMPCSession::run_computation: an authenticated slot must be a Party slot");
+        if (session::binds(io_sig.inputs[s], me))   // the owner binds no bits for it
+          b.inputs[s] = session::Bits(io_sig.inputs[s].width, 0);
+      }
+    }
     session::check_bindings(*art, me, b);
 
     const std::vector<uint32_t> in_off = circuit::input_slot_offsets(io_sig);
     std::vector<int> owner = computation_input_owners_(*art);
     std::vector<unsigned char> lambda(owner.size(), 0);
+    ag::AShareBundleVec<nP> source;
+    std::vector<unsigned char> from_source;
+    if (authenticated != nullptr) {
+      source.resize(owner.size());
+      from_source.assign(owner.size(), 0);
+      for (size_t s = 0; s < io_sig.inputs.size(); ++s) {
+        if (!is_authenticated(s)) continue;
+        for (uint32_t k = 0; k < io_sig.inputs[s].width; ++k) {
+          const size_t w = (size_t)in_off[s] + k;
+          source[w] = (*authenticated)[s][k];
+          from_source[w] = 1;
+        }
+      }
+    }
     for (size_t s = 0; s < io_sig.inputs.size(); ++s) {
-      if (!session::binds(io_sig.inputs[s], me)) continue;
+      if (!session::binds(io_sig.inputs[s], me) || is_authenticated(s)) continue;
       const session::Bits &bits = *b.inputs[s];
       for (uint32_t k = 0; k < io_sig.inputs[s].width; ++k) {
         const size_t w = (size_t)in_off[s] + k;
@@ -459,8 +507,10 @@ public:
     std::unique_ptr<typename Engine::Material> material = take_job_(job.slot_);
     job.artifact_.reset();
     job.mask_.clear();
-    const std::vector<unsigned char> bits =
-        engine_.run_computation(*material, owner, lambda, open_to);
+    const std::vector<unsigned char> bits = engine_.run_computation(
+        *material, owner, lambda, open_to,
+        authenticated != nullptr ? source.data() : nullptr,
+        authenticated != nullptr ? &from_source : nullptr);
 
     session::RawResult r;
     r.outputs.resize(io_sig.outputs.size());
@@ -473,6 +523,7 @@ public:
     return r;
   }
 
+public:
   // COMPILED replay retains Circuit's immutable shared owner so the engine can
   // cache lowering and the AND count without rescanning gates or trusting a raw
   // address across object lifetimes.

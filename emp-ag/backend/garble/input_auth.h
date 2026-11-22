@@ -300,16 +300,41 @@ std::vector<unsigned char> AGMPCProtocol<nP, Cfg>::open_computation_input_masks_
 // and b ^ mask for every Public input.  The owners broadcast their masked values
 // (echoed at nP > 2, over the whole Lambda vector), then the garblers send P1 the
 // selected labels of every input.
+//
+// A wire with an authenticated source takes no broadcast. Its value is the source's,
+// an aShare under this session's global keys (Lambda 0, so the source bundle is the
+// value's sharing). Every party opens d = source ^ mask under the MAC check of
+// open_to_targets, and Lambda = d: the computation's input is then exactly the
+// source's value. Opening the mask to the slot's owner at prepare time does not change
+// this: the other parties learn only d, as from a broadcast.
 template <int nP, class Cfg>
 void AGMPCProtocol<nP, Cfg>::bind_computation_inputs_(
     SecureWires<nP> &target, const std::vector<int> &owner,
-    const std::vector<unsigned char> &lambda) {
+    const std::vector<unsigned char> &lambda, const AShareBundle<nP> *source,
+    const std::vector<unsigned char> *from_source) {
   const int n = (int)owner.size();
   expecting(target.size() == (size_t)n && lambda.size() == (size_t)n,
             "bind_computation_inputs: width mismatch");
+  expecting(source == nullptr || (from_source != nullptr && from_source->size() == (size_t)n),
+            "bind_computation_inputs: source flags differ in width");
   if (n == 0) return;
+  auto sourced = [&](int w) { return source != nullptr && (*from_source)[(size_t)w] != 0; };
+  std::vector<int> source_wires;
+  for (int w = 0; w < n; ++w) if (sourced(w)) source_wires.push_back(w);
+  if (!source_wires.empty()) {
+    AShareBundleVec<nP> d((size_t)n);
+    std::vector<std::vector<int>> to_all(nP + 1);
+    for (int w : source_wires) {
+      xor_share(d[(size_t)w], target.wire_bundle[(size_t)w], source[w]);
+      for (int t = 1; t <= nP; ++t) to_all[(size_t)t].push_back(w);
+    }
+    const std::vector<unsigned char> opened = open_to_targets(d.data(), to_all);
+    for (size_t j = 0; j < source_wires.size(); ++j)
+      target.Lambda[(size_t)source_wires[j]] = (unsigned char)(opened[j] & 1);
+  }
   std::vector<std::vector<int>> owner_wires(nP + 1);
   for (int w = 0; w < n; ++w) {
+    if (sourced(w)) continue;
     if (owner[w] == PUBLIC || owner[w] == party)
       target.Lambda[w] = (unsigned char)(lambda[w] & 1);
     if (owner[w] != PUBLIC) owner_wires[owner[w]].push_back(w);

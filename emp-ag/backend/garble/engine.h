@@ -192,10 +192,14 @@ class AGMPCEngine {
   // so P1 decodes as soon as it has evaluated.  Under WRK, P1 then hands each
   // garbler the masked values of the positions it receives.  Returns per output
   // position this party's bit where it is a recipient, 0 elsewhere.
+  // `source` and `from_source` (optional): input wires bound to authenticated sources
+  // instead of their owners' broadcasts (AGMPCProtocol::bind_computation_inputs_).
   std::vector<unsigned char> run_computation(
       Material &material, const std::vector<int> &owner,
       const std::vector<unsigned char> &lambda,
-      const std::vector<std::vector<int>> &open_to) {
+      const std::vector<std::vector<int>> &open_to,
+      const AShareBundle<nP> *source = nullptr,
+      const std::vector<unsigned char> *from_source = nullptr) {
     expecting(material.program != nullptr,
               "run_computation: prepared material was already consumed");
     expecting(owner.size() == (size_t)material.ctx.num_in &&
@@ -213,7 +217,7 @@ class AGMPCEngine {
     ComputeCtx &st = material.ctx;
     [[maybe_unused]] auto *io = mpc->io;
     AG_PHASE_BEGIN();
-    mpc->bind_computation_inputs_(material.target_inputs, owner, lambda);
+    mpc->bind_computation_inputs_(material.target_inputs, owner, lambda, source, from_source);
     AG_PHASE("computation-bind");
     load_bound_prepared_inputs_(st, material.target_inputs);
 

@@ -54,6 +54,16 @@ class AShareSource {
 	// Agree on check2's pending view on its own (one round); a no-op if nothing is
 	// pending.
 	virtual void settle_check2() = 0;
+	// n raw COTs from this party's lane-0 stream with `peer`, for a sub-protocol that
+	// needs the session's correlation under its global keys (for example a VOLE-based
+	// proof whose values then enter a computation authenticated). As the stream's sender:
+	// this party's keys K, bit 0 clear, under Delta; as its receiver: its MACs
+	// M = K ^ b * Delta, the choice b in bit 0. Both ends call it at the same point with
+	// the same n, and a counted plan counts the draw. The stream's deferred consistency
+	// check covers these COTs: run maybe_flush_cot_check() before releasing anything that
+	// depends on them, or a cheating receiver could learn about Delta first. SoftSpoken
+	// mint only.
+	virtual void draw_cots(int peer, bool as_sender, block *out, int64_t n) = 0;
 };
 
 // Π_aShare, the authenticated-share generator: each call mints fresh shares. check1 is the gadget-tail Δ-consistency check
@@ -149,6 +159,7 @@ class AShareGen final : public AShareSource<nP> {
 	// x^me for the current call's Fix exchange (nP>2; grow-only).
 	std::vector<uint8_t> fix_x_;
 	int64_t cots_per_stream_ = 0;   // see cots_per_stream()
+	int64_t one_way_cots_[nP + 1][2] = {};   // draw_cots() per peer, as receiver / sender
 	std::unique_ptr<Mint> mint_;   // the COT streams, set up in the ctor body
 
  public:
@@ -245,10 +256,22 @@ class AShareGen final : public AShareSource<nP> {
 		mint_->maybe_flush_check();
 	}
 
-	// COTs drawn so far from each COT stream, any bootstrap prefix included
-	// (SoftSpokenMint's 128 COTs). Every stream, toward every peer and in both directions, draws the
-	// same count, so a run's final value is the planned count for the same run.
+	// COTs drawn so far for shares from each COT stream, any bootstrap prefix included
+	// (SoftSpokenMint's 128 COTs). Every stream, toward every peer and in both directions,
+	// draws the same count for shares; draw_cots() adds to its own stream only, and
+	// cots_drawn() counts both. A run's final cots_drawn() of a stream is its planned count.
 	int64_t cots_per_stream() const { return cots_per_stream_; }
+	int64_t cots_drawn(int peer, bool as_sender) const {
+		return cots_per_stream_ + one_way_cots_[peer][as_sender ? 1 : 0];
+	}
+
+	void draw_cots(int peer, bool as_sender, block *out, int64_t n) override {
+		expecting(peer >= 1 && peer <= nP && peer != party, "AShareGen::draw_cots: no such peer");
+		expecting(n >= 0, "AShareGen::draw_cots: negative count");
+		if (n == 0) return;
+		mint_->draw_cots(peer, as_sender, out, n);
+		one_way_cots_[peer][as_sender ? 1 : 0] += n;
+	}
 
 	// Hand the pending view to an agreement the caller runs anyway
 	// (SymmetricOpenCheck::agree, whose check_result() aborts unless every party handed in

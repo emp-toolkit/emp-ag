@@ -129,6 +129,11 @@ class SilentFerretMint {
 	block delta() const { return Delta_; }
 	int64_t bootstrap_cots() const { return 0; }
 	void maybe_flush_check() {}   // every stream was checked when it was prepaid
+	// One stream's draw on its own: not offered, since every draw applies the joint LPN
+	// step to all streams at once.
+	void draw_cots(int, bool, block *, int64_t) {
+		expecting(false, "AShareGen::draw_cots: one-direction draws need the SoftSpoken mint");
+	}
 
 	void draw(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int ext_len, int nfix,
 	          const uint8_t *xme, block dxor) {

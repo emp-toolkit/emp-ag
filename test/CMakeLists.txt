@@ -154,6 +154,11 @@ add_np_variant(agmpc_cot_extension_factory_lanes agmpc_cot_extension_factory.cpp
                DEFS COT_FACTORY_NP=2 COT_FACTORY_CASE=1 PASS_RE "supplied streams run on one lane")
 add_np_variant(agmpc_cot_extension_factory_noid agmpc_cot_extension_factory.cpp 2
                DEFS COT_FACTORY_NP=2 COT_FACTORY_CASE=2 PASS_RE "supplied factory needs an id")
+# A computation's Party slot bound to authenticated bundles made from one-way draw_cots()
+# COTs, and the opening's MAC check catching a false claim.
+add_np_variant(agmpc_computation_authenticated agmpc_computation_authenticated.cpp 2)
+add_np_variant(agmpc_computation_authenticated_cheat agmpc_computation_authenticated.cpp 2
+               DEFS AUTH_CASE=1 PASS_RE "share-MAC hash mismatch")
 add_np_variant(agmpc_independent_triples_direct_np2 agmpc_independent_triples.cpp 2)
 add_np_variant(agmpc_independent_triples_prepared_np2 agmpc_independent_triples.cpp 2
                DEFS INDEPENDENT_TRIPLES_PREPARED=1)

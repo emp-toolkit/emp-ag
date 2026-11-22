@@ -303,6 +303,15 @@ A program built elsewhere, with any number of slots, runs through
 time; while it is, every other call of the session that sends anything is
 fatal. Values do not cross between this path and the prepared API above.
 
+A Party slot can instead take a value the session already holds authenticated:
+`run_computation(job, bindings, authenticated)` gives such a slot aShare bundles
+under the session's global keys, and every party opens the value XOR the slot's
+mask under a MAC check in place of the owner's broadcast, so the input is
+exactly the authenticated value. The bundles can come from another protocol run
+on the session's own COTs: the share source's `draw_cots(peer, as_sender, out,
+n)` draws raw COTs from one stream (SoftSpoken mint), covered by the session's
+COT check.
+
 ### Values and circuits
 
 Circuit values are emp-tool's context-bound types over the session's gate
