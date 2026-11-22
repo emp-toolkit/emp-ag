@@ -4,10 +4,11 @@
 # then compare /tmp/t.np2.p1.txt + p2 against the blocks below. A diff means the
 # wire transcript changed: intended only for protocol-visible changes (update this
 # file in the same commit, stating why); anything else is a regression.
+# Reference toolchain: emp-tool 0b7e788, emp-ot 17e5c7a.
 
 == p1 ==
-peer 2 ios  send=94a429d93fda4cbfc056aa9a7fcf2a0b recv=4a365f4b1875c12881338660cab783d5
-peer 2 ios2 send=a0d9ade091d2eab9f6c97ebfcd7a45a3 recv=96de36dc3afcfbc6afb72f4b262f39cf
+peer 2 ios  send=e0843066709b1aa1453b159f0c0185c0 recv=ea53c3a95466aa0a99c54fc0a7eaec28
+peer 2 ios2 send=6e61d7358863274f6a6728d8881b7515 recv=a9d90890ed448cffab368a00dbf90dd7
 == p2 ==
-peer 1 ios  send=4a365f4b1875c12881338660cab783d5 recv=94a429d93fda4cbfc056aa9a7fcf2a0b
-peer 1 ios2 send=96de36dc3afcfbc6afb72f4b262f39cf recv=a0d9ade091d2eab9f6c97ebfcd7a45a3
+peer 1 ios  send=ea53c3a95466aa0a99c54fc0a7eaec28 recv=e0843066709b1aa1453b159f0c0185c0
+peer 1 ios2 send=a9d90890ed448cffab368a00dbf90dd7 recv=6e61d7358863274f6a6728d8881b7515
