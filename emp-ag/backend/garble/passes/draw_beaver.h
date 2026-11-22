@@ -104,8 +104,8 @@ struct DrawBeaverPass : SlotGateMixin<DrawBeaverPass<nP>> {
     // own share bits = bit0 of mac slot 0 (slot-invariant across peers).
     const unsigned char a_bit = (unsigned char)getLSB(A.mac(0));
     const unsigned char b_bit = (unsigned char)getLSB(B.mac(0));
-    alpha_bit_[ai] = a_bit;
-    beta_bit_[ai] = b_bit;
+    if (alpha_bit_) alpha_bit_[ai] = a_bit;
+    if (beta_bit_) beta_bit_[ai] = b_bit;
     // operand mu_i, for a symmetric open check
     if (alpha_mu_) alpha_mu_[ai] = (select_mask[a_bit] & Delta_) ^ m0 ^ k0;
     if (beta_mu_) beta_mu_[ai] = (select_mask[b_bit] & Delta_) ^ m1 ^ k1;

@@ -9,6 +9,10 @@
 // with whatever the caller opened before them in the same call. Both AND-gate protocols
 // end with it (triple/leaky_and_prep.h, triple/cut_and_choose_triples.h).
 //
+// With kBIsBeta, the triple's b is the gate's lambda_beta itself: the leaky ANDs give
+// their unrotated row lambda_beta as its b. Then y = 0 is known, only x is opened, and
+//   lambda_alpha lambda_beta = c ^ x b.
+//
 // The triples are a row of aShares (triple/triple_row.h). The input masks are what the draw walk wrote into inputs(L): the share bits, and the
 // MACs and keys per peer or the mu's, whichever OpenCheck reads.
 //
@@ -24,53 +28,58 @@
 
 namespace emp::ag {
 
-template <int nP, class OpenCheck>
+template <int nP, class OpenCheck, bool kBIsBeta = false>
 class Beaver {
 public:
   Beaver(const LaneMesh<nP> &mesh, block Delta) : mesh_(mesh), party_(mesh.party), Delta_(Delta) {}
 
-  // The walk's buffers for L gates (grow-only, kept across calls).
+  // The walk's buffers for L gates (grow-only, kept across calls), for the masks this
+  // step opens: lambda_alpha always, lambda_beta unless kBIsBeta (the caller then places
+  // lambda_beta itself, as the triple's b).
   AndInputs<nP> inputs(int L) {
-    if (alpha_bit_.size() < (size_t)L) {
-      alpha_bit_.resize((size_t)L);
-      beta_bit_.resize((size_t)L);
-    }
+    if (alpha_bit_.size() < (size_t)L) alpha_bit_.resize((size_t)L);
+    if (!kBIsBeta && beta_bit_.size() < (size_t)L) beta_bit_.resize((size_t)L);
     AndInputs<nP> in;
     in.alpha_bit = alpha_bit_.data();
-    in.beta_bit = beta_bit_.data();
+    if constexpr (!kBIsBeta) in.beta_bit = beta_bit_.data();
     if constexpr (OpenCheck::kPerPeerOperands) {
       for (int p = 1; p <= nP; ++p) if (p != party_) {
-        for (BlockVec *v : {&alpha_mac_[p], &alpha_key_[p], &beta_mac_[p], &beta_key_[p]})
+        for (BlockVec *v : {&alpha_mac_[p], &alpha_key_[p]})
           if (v->size() < (size_t)L) v->resize((size_t)L);
         in.alpha_mac[p] = alpha_mac_[p].data(); in.alpha_key[p] = alpha_key_[p].data();
-        in.beta_mac[p] = beta_mac_[p].data(); in.beta_key[p] = beta_key_[p].data();
+        if constexpr (!kBIsBeta) {
+          for (BlockVec *v : {&beta_mac_[p], &beta_key_[p]})
+            if (v->size() < (size_t)L) v->resize((size_t)L);
+          in.beta_mac[p] = beta_mac_[p].data(); in.beta_key[p] = beta_key_[p].data();
+        }
       }
     } else {
-      if (alpha_mu_.size() < (size_t)L) {
-        alpha_mu_.resize((size_t)L);
-        beta_mu_.resize((size_t)L);
-      }
+      if (alpha_mu_.size() < (size_t)L) alpha_mu_.resize((size_t)L);
       in.alpha_mu = alpha_mu_.data();
-      in.beta_mu = beta_mu_.data();
+      if constexpr (!kBIsBeta) {
+        if (beta_mu_.size() < (size_t)L) beta_mu_.resize((size_t)L);
+        in.beta_mu = beta_mu_.data();
+      }
     }
     in_ = in;
     return in;
   }
 
-  // Open x and y for the L gates against the triples `t`: this party's shares go to every
-  // peer in one flight, lane-split.
+  // Open x (and y, unless kBIsBeta) for the L gates against the triples `t`: this party's
+  // shares go to every peer in one flight, lane-split.
   void open(const TripleRow<nP> &t, int L) {
     const int any_peer = (party_ == 1) ? 2 : 1;
     std::vector<unsigned char>(&x)[nP + 1] = x_;
     std::vector<unsigned char>(&y)[nP + 1] = y_;
     for (int p = 1; p <= nP; ++p) {
       if (x[p].size() < (size_t)L) x[p].resize((size_t)L);
-      if (y[p].size() < (size_t)L) y[p].resize((size_t)L);
+      if (!kBIsBeta && y[p].size() < (size_t)L) y[p].resize((size_t)L);
     }
     ag::parallel_for(mesh_.pool, L, [&](int lo, int hi) {
       for (int i = lo; i < hi; ++i) {
         x[party_][i] = (unsigned char)(in_.alpha_bit[i] ^ getLSB(t.mac[0][any_peer][i]));
-        y[party_][i] = (unsigned char)(in_.beta_bit[i] ^ getLSB(t.mac[1][any_peer][i]));
+        if constexpr (!kBIsBeta)
+          y[party_][i] = (unsigned char)(in_.beta_bit[i] ^ getLSB(t.mac[1][any_peer][i]));
       }
     });
 #ifdef EMP_AG_TEST_FLIP_XY
@@ -84,12 +93,12 @@ public:
     mesh_.fan_out(L,
       [this, &x, &y](NetIOMP<nP> *ch, int peer, int lo, int hi) {
         ch->send_bool(peer, (const bool *)(x[party_].data() + lo), hi - lo);
-        ch->send_bool(peer, (const bool *)(y[party_].data() + lo), hi - lo);
+        if constexpr (!kBIsBeta) ch->send_bool(peer, (const bool *)(y[party_].data() + lo), hi - lo);
         ch->flush(peer);
       },
       [&x, &y](NetIOMP<nP> *ch, int peer, int lo, int hi) {
         ch->recv_bool(peer, (bool *)(x[peer].data() + lo), hi - lo);
-        ch->recv_bool(peer, (bool *)(y[peer].data() + lo), hi - lo);
+        if constexpr (!kBIsBeta) ch->recv_bool(peer, (bool *)(y[peer].data() + lo), hi - lo);
       });
   }
 
@@ -110,7 +119,8 @@ public:
     // coin is drawn (the symmetric check's; the pairwise one has none).
     const typename OpenCheck::Run run_e = check.begin(earlier);
     const typename OpenCheck::Run run_x = check.begin(L);
-    const typename OpenCheck::Run run_y = check.begin(L);
+    [[maybe_unused]] typename OpenCheck::Run run_y{};
+    if constexpr (!kBIsBeta) run_y = check.begin(L);
     check.seal();
     if constexpr (OpenCheck::kAgreesViews) {
       const auto pending = abit.take_pending_check2();
@@ -124,10 +134,14 @@ public:
     // the combine of x and y and with their open check: every MAC and key of the
     // triple's a and b is loaded once for both. x[p]/y[p] stay as each party sent them.
     ag::parallel_for(mesh_.pool, L, [&](int lo, int hi) {
-      auto lane_x = check.lane(run_x), lane_y = check.lane(run_y);
+      auto lane_x = check.lane(run_x);
+      [[maybe_unused]] auto lane_y = check.lane(run_y);
       for (int i = lo; i < hi; ++i) {
         unsigned char xv = 0, yv = 0;
-        for (int p = 1; p <= nP; ++p) { xv ^= x[p][i]; yv ^= y[p][i]; }
+        for (int p = 1; p <= nP; ++p) {
+          xv ^= x[p][i];
+          if constexpr (!kBIsBeta) yv ^= y[p][i];
+        }
         // mask each addend by select_mask rather than branching on the two random
         // public selectors.
         const block mx = select_mask[xv], my = select_mask[yv];
@@ -142,8 +156,10 @@ public:
           if constexpr (OpenCheck::kPerPeerOperands) {
             lane_x.sent(peer, i, in_.alpha_mac[peer][i] ^ am);
             lane_x.expected(peer, i, in_.alpha_key[peer][i] ^ ak, x[peer][i]);
-            lane_y.sent(peer, i, in_.beta_mac[peer][i] ^ bm);
-            lane_y.expected(peer, i, in_.beta_key[peer][i] ^ bk, y[peer][i]);
+            if constexpr (!kBIsBeta) {
+              lane_y.sent(peer, i, in_.beta_mac[peer][i] ^ bm);
+              lane_y.expected(peer, i, in_.beta_key[peer][i] ^ bk, y[peer][i]);
+            }
           } else {
             sum_a = sum_a ^ am ^ ak;
             sum_b = sum_b ^ bm ^ bk;
@@ -154,8 +170,9 @@ public:
           // captured mu_i(λ_α) to the triple's part; y likewise.
           lane_x.put(i, in_.alpha_mu[i] ^ check.residual(
                                              (unsigned char)getLSB(t.mac[0][any_peer][i]) ^ xv, sum_a));
-          lane_y.put(i, in_.beta_mu[i] ^ check.residual(
-                                            (unsigned char)getLSB(t.mac[1][any_peer][i]) ^ yv, sum_b));
+          if constexpr (!kBIsBeta)
+            lane_y.put(i, in_.beta_mu[i] ^ check.residual(
+                                              (unsigned char)getLSB(t.mac[1][any_peer][i]) ^ yv, sum_b));
         }
         if (xv && yv) {
           if (party_ != 1) {
@@ -167,7 +184,7 @@ public:
         }
       }
       check.merge(lane_x);
-      check.merge(lane_y);
+      if constexpr (!kBIsBeta) check.merge(lane_y);
     });
     // Settle every open of this call before the products are returned.
     check.check_result();

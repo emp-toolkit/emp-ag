@@ -2,11 +2,19 @@
 #define EMP_AG_BACKEND_TRIPLE_LEAKY_AND_PREP_H__
 //
 // The AND gates' products from leaky AND triples made per call (triple/and_prep.h):
-// Pi_LaAND (triple/laand.h) on B rows of L fresh candidates, bucketing (Pi_Prep,
+// Pi_LaAND (triple/laand.h) on B rows of L candidates, bucketing (Pi_Prep,
 // triple/merge.h) of the B rows into L authenticated triples, then Beaver against the
 // gates' input masks (triple/beaver.h). B comes from the leakage bound at L
-// (triple/bucketing.h). No circuit mask enters a leaky AND or the bucketing: every row is
-// minted fresh in this call, and the masks are read only by Beaver.
+// (triple/bucketing.h).
+//
+// Row 0, which the rotations leave in place, takes gate j's lambda_beta (the mask of its
+// second input) as its j-th b. The leaky AND leaks only a, and b enters it only
+// linearly; the merge keeps row 0's b, and every opened difference lambda_beta ^ b_m is
+// masked by a fresh, leak-free b_m. So bucket j's triple is (a_j, lambda_beta,
+// a_j lambda_beta), and Beaver opens only x = lambda_alpha ^ a_j. Every a, every r and
+// the b of every other row is fresh in this call; lambda_alpha is read only by Beaver.
+// The walk writes gate j's lambda_beta at index j of row 0's b, and row 0's rotation is
+// the constant 0, so the alignment holds by construction.
 //
 // Per call:
 //   1. mint the B rows and run the leaky ANDs on them (at nP == 2 every row's half-gate
@@ -18,7 +26,7 @@
 //      OpenToAll calls of Pi_Prep, batched; at nP == 2 the F_eq commitment rides along),
 //      and merge;
 //   4. finish the leaky ANDs' check;
-//   5. Beaver: open x and y, and check them and the bucket differences in one open check.
+//   5. Beaver: open x, and check it and the bucket differences in one open check.
 //
 #include "emp-ag/backend/ashare/ashare_gen.h"
 #include "emp-ag/backend/ashare/open_check.h"   // DefaultOpenCheck
@@ -70,7 +78,19 @@ public:
               "leaky ANDs: chunk too large (bucketed size overflows int) -- split into chunks");
   }
 
-  AndInputs<nP> inputs(int64_t n) override { return beaver_.inputs((int)n); }
+  // lambda_alpha for Beaver, and lambda_beta straight into row 0's b.
+  AndInputs<nP> inputs(int64_t n) override {
+    AndInputs<nP> in = beaver_.inputs((int)n);
+    for (int p = 1; p <= nP; ++p) if (p != party_) {
+      if (beta_mac_[p].size() < (size_t)n) {
+        beta_mac_[p].resize((size_t)n);
+        beta_key_[p].resize((size_t)n);
+      }
+      in.beta_mac[p] = beta_mac_[p].data();
+      in.beta_key[p] = beta_key_[p].data();
+    }
+    return in;
+  }
 
   block run(int64_t n, AShareBundleVec<nP> &out) override {
     validate(n);
@@ -171,7 +191,7 @@ public:
     uint64_t _tp_o0 = agmpc_now_ns();
 #endif
     // 5. Beaver on the merged triples, in row 0. The differences are checked in the same
-    //    open check, as a run before x and y.
+    //    open check, as a run before x.
     beaver_.open(rows[0], L);
     beaver_.finish(open_check_, abit_, rows[0], L, D,
                    [&](const typename OpenCheck::Run &run) { check_differences_(run, rows, bk); },
@@ -203,31 +223,44 @@ private:
   AShareSource<nP> &abit_;   // the session's share pool; its owner outlives this
   block Delta_;
   PRG prg_;
-  OpenCheck open_check_;     // checks the differences and x, y against their MACs
+  OpenCheck open_check_;     // checks the differences and x against their MACs
   LeakyAnd<nP> laand_;
-  Beaver<nP, OpenCheck> beaver_;
+  Beaver<nP, OpenCheck, /*kBIsBeta=*/true> beaver_;
   // Reused per-call rows (grow-only): row 0, which the merge turns into the call's
-  // triples, and rows 1..B-1, each [a | b | c] of L per peer.
+  // triples, minted [a | r] of L per peer with the walk's lambda_beta as its b; and rows
+  // 1..B-1, each [a | b | r].
   BlockVec acc_mac_[nP + 1], acc_key_[nP + 1];
+  BlockVec beta_mac_[nP + 1], beta_key_[nP + 1];
   std::vector<std::vector<BlockVec>> sac_mac_, sac_key_;
   // The differences as each party sent them (d_[p]), and opened (d_[0]).
   std::vector<unsigned char> d_[nP + 1];
   FeqSymmetric2PC feq2_{};   // nP == 2: the leaky ANDs' F_eq, between steps 3 and 4
 
-  // Mint row k, 3L fresh shares laid out [a | b | r], and return it. Its check2 waits for
-  // the call's coin: the row stays put until then, changed only by the leaky ANDs'
-  // public corrections.
+  // Mint row k and return it: row 0 as 2L fresh shares [a | r] with the walk's
+  // lambda_beta as its b, and every other row as 3L fresh shares [a | b | r]. A row's
+  // check2 waits for the call's coin: the row stays put until then, changed only by the
+  // leaky ANDs' public corrections.
   TripleRow<nP> mint_row_(int k, int L) {
     BlockVec *mac = (k == 0) ? acc_mac_ : sac_mac_[k].data();
     BlockVec *key = (k == 0) ? acc_key_ : sac_key_[k].data();
 #ifdef AG_PROFILE
     uint64_t _tp_c0 = agmpc_now_ns();
 #endif
-    abit_.compute_deferred(mac, key, 3 * L);
+    abit_.compute_deferred(mac, key, (k == 0 ? 2 : 3) * L);
 #ifdef AG_PROFILE
     g_ag_tp_cot_ns += agmpc_now_ns() - _tp_c0;
 #endif
-    return strided_row<nP>(mac, key, 0, L, party_);
+    if (k > 0) return strided_row<nP>(mac, key, 0, L, party_);
+    TripleRow<nP> t;
+    for (int p = 1; p <= nP; ++p) if (p != party_) {
+      t.mac[0][p] = mac[p].data();
+      t.key[0][p] = key[p].data();
+      t.mac[1][p] = beta_mac_[p].data();
+      t.key[1][p] = beta_key_[p].data();
+      t.mac[2][p] = mac[p].data() + L;
+      t.key[2][p] = key[p].data() + L;
+    }
+    return t;
   }
 
   // The differences' checks, in `run`: the pairwise check's tags from this party's MACs

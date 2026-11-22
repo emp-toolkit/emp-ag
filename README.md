@@ -335,19 +335,22 @@ per-AND garbling is the half-gate construction of
 [ZRE15](https://eprint.iacr.org/2014/756) (Eurocrypt 2015); malicious security
 uses the authenticated-garbling framework of **WRK17b** with the
 [KRRW18](https://eprint.iacr.org/2018/578) half-gate leaky-AND and batched
-`F_eq` consistency check. For every AND, preprocessing generates `B`
-independent random triples, combines them by cyclic-shift bucketing, and then
-uses ordinary Beaver correction to compute the product of the circuit's
-input masks. The values opened on the way, the bucket differences and the
-Beaver `x`, `y`, are checked against their MACs before the product is used:
+`F_eq` consistency check. For every AND, preprocessing generates `B` leaky
+triples, combines them by cyclic-shift bucketing, and then uses Beaver
+correction to compute the product of the circuit's input masks. The first
+triple of each bucket, the one the rotations leave in place, takes the gate's
+second input mask as its `b`: the leaky AND leaks only `a`, and bucketing
+keeps that `b`, so the bucket's triple is `(a, λ_β, a·λ_β)` and Beaver
+opens only `x = λ_α ⊕ a`. The values opened on the way, the bucket
+differences and `x`, are checked against their MACs before the product is used:
 by default with a pairwise AES tag at `nP = 2` (the batched opening of
 [TinyTable](https://eprint.iacr.org/2016/695)) and a symmetric
 random-linear-combination check at `nP >= 3`. The circuit output receives a
 separate fresh authenticated mask.
-This costs `3B+1` COTs per AND per direction per peer, excluding input masks
-and session overhead. Circuit masks are never used as leaky-AND operands:
-successful selective-failure guesses must concern the independent triples,
-rather than disclose a real wire mask before bucketing. At
+This costs `3B` COTs per AND per direction per peer, excluding input masks
+and session overhead. The first input's mask never enters a leaky AND:
+successful selective-failure guesses concern only the triples' `a`, which
+bucketing hides, rather than disclose a real wire mask. At
 `nP >= 3` the garbler rows are combined by default through a **garbler-row
 aggregation ring** (following the YWZ20 idea), collapsing the O(n²)
 cross-garbler `S`-term cube to O(n) per gate at party 1. By default the output
