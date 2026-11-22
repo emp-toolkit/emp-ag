@@ -17,8 +17,9 @@
 // the constant 0, so the alignment holds by construction.
 //
 // Per call:
-//   1. mint the B rows and run the leaky ANDs on them: every row's half-gate rows in one
-//      flight, and every s-bit in the next (triple/laand.h);
+//   1. mint every row's fresh shares in one draw, and run the leaky ANDs on the rows:
+//      every row's half-gate rows in one flight, and every s-bit in the next
+//      (triple/laand.h);
 //   2. draw the post-commitment coin (Fiat-Shamir at nP == 2, commit-then-open at nP > 2):
 //      it folds the consistency check of every share drawn since the last call, gives the
 //      rotations, continues as the nP >= 3 leaky-AND challenge, and is the call's coin;
@@ -70,11 +71,11 @@ public:
     if (n == 0) return;
     expecting(n <= (int64_t)INT_MAX, "leaky ANDs: chunk too large -- split into chunks");
     const int B = ag::bucket_size((int)n, ssp_);
-    // All bucketing arithmetic scales L by up to max(3,B) in int (3*L row mints, (B-1)*L
-    // differences, B*L RLC stash). Reject a chunk too large for that to fit int rather
-    // than silently wrapping; callers split work into chunks long before this bound for
-    // memory reasons anyway.
-    expecting((int64_t)std::max(B, 3) * n <= (int64_t)INT_MAX,
+    // All bucketing arithmetic scales L by up to 3B in int (the (3B-1)*L draw, (B-1)*L
+    // differences, the B*L RLC stash). Reject a chunk too large for that to fit int
+    // rather than silently wrapping; callers split work into chunks long before this
+    // bound for memory reasons anyway.
+    expecting((int64_t)3 * B * n <= (int64_t)INT_MAX,
               "leaky ANDs: chunk too large (bucketed size overflows int) -- split into chunks");
   }
 
@@ -104,22 +105,10 @@ public:
     g_ag_tp_acheck_ns = g_ag_tp_bkt_ns = g_ag_tp_open_ns = 0;
 #endif
 
-    // 1. B rows of L leaky triples, every share fresh: row 0 in acc_, row k in sac_[k].
+    // 1. B rows of L leaky triples, every share but row 0's b fresh, from one draw.
     FsHash feq;   // nP == 2: the F_eq transcript over every row's windows
     laand_.begin_call();
-    if ((int)sac_mac_.size() < B) {
-      sac_mac_.resize(B);
-      sac_key_.resize(B);
-    }
-    for (int k = 1; k < B; ++k)
-      if ((int)sac_mac_[k].size() < nP + 1) {
-        sac_mac_[k].resize(nP + 1);
-        sac_key_[k].resize(nP + 1);
-      }
-    // A row's vectors are final once it is minted: the mint sizes them, and nothing
-    // resizes them before the coin folds their check2.
-    std::vector<TripleRow<nP>> rows((size_t)B);
-    for (int k = 0; k < B; ++k) rows[(size_t)k] = mint_row_(k, L);
+    const std::vector<TripleRow<nP>> rows = mint_rows_(B, L);
     laand_.produce_rows(rows, L, feq);
 
     // 2. The post-commitment coin, after every row is fixed: every party holds it here.
@@ -219,41 +208,39 @@ private:
   OpenCheck open_check_;     // checks the differences and x against their MACs
   LeakyAnd<nP> laand_;
   Beaver<nP, OpenCheck, /*kBIsBeta=*/true> beaver_;
-  // Reused per-call rows (grow-only): row 0, which the merge turns into the call's
-  // triples, minted [a | r] of L per peer with the walk's lambda_beta as its b; and rows
-  // 1..B-1, each [a | b | r].
+  // Reused per-call rows (grow-only), one draw per call: row 0, which the merge turns
+  // into the call's triples, [a | r] of L per peer with the walk's lambda_beta as its b;
+  // then rows 1..B-1, each [a | b | r].
   BlockVec acc_mac_[nP + 1], acc_key_[nP + 1];
   BlockVec beta_mac_[nP + 1], beta_key_[nP + 1];
-  std::vector<std::vector<BlockVec>> sac_mac_, sac_key_;
   // The differences as each party sent them (d_[p]), and opened (d_[0]).
   std::vector<unsigned char> d_[nP + 1];
   FeqSymmetric2PC feq2_{};   // nP == 2: the leaky ANDs' F_eq, between steps 3 and 4
 
-  // Mint row k and return it: row 0 as 2L fresh shares [a | r] with the walk's
-  // lambda_beta as its b, and every other row as 3L fresh shares [a | b | r]. A row's
-  // check2 waits for the call's coin: the row stays put until then, changed only by the
-  // leaky ANDs' public corrections.
-  TripleRow<nP> mint_row_(int k, int L) {
-    BlockVec *mac = (k == 0) ? acc_mac_ : sac_mac_[k].data();
-    BlockVec *key = (k == 0) ? acc_key_ : sac_key_[k].data();
+  // Mint every row's fresh shares in one draw of (3B - 1) L and return the B rows: row 0
+  // as [a | r] with the walk's lambda_beta as its b, then every other row as [a | b | r].
+  // The draw's check2 waits for the call's coin: the rows stay put until then, changed
+  // only by the leaky ANDs' public corrections, and nothing resizes their vectors.
+  std::vector<TripleRow<nP>> mint_rows_(int B, int L) {
 #ifdef AG_PROFILE
     uint64_t _tp_c0 = agmpc_now_ns();
 #endif
-    abit_.compute_deferred(mac, key, (k == 0 ? 2 : 3) * L);
+    abit_.compute_deferred(acc_mac_, acc_key_, (3 * B - 1) * L);
 #ifdef AG_PROFILE
     g_ag_tp_cot_ns += agmpc_now_ns() - _tp_c0;
 #endif
-    if (k > 0) return strided_row<nP>(mac, key, 0, L, party_);
-    TripleRow<nP> t;
+    std::vector<TripleRow<nP>> rows((size_t)B);
     for (int p = 1; p <= nP; ++p) if (p != party_) {
-      t.mac[0][p] = mac[p].data();
-      t.key[0][p] = key[p].data();
-      t.mac[1][p] = beta_mac_[p].data();
-      t.key[1][p] = beta_key_[p].data();
-      t.mac[2][p] = mac[p].data() + L;
-      t.key[2][p] = key[p].data() + L;
+      rows[0].mac[0][p] = acc_mac_[p].data();
+      rows[0].key[0][p] = acc_key_[p].data();
+      rows[0].mac[1][p] = beta_mac_[p].data();
+      rows[0].key[1][p] = beta_key_[p].data();
+      rows[0].mac[2][p] = acc_mac_[p].data() + L;
+      rows[0].key[2][p] = acc_key_[p].data() + L;
     }
-    return t;
+    for (int k = 1; k < B; ++k)
+      rows[(size_t)k] = strided_row<nP>(acc_mac_, acc_key_, (int64_t)(3 * k - 1) * L, L, party_);
+    return rows;
   }
 
   // The differences' checks, in `run`: the pairwise check's tags from this party's MACs
