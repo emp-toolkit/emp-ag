@@ -1,6 +1,6 @@
 #ifndef EMP_AG_BACKEND_TRIPLE_TRIPLE_POOL_H__
 #define EMP_AG_BACKEND_TRIPLE_TRIPLE_POOL_H__
-#include "emp-ag/backend/ashare/auth_share_pool.h"
+#include "emp-ag/backend/ashare/ashare_gen.h"
 #include "emp-ag/backend/triple/cut_and_choose_triples.h"
 #include "emp-ag/backend/triple/triple_source.h"
 #include "emp-ag/backend/common/fs_hash.h"  // FsHash (FS/check digests)
@@ -223,7 +223,7 @@ struct BeaverOperands {
 //     λ-bit seed, both expand into LB+1 blocks via PRG, XOR into local
 //     (z^i, u^i). Each seed contributes to exactly two parties so
 //     Σ_p z^p_k = 0 and Σ_p u^p = 0. (Same construction as
-//     AuthSharePool::check1.)
+//     AShareGen::check1.)
 //
 // (2) F_Com is collapsed to a single send for both d^i and
 //     α^i.  No value derived from the committed bits is
@@ -261,7 +261,7 @@ public:
   int ssp;              // statistical security parameter (default 40)
   NetIOMP<nP> *io;
   block session_id;
-  AuthSharePool<nP> &abit;   // the session's share pool; its owner outlives this pool
+  AShareSource<nP> &abit;   // the session's share pool; its owner outlives this pool
   block Delta;
   PRG prg;
   OpenCheck open_check_;   // checks the d and x/y opens against their MACs
@@ -297,21 +297,21 @@ public:
   std::vector<unsigned char> bkt_window_;   // accumulate_leaky_and_window scratch
   BlockVec bkt_fzero_;                       // fzero_xor contribution scratch
   // grp (optional): a NetIOMPGroup (mesh(0) == io) enabling lane-parallel COT in
-  // AuthSharePool AND the leaky-AND garbled-AND row transfer here; null => single
+  // AShareGen AND the leaky-AND garbled-AND row transfer here; null => single
   // mesh. L_lanes = the shared lane count.
   NetIOMPGroup<nP> *grp = nullptr;
   int L_lanes = 1;
   std::unique_ptr<TripleSource<nP>> source_;   // see use_source; null: per-call leaky ANDs
-  // Triples over `abit`, the session's share pool (ashare/auth_share_pool.h), which the
+  // Triples over `abit`, the session's share pool (ashare/ashare_gen.h), which the
   // caller constructs first and keeps alive.
-  TriplePool(AuthSharePool<nP> &abit_in, NetIOMP<nP> *io, ThreadPool *pool, int party,
+  TriplePool(AShareSource<nP> &abit_in, NetIOMP<nP> *io, ThreadPool *pool, int party,
              int ssp = 40, NetIOMPGroup<nP> *grp_in = nullptr,
              block session_id_in = zero_block)
       : pool(pool), party(party), ssp(ag::checked_statistical_security(ssp)), io(io),
         session_id(session_id_in),
         abit(abit_in),
-        Delta(abit.Delta),
-        open_check_(io, pool, party, abit.Delta, session_id_in, &prg, grp_in),
+        Delta(abit.delta()),
+        open_check_(io, pool, party, abit.delta(), session_id_in, &prg, grp_in),
         grp(grp_in), L_lanes(grp_in ? std::max(1, grp_in->size()) : 1) {
 #ifdef EMP_AG_CUT_AND_CHOOSE_BATCH
     use_cut_and_choose(EMP_AG_CUT_AND_CHOOSE_BATCH);
@@ -333,7 +333,7 @@ public:
                                                                    session_id, ssp, batch, grp));
   }
 
-  // The mesh carrying lane t (lane 0 == io == grp->mesh(0)); see AuthSharePool.
+  // The mesh carrying lane t (lane 0 == io == grp->mesh(0)); see AShareGen.
   NetIOMP<nP> *lane_mesh(int t) { return (t == 0) ? io : &grp->mesh(t); }
 
   // Canonical per-(peer,lane) transfer fan-out over the group meshes, into ONE join

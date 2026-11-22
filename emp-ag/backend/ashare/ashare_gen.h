@@ -1,5 +1,5 @@
-#ifndef EMP_AG_BACKEND_ASHARE_AUTH_SHARE_POOL_H__
-#define EMP_AG_BACKEND_ASHARE_AUTH_SHARE_POOL_H__
+#ifndef EMP_AG_BACKEND_ASHARE_ASHARE_GEN_H__
+#define EMP_AG_BACKEND_ASHARE_ASHARE_GEN_H__
 #include "emp-ag/backend/common/protocols.h"   // EchoBC, sampleRandom, check_MAC (debug)
 #include "emp-ag/backend/common/runtime.h"            // parallel_for
 #include "emp-tool/runtime/core/test_mode.h"   // emp::is_test_mode (production guard, ctor)
@@ -10,32 +10,49 @@
 #include "emp-ag/backend/common/profiling.h"
 #include "emp-ag/backend/ashare/open_check.h"   // SymmetricOpenCheck (settle_check2)
 #include "emp-ag/backend/ashare/share.h"
-#include "emp-ag/backend/ashare/stream_mint.h"   // StreamMint, the COT backend selection
-#if EMP_AG_OT_BACKEND == 3
+#include "emp-ag/backend/ashare/cot.h"              // Cot, the choice of mint
+#include "emp-ag/backend/ashare/softspoken_mint.h"   // SoftSpokenMint
 #include "emp-ag/backend/ashare/silent_ferret_mint.h"   // SilentFerretMint
-#endif
 #include <algorithm>
 #include <climits>
 #include <cstdint>
 #include <memory>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace emp::ag {
 
-// The mint the pool draws its COTs from (what a mint offers is in stream_mint.h):
-// SilentFerretMint for EMP_AG_OT_BACKEND=3, StreamMint for the others.
-#if EMP_AG_OT_BACKEND == 3
-template <int nP> using DefaultMint = SilentFerretMint<nP>;
-#else
-template <int nP> using DefaultMint = StreamMint<nP>;
-#endif
+// The mint for a Cot (cot.h). What a mint offers is in softspoken_mint.h.
+template <int nP, Cot C>
+using MintFor = std::conditional_t<C == Cot::SilentFerret, SilentFerretMint<nP>,
+                                   SoftSpokenMint<nP>>;
 
-// Π_aShare. Despite the "Pool" in the class name, this type keeps no pool —
-// each call mints fresh shares. check1 is the gadget-tail Δ-consistency check
+// check2's residuals not yet covered by a zero test, and the digest of their views, which
+// every party must share (AShareGen::take_pending_check2).
+struct PendingCheck2 {
+	std::vector<block> residuals;
+	char view[FsHash::DIGEST_SIZE];
+};
+
+// The share generator as the triple layer sees it, the same whichever mint the session
+// chose (AShareGen below implements it).
+template <int nP>
+class AShareSource {
+ public:
+	virtual ~AShareSource() = default;
+	virtual block delta() const = 0;
+	virtual void compute(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) = 0;
+	virtual void maybe_flush_cot_check() = 0;
+	virtual PendingCheck2 take_pending_check2() = 0;
+	virtual void settle_check2() = 0;
+};
+
+// Π_aShare, the authenticated-share generator: each call mints fresh shares. check1 is the gadget-tail Δ-consistency check
 // using pair-specific x^{me,j}; check2 is the share-consistency check (nP>2), whose
 // zero test is deferred to the next one the protocol runs (see check2).
-// The COTs come from a mint (stream_mint.h), one stream per peer and direction.
+// The COTs come from a mint (softspoken_mint.h, silent_ferret_mint.h), one stream
+// per peer and direction.
 // The COT post-processing pins bit0(Δ)=1, bit0(K)=0 and bit0(M)=choice, so each
 // draw gives M = K ⊕ choice · Δ. At nP=2 the single receiver's choice is x^me.
 // At nP>2 every receiver draws its own choices r_j and the Fix exchange aligns
@@ -71,14 +88,17 @@ template <int nP> using DefaultMint = StreamMint<nP>;
 //     before a reveal (no-op when nothing was minted since the last flush).
 //   - take_pending_check2() / settle_check2() — hand check2's pending residuals to
 //     another zero test, or test them on their own (before garbling or a reveal).
-template <int nP, class Mint = DefaultMint<nP>>
-class AuthSharePool {
+template <int nP, class Mint = MintFor<nP, Cot::EMP_AG_COT>>
+class AShareGen final : public AShareSource<nP> {
  public:
-	// Δ_me, the party's global MAC key (pinned in the ctor). Public: TriplePool
-	// mirrors it (Delta(abit.Delta)) so the two share one Δ.
-	block Delta;
+	// Δ_me, the party's global MAC key, fixed by the ctor. Every party's generator pins
+	// two of its bits, and the layers above rely on both: bit 0 of every Δ_p is 1 (the
+	// share encoding above), and bit 1 of the XOR of all of them is 1 (TriplePool
+	// decodes a leaky AND's d, and the evaluator b_γ, from that bit).
+	block delta() const override { return Delta; }
 
  private:
+	block Delta;
 	NetIOMPGroup<nP> *grp = nullptr;   // caller-owned; its meshes carry the mint's lanes; null => one mesh
 	NetIOMP<nP> *io;
 	ThreadPool *pool;
@@ -113,14 +133,14 @@ class AuthSharePool {
 	// single-mesh path (L == 1). `base_ot_kind` selects the public-key base OT
 	// for each pair's primary direction; every party must select the same kind.
 	// Optional planned sender/receiver counts bound each COT stream when its demand is
-	// known; -1 keeps the ordinary unbounded streaming path. With StreamMint they
+	// known; -1 keeps the ordinary unbounded streaming path. With SoftSpokenMint they
 	// include the 128-COT bootstrap prefix and go to OTExtension::begin(n_ots),
 	// letting a one-lane SoftSpoken stream shorten its terminal transfer; for every
 	// pair, this party's sender count must equal its peer's receiver count and vice
 	// versa, so one identical (sender, receiver) pair at every party is valid only when
 	// the two counts are equal. With SilentFerretMint the two counts must be equal,
 	// count only the pool's draws, and size every stream's prepay.
-	AuthSharePool(NetIOMP<nP> *io, ThreadPool *pool, int party,
+	AShareGen(NetIOMP<nP> *io, ThreadPool *pool, int party,
 			NetIOMPGroup<nP> *grp_in = nullptr,
 			block session_id_in = zero_block,
 			BaseOtKind base_ot_kind = BaseOtKind::CSW,
@@ -128,11 +148,11 @@ class AuthSharePool {
 			int64_t planned_receiver_cots = -1)
 		: io(io), pool(pool), party(party), session_id(session_id_in) {
 			ag::validate_protocol_runtime(pool, party, nP);
-			expecting(io != nullptr, "AuthSharePool: NetIOMP must not be null");
+			expecting(io != nullptr, "AShareGen: NetIOMP must not be null");
 			expecting(io->party == party,
-			          "AuthSharePool: NetIOMP party does not match pool party");
+			          "AShareGen: NetIOMP party does not match pool party");
 			expecting(grp_in == nullptr || (grp_in->size() >= 1 && &grp_in->mesh(0) == io),
-			          "AuthSharePool: group mesh(0) must equal the pool NetIOMP");
+			          "AShareGen: group mesh(0) must equal the pool NetIOMP");
 			grp = grp_in;
 			// A test-mode build (-DEMP_TEST_MODE=ON) makes emp-tool's default-constructed
 			// PRGs deterministic, for wire-byte-identity tests only. If it leaks into a real
@@ -185,24 +205,18 @@ class AuthSharePool {
 
 	// Flush the deferred COT consistency check before a reveal; no-op when
 	// nothing was minted since the last flush.
-	void maybe_flush_cot_check() {
+	void maybe_flush_cot_check() override {
 		mint_->maybe_flush_check();
 	}
 
 	// COTs drawn so far from each COT stream, any bootstrap prefix included
-	// (StreamMint's 128 COTs). Every stream, toward every peer and in both directions, draws the
+	// (SoftSpokenMint's 128 COTs). Every stream, toward every peer and in both directions, draws the
 	// same count, so a run's final value is the planned count for the same run.
 	int64_t cots_per_stream() const { return cots_per_stream_; }
 
-	// check2's residuals not yet tested, and the digest of their views, which every
-	// party must share.
-	struct PendingCheck2 {
-		std::vector<block> residuals;
-		char view[FsHash::DIGEST_SIZE];
-	};
 	// Hand the pending residuals to a zero test the caller runs anyway: it must add them
 	// after drawing its coin, with their view (SymmetricOpenCheck::absorb).
-	PendingCheck2 take_pending_check2() {
+	PendingCheck2 take_pending_check2() override {
 		PendingCheck2 p;
 		p.residuals = std::exchange(pending_check2_, {});
 		pending_check2_view_.digest(p.view);   // and resets
@@ -212,7 +226,7 @@ class AuthSharePool {
 	// Test check2's pending residuals on their own: a coin, then one commit-open zero
 	// test. No-op when nothing is pending. Call before garbling with, or revealing
 	// anything computed from, shares whose residuals no other zero test took.
-	void settle_check2() {
+	void settle_check2() override {
 		if (pending_check2_.empty()) return;
 		SymmetricOpenCheck<nP> settle(io, pool, party, Delta, session_id, &prg, grp,
 		                              "emp-ag:ashare-check2", "cheat aShare\n",
@@ -229,7 +243,7 @@ class AuthSharePool {
 	// bit0(MAC[any non-self peer][k]) — no separate share buffer. Two phases:
 	// process_phase1 (COT extension + the one-time check1) then check2 (universal-hash
 	// MAC check, nP>2 only).
-	void compute(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) {
+	void compute(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) override {
 		constexpr int pad = (nP > 2) ? kCheck2Pad : 0;
 		expecting((int64_t)length + pad <= INT_MAX, "auth_share: padded length overflow");
 		process_phase1(MAC, KEY, length + pad);
@@ -578,4 +592,4 @@ class AuthSharePool {
 };
 
 }  // namespace emp::ag
-#endif // EMP_AG_BACKEND_ASHARE_AUTH_SHARE_POOL_H__
+#endif // EMP_AG_BACKEND_ASHARE_ASHARE_GEN_H__

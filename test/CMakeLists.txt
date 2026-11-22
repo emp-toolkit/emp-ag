@@ -30,11 +30,9 @@ endfunction()
 # incl. a full session on mesh 0 concurrent with traffic on mesh 1.
 add_test_case_with_run(netmp_group)
 
-# Lower-layer protocol tests. three_party_iknp checks each pair's correlation itself.
-# ashare_test runs the share layer on its own over every mint the build has (StreamMint;
-# SilentFerretMint too in the SilentFerret build), checking every share in both
-# directions of every pair, at 2, 3 and 4 parties.
-add_test_case_with_run(three_party_iknp)
+# The share layer on its own: ashare_test runs an AShareGen over both mints (SoftSpokenMint,
+# and SilentFerretMint unplanned and prepaid), checking every share in both directions of
+# every pair, at 2, 3 and 4 parties.
 add_np_variant(ashare_test_np2 ashare_test.cpp 2 DEFS ASHARE_NP=2)
 add_np_variant(ashare_test_np3 ashare_test.cpp 3 DEFS ASHARE_NP=3)
 add_np_variant(ashare_test_np4 ashare_test.cpp 4 DEFS ASHARE_NP=4)
@@ -55,7 +53,7 @@ add_test_case_with_run(agmpc_compose)
 
 # Single-process circuit analysis (no parties). The Delta bit-pinning property
 # bit1(+_p Delta_p)=1 is checked by a static_assert next to the pinning in
-# backend/ashare/auth_share_pool.h.
+# backend/ashare/ashare_gen.h.
 add_test_case(bucketing_test)              # bucket_size matches the n-party leakage bound
 add_test_case(cut_and_choose_bound_test)   # cut-and-choose parameters vs exact small-batch bounds
 add_test_case(laand_window_test)           # exact bit windows, independent codec oracle
@@ -175,7 +173,7 @@ add_np_variant(lane_np3 lane.cpp 3 DEFS LANE_NP=3)
 # variable enables it). Valid at nP==2 only -- at nP>=3 the aggregation ring's concurrent
 # sends make the per-channel digest thread-schedule-dependent. One source, two party
 # counts via TRACE_NP. These are the ONLY targets allowed to run in a test-mode build
-# (they diff wire digests), so they opt past the AuthSharePool production guard via
+# (they diff wire digests), so they opt past the AShareGen production guard via
 # EMP_AG_ALLOW_TEST_MODE.
 add_executable(test_trace_np2 trace_digest.cpp)
 target_link_libraries(test_trace_np2 PRIVATE emp-ag::emp-ag)

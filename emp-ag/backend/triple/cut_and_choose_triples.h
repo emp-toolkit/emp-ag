@@ -61,7 +61,7 @@
 #include "emp-ag/backend/ashare/open_check.h"
 #include "emp-ag/backend/common/protocols.h"    // sampleRandom
 #include "emp-ag/backend/common/netmp.h"
-#include "emp-ag/backend/ashare/auth_share_pool.h"
+#include "emp-ag/backend/ashare/ashare_gen.h"
 #include "emp-ag/backend/triple/triple_source.h"
 #include "emp-ag/backend/common/runtime.h"             // parallel_for
 #include "emp-tool/runtime/crypto/mitccrh.h"
@@ -83,13 +83,13 @@ public:
 
   // `abit` mints the candidates; its Delta is the triples' Delta. All parties construct
   // the generator with the same ssp and batch and call take() at the same points.
-  CutAndChooseTriples(NetIOMP<nP> *io, ThreadPool *pool, int party, AuthSharePool<nP> &abit,
+  CutAndChooseTriples(NetIOMP<nP> *io, ThreadPool *pool, int party, AShareSource<nP> &abit,
                       block session_id, int ssp, int64_t batch,
                       NetIOMPGroup<nP> *grp = nullptr)
-      : io_(io), pool_(pool), party_(party), abit_(abit), Delta_(abit.Delta),
+      : io_(io), pool_(pool), party_(party), abit_(abit), Delta_(abit.delta()),
         sid_(RO("emp-ag:cut-and-choose", session_id).squeeze_block()),
         ssp_(checked_statistical_security(ssp)), batch_(batch), grp_(grp),
-        check_(make_check_(io, pool, party, abit.Delta, sid_, &prg_, grp)) {
+        check_(make_check_(io, pool, party, abit.delta(), sid_, &prg_, grp)) {
     expecting(batch >= 1, "cut-and-choose: batch must be positive");
   }
 
@@ -97,7 +97,7 @@ public:
   CutAndChooseTriples &operator=(const CutAndChooseTriples &) = delete;
 
   // Write n triples into mac[peer] and key[peer], resized to 3n: a at [0, n), b at [n, 2n),
-  // c at [2n, 3n), this party's share in bit 0 of its MACs, as AuthSharePool's aShares.
+  // c at [2n, 3n), this party's share in bit 0 of its MACs, as AShareGen's aShares.
   void take(int64_t n, BlockVec mac[nP + 1], BlockVec key[nP + 1]) override {
     expecting(n >= 0, "cut-and-choose: negative count");
     for (int p = 1; p <= nP; ++p) if (p != party_) {
@@ -134,7 +134,7 @@ private:
   NetIOMP<nP> *io_;
   ThreadPool *pool_;
   int party_;
-  AuthSharePool<nP> &abit_;
+  AShareSource<nP> &abit_;
   block Delta_;
   PRG prg_;
   block sid_;

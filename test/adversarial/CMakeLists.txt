@@ -69,7 +69,7 @@ add_np_variant(agmpc_share_two_world_np4 agmpc_share_consistency.cpp 4 DEFS CONS
 # first correction of the 128-COT bootstrap prefix on the wire. Party 2 must abort in its
 # check of that prefix, before the reverse direction's base OTs are derived from it. Without
 # that check, party 1's own reverse PPRF check fails first and party 2 never checks, so the
-# regex distinguishes the two; SoftSpoken only (IKNP has no such earlier failure).
+# regex distinguishes the two. Only SoftSpokenMint derives a reverse direction from a prefix.
 if(EMP_AG_OT_BACKEND STREQUAL "SoftSpoken")
   add_np_variant(agmpc_cheat_prefix_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_TEST_TAMPER_PREFIX PASS_RE "SoftSpoken subspace VOLE check failed")
   add_np_variant(agmpc_cheat_prefix_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_TAMPER_PREFIX PASS_RE "SoftSpoken subspace VOLE check failed")

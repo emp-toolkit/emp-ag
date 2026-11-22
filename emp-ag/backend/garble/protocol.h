@@ -2,7 +2,7 @@
 #define EMP_AG_BACKEND_GARBLE_PROTOCOL_H__
 #include "emp-ag/backend/common/protocols.h"   // sampleRandom
 #include "emp-ag/backend/garble/garble_config.h"      // GarbleConfig, bind_garble_config
-#include "emp-ag/backend/ashare/auth_share_pool.h"
+#include "emp-ag/backend/ashare/ashare_gen.h"
 #include "emp-ag/backend/triple/triple_pool.h"
 #include "emp-ag/backend/garble/state.h"            // emp::ag::ComputeCtx<nP>
 #include "emp-ag/backend/garble/material.h"         // PreparedInputBinding
@@ -36,7 +36,7 @@ template <int nP, class Cfg = GarbleConfig<>> class AGMPCEngine;
 // Λ_γ = b_γ ⊕ LSB1(m_{γ,Λ_γ}^2), and a check after evaluation certifies it. WRK: every
 // Pi also sends 3 truncated ciphertexts toward P1, from which P1 decodes and checks
 // Λ_γ at the gate. The bit-1 Δ convention
-// is set in ashare/auth_share_pool.h: bit1(Δ_j) = 1 for j ≠ 1 and
+// is set in ashare/ashare_gen.h: bit1(Δ_j) = 1 for j ≠ 1 and
 // bit1(Δ_1) = nP mod 2. Bit 0 is reserved for share-value encoding.
 //
 // API:
@@ -47,7 +47,7 @@ template <int nP, class Cfg = GarbleConfig<>> class AGMPCEngine;
 // Circuit execution is owned by the AGMPCEngine<nP> (backend/garble/engine.h), which
 // consumes emp-tool's canonical BooleanProgram and drives the private step helpers
 // below in protocol order. process_input() and the engine's circuit walks draw
-// aShares/triples on demand from TriplePool and its inner AuthSharePool, which
+// aShares/triples on demand from TriplePool and its inner AShareGen, which
 // mint fresh material per call (neither keeps a pool).
 
 template <int nP, class Cfg = GarbleConfig<>>
@@ -55,9 +55,10 @@ class AGMPCProtocol {
   static_assert(nP >= 2, "AGMPC requires at least 2 parties");
 public:
   // Long-lived setup, constructed once per session and reused across all input,
-  // circuit-run and decode calls: the share pool (COT mesh + Δ + aShares,
-  // ashare/auth_share_pool.h) and the triple pool over it (triple/triple_pool.h).
-  AuthSharePool<nP> *abit = nullptr;
+  // circuit-run and decode calls: the share generator over the session's COT streams
+  // (Cfg::cot; ashare/ashare_gen.h) and the triple pool over it (triple/triple_pool.h).
+  using ashare_t = AShareGen<nP, MintFor<nP, Cfg::cot>>;
+  ashare_t *abit = nullptr;
   TriplePool<nP> *fpre = nullptr;
   NetIOMP<nP> *io;
   ThreadPool *pool;
@@ -111,10 +112,10 @@ public:
     // Parties that disagree on the garbling options then disagree on the id, and setup fails.
     session_id = bind_garble_config<nP, Cfg>(session_id);
     // The share pool first (base OTs and COT setup), then the triple pool over it.
-    abit = new AuthSharePool<nP>(io_, pool_, party_, grp, session_id, base_ot_kind,
+    abit = new ashare_t(io_, pool_, party_, grp, session_id, base_ot_kind,
                                  planned_sender_cots, planned_receiver_cots);
     fpre = new TriplePool<nP>(*abit, io_, pool_, party_, ssp_, grp, session_id);
-    Delta = abit->Delta;
+    Delta = abit->delta();
   }
   ~AGMPCProtocol() {
     delete fpre;
@@ -143,7 +144,7 @@ public:
 
   // Input authentication, batched across any number of input owners.
   // owners[k] owns bits_per_owner[k]. At the owner, that vector must contain the
-  // cleartext bits; non-owners pass same-width dummy bits. Internally one AuthSharePool
+  // cleartext bits; non-owners pass same-width dummy bits. Internally one AShareGen
   // draw covers all owners; then λ_w is opened to each OWNING PARTY (never to the
   // evaluator), which forms Λ_w = λ_w ⊕ x_w and broadcasts it; the combined bundle is
   // sliced back into one SecureWires result per owner.

@@ -1,7 +1,7 @@
 #ifndef EMP_AG_BACKEND_ASHARE_SILENT_FERRET_MINT_H__
 #define EMP_AG_BACKEND_ASHARE_SILENT_FERRET_MINT_H__
 //
-// SilentFerretMint: the share pool's COT streams (the mint interface is in stream_mint.h)
+// SilentFerretMint: the share pool's COT streams (the mint interface is in softspoken_mint.h)
 // as one SilentFerret instance per peer and direction, whose outputs are folded together.
 // A Ferret COT is E + A·S: the cGGM leaves E of a tree plus a public sparse matrix A times
 // the stream's LPN secret S. Every stream of the session uses one public A for its user
@@ -63,9 +63,9 @@ class SilentFerretMint {
 	                 int64_t planned_receiver_cots, const bool delta_bits[128])
 		: io_(io), pool_(pool), party_(party) {
 		expecting(planned_sender_cots == planned_receiver_cots,
-		          "AuthSharePool: with SilentFerret every stream has one plan (sender == receiver)");
+		          "AShareGen: with SilentFerret every stream has one plan (sender == receiver)");
 		expecting(planned_sender_cots >= -1,
-		          "AuthSharePool: planned COT count must be -1 or nonnegative");
+		          "AShareGen: planned COT count must be -1 or nonnegative");
 		// Stream ids, one per ordered pair, derived in one global order so that both ends
 		// of a stream agree.
 		block sid_send[nP + 1], sid_recv[nP + 1];
@@ -78,7 +78,7 @@ class SilentFerretMint {
 				else if (party == hi) { sid_send[lo] = down; sid_recv[lo] = up; }
 			}
 		// Each stream bootstraps from its own public-key base OT, on the same channels as
-		// StreamMint's lane 0.
+		// SoftSpokenMint's lane 0.
 		for (int peer = 1; peer <= nP; ++peer) if (peer != party) {
 			const int s = peer_slot(party, peer);
 			const bool me_smaller = party < peer;
@@ -276,7 +276,7 @@ class SilentFerretMint {
 			bool split = false;
 #ifdef EMP_AG_TEST_SPLIT_CHOICE
 			// TEST-ONLY (never in production): party 2 holds the complement of its bits
-			// toward party 3 (see StreamMint::draw).
+			// toward party 3 (see SoftSpokenMint::draw).
 			split = (party_ == 2 && peer == 3);
 #endif
 			res.push_back(pool_->enqueue([cs, KEYp, din, nfix, dxor]() {
