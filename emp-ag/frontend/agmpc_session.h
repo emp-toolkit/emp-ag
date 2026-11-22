@@ -204,8 +204,8 @@ public:
   // production ag::lanes_for(nP) (lanes ON by default); `lanes == 1` is the
   // single-mesh path (plain NetIOMP); a
   // larger value pins an explicit count. `ssp` = statistical security parameter
-  // in [1,126] (threaded to TriplePool for bucket sizing + the windowed F_eq
-  // check). `session_id` domain-separates the session's coins, commitments and
+  // in [1,126] (threaded to the AND gates' protocol for bucket sizing + the windowed
+  // F_eq check). `session_id` domain-separates the session's coins, commitments and
   // derived OT ids. Left empty (the default), the parties agree on a fresh one
   // here with a two-round commit-then-open coin; a given id is used as is, so
   // related sessions need distinct ids. `base_ot_kind` selects the one
@@ -220,6 +220,10 @@ public:
   // With SilentFerret the two counts are
   // equal and count only the COTs drawn: a plan is the batch every stream prepays
   // at setup, and a stream that runs past it prepays another batch of that size.
+  // `and_prep` builds the protocol that gives the AND gates' products
+  // (triple/and_prep.h: leaky_and_prep(), cut_and_choose_prep(batch), or an
+  // application's own); empty selects the build default (default_and_prep), and every
+  // party must make the same choice.
   // The worker pool is mandatory and needs
   // at least two workers because interactive send/receive progress runs as
   // mutually-dependent tasks. Invalid party/port/security/lane/pool settings
@@ -231,7 +235,8 @@ public:
               std::optional<block> session_id = std::nullopt,
               BaseOtKind base_ot_kind = BaseOtKind::CSW,
               int64_t planned_sender_cots = -1,
-              int64_t planned_receiver_cots = -1)
+              int64_t planned_receiver_cots = -1,
+              const ag::AndPrepFactory<nP>& and_prep = {})
       : L_(checked_owned_lanes_(party, port, pool, ssp, lanes)),
         owned_io_(L_ > 1 ? nullptr
                          : std::make_unique<NetIOMP<nP>>(party, port, ip)),
@@ -240,7 +245,7 @@ public:
         io_view_(L_ > 1 ? &owned_grp_->mesh(0) : owned_io_.get()),
         group_view_(owned_grp_.get()),
         proto_(io_view_, pool, party, ssp, group_view_, session_id,
-               base_ot_kind, planned_sender_cots, planned_receiver_cots),
+               base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep),
         engine_{&proto_} {
     io().flush();
   }
@@ -255,11 +260,12 @@ public:
               std::optional<block> session_id = std::nullopt,
               BaseOtKind base_ot_kind = BaseOtKind::CSW,
               int64_t planned_sender_cots = -1,
-              int64_t planned_receiver_cots = -1)
+              int64_t planned_receiver_cots = -1,
+              const ag::AndPrepFactory<nP>& and_prep = {})
       : L_(checked_borrowed_lanes_(io, pool, party, ssp, grp)),
         io_view_(io), group_view_(grp),
         proto_(io_view_, pool, party, ssp, group_view_, session_id,
-               base_ot_kind, planned_sender_cots, planned_receiver_cots),
+               base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep),
         engine_{&proto_} {}
   AGMPCSession(const AGMPCSession&) = delete;
   AGMPCSession& operator=(const AGMPCSession&) = delete;

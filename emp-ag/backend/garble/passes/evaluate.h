@@ -284,7 +284,7 @@ void AGMPCProtocol<nP, Cfg>::stream_evaluate(ComputeCtx &ctx, Source &source) {
     if ((int)ctx.cgamma_mu.size() < ctx.num_ands) ctx.cgamma_mu.resize(ctx.num_ands);
     if ((int)ctx.Lambda_AND.size() < ctx.num_ands) ctx.Lambda_AND.resize(ctx.num_ands);
   }
-  StreamEvaluatePass<nP, Cfg> pass(ctx, pool, io, Delta, fpre->ssp);
+  StreamEvaluatePass<nP, Cfg> pass(ctx, pool, io, Delta, ssp);
   ag::run_pass(pass, source);
 }
 
@@ -301,7 +301,7 @@ void AGMPCProtocol<nP, Cfg>::receive_prepared_garbling(
   size_eval_chunk<nP, Cfg>(rows, num_ands);
   for (int base = 0; base < num_ands; base += cap)
     recv_garbling_window<nP, Cfg>(io, rows, (size_t)base, std::min(cap, num_ands - base),
-                                laand_window_bits(fpre->ssp));
+                                laand_window_bits(ssp));
 }
 
 // Online P1 source for stored rows.  `cur` starts at the one full-circuit
@@ -315,7 +315,7 @@ void AGMPCProtocol<nP, Cfg>::evaluate_prepared(
     if ((int)ctx.cgamma_mu.size() < ctx.num_ands) ctx.cgamma_mu.resize(ctx.num_ands);
     if ((int)ctx.Lambda_AND.size() < ctx.num_ands) ctx.Lambda_AND.resize(ctx.num_ands);
   }
-  StreamEvaluatePass<nP, Cfg> pass(ctx, pool, io, Delta, fpre->ssp, &rows);
+  StreamEvaluatePass<nP, Cfg> pass(ctx, pool, io, Delta, ssp, &rows);
   ag::run_pass(pass, source);
 }
 

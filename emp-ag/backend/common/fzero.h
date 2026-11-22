@@ -21,7 +21,7 @@ using std::vector;
 // = 0 for every k. Communication: λ bits per pair (vs nP·λ for the
 // straightforward zero-share). Caller is responsible for zero-init —
 // the contributions are XORed in so this composes with caller buffers
-// that already have content (e.g. TriplePool loads z directly into phi).
+// that already have content (e.g. the leaky ANDs load z directly into phi).
 template <int nP>
 void fzero_xor(NetIOMP<nP> *io, PRG *prg, ThreadPool *pool, int party,
                block *out, int n, BlockVec &scratch) {

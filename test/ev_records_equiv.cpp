@@ -40,7 +40,7 @@ static void check() {
     // --- the DrawBeaverPass captures, as draw_and_seed sees them ---
     // acc a-row = in0's (mac,key) per peer slot; b-row = in1's; pre = out's;
     // a_bit/b_bit = own bits (bit0 of mac slot 0).
-    // In-walk capture (before compute_and_shares) + sigma sweep (fold sigma).
+    // In-walk capture (before and_prep->run) + sigma sweep (fold sigma).
     block tg[3 * (nP - 1)];
     block m1 = zero_block, k1 = zero_block;
     block m0 = zero_block, k0 = zero_block;
