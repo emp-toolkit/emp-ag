@@ -7,7 +7,8 @@
 //   - every share, in both directions of every pair: i's MAC under j's key equals j's key
 //     on i's bit ⊕ x^i·Δ_j, where x^i is bit 0 of i's MAC toward its first peer;
 //   - a party's bit is bit 0 of every one of its MACs alike, and bit 0 of every key is 0;
-//   - compute(), draw() (AoS) and draw_soa() each give such shares;
+//   - compute(), draw() (AoS) and draw_soa() each give such shares, and so do
+//     compute_deferred() draws, an empty one among them, folded at one coin;
 //   - cots_per_stream() counts every COT drawn: the length, check2's hiding shares at
 //     nP > 2, and check1's tail on the first call;
 //   - many draws of awkward sizes, enough for a SilentFerret stream to cross a round;
@@ -18,6 +19,7 @@
 // round on the wire when one runs out) and prepaid for the whole test.
 #include "emp-ag/backend/ashare/ashare_gen.h"
 #include "emp-ag/backend/ashare/open_check.h"   // SymmetricOpenCheck
+#include <array>
 #include <cstdio>
 #include <vector>
 using namespace emp;
@@ -33,6 +35,8 @@ static int party;
 // sequence: enough COTs for a ferret_b12 SilentFerret stream (4059 · 4096 user COTs a
 // round) to cross a round.
 static const int kSizes[] = {1, 128, 4095, 4096, 4097, 37200};
+// Draws whose check2 waits for one fold, an empty one among them.
+static const int kDeferredSizes[] = {1000, 0, 777, 4097};
 constexpr int kDrawSize = 5000, kDrawSoaSize = 7000, kSettleSize = 4096;
 constexpr int kLongSize = 500009, kLongDraws = 34;
 
@@ -111,6 +115,7 @@ static int64_t total_cots(int long_draws) {
 	bool first = true;
 	auto add = [&](int n) { total += cots_of(n, first); first = false; };
 	for (int n : kSizes) add(n);
+	for (int n : kDeferredSizes) add(n);
 	add(kDrawSize);
 	add(kDrawSoaSize);
 	for (int r = 0; r < long_draws; ++r) add(kLongSize);
@@ -152,6 +157,31 @@ struct Run {
 			v.key[j] = KEY[j].data();
 		}
 		check_shares(io, all, v, n, stride);
+	}
+	// Several draws with check2 deferred, then one fold of all of them at a coin every
+	// party holds (honest shares pass under any coefficients), then every share checked.
+	void deferred(block coin) {
+		constexpr int kN = (int)(sizeof(kDeferredSizes) / sizeof(kDeferredSizes[0]));
+		std::vector<std::array<BlockVec, nP + 1>> mac(kN), key(kN);   // live until the fold
+		const int64_t c0 = io->count();
+		for (int s = 0; s < kN; ++s) {
+			ap.compute_deferred(mac[(size_t)s].data(), key[(size_t)s].data(), kDeferredSizes[s]);
+			counted_(kDeferredSizes[s]);
+		}
+		ap.fold_check2(coin);
+		moved += io->count() - c0;
+		for (int s = 0; s < kN; ++s) {
+			const int n = kDeferredSizes[s];
+			View v;
+			for (int j = 1; j <= nP; ++j) if (j != party) {
+				expecting(mac[(size_t)s][j].size() == (size_t)n &&
+				              key[(size_t)s][j].size() == (size_t)n,
+				          "ashare_test: compute_deferred() returned the wrong length");
+				v.mac[j] = mac[(size_t)s][j].data();
+				v.key[j] = key[(size_t)s][j].data();
+			}
+			check_shares(io, all, v, n, 1);
+		}
 	}
 	void draw(int n) {   // AoS bundles
 		AShareBundleVec<nP> bundles;
@@ -197,6 +227,7 @@ static void exercise(NetIOMP<nP> *io, ThreadPool *pool, const char *name, block 
 	io->flush();
 	Run<AShareGen<nP, Mint>> run(io, ap);
 	for (int n : kSizes) run.compute(n, 1);
+	run.deferred(sid ^ makeBlock(0xc0, 0x1));
 	run.draw(kDrawSize);
 	run.draw_soa(kDrawSoaSize);
 	for (int r = 0; r < long_draws; ++r) run.compute(kLongSize, 997);

@@ -59,13 +59,20 @@ add_np_variant(agmpc_cheat_xy_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_N
 # SPLIT_CHOICE: party 2 also sends each peer the value its bits toward that peer give, so
 # every tag passes and only the agreement on the views catches it.
 # agmpc_share_consistency.cpp has no AND, so its agreement is the settle before the
-# reveal.
+# reveal; with CONSISTENCY_AND it has one, and SPLIT_FIRST_DRAW splits only the input
+# draw, so the triples stay consistent and the triple call's open check agrees on the
+# views. SPLIT_DELTA (check1): party 2's global key toward party 3 differs from the
+# one toward everyone else; check1, on the session's first draw, must abort.
 add_np_variant(agmpc_cheat_bw_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_BW PASS_RE "cheat aShare")
 add_np_variant(agmpc_cheat_bw_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_BW EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "cheat aShare")
 add_np_variant(agmpc_share_split_choice_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_SPLIT_CHOICE PASS_RE "cheat aShare")
 add_np_variant(agmpc_share_flip_bw_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_FLIP_BW PASS_RE "cheat aShare")
 add_np_variant(agmpc_share_two_world_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_SPLIT_CHOICE EMP_AG_TEST_TWO_WORLD PASS_RE "cheat aShare: parties saw different consistency values")
 add_np_variant(agmpc_share_two_world_np4 agmpc_share_consistency.cpp 4 DEFS CONSISTENCY_NP=4 EMP_AG_TEST_SPLIT_CHOICE EMP_AG_TEST_TWO_WORLD PASS_RE "cheat aShare: parties saw different consistency values")
+add_np_variant(agmpc_share_two_world_and_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 CONSISTENCY_AND EMP_AG_TEST_SPLIT_CHOICE EMP_AG_TEST_SPLIT_FIRST_DRAW EMP_AG_TEST_TWO_WORLD PASS_RE "open check: parties saw different values opened without an echo")
+add_np_variant(agmpc_share_two_world_and_np4 agmpc_share_consistency.cpp 4 DEFS CONSISTENCY_NP=4 CONSISTENCY_AND EMP_AG_TEST_SPLIT_CHOICE EMP_AG_TEST_SPLIT_FIRST_DRAW EMP_AG_TEST_TWO_WORLD PASS_RE "open check: parties saw different values opened without an echo")
+add_np_variant(agmpc_share_split_delta_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_SPLIT_DELTA PASS_RE "cheat check1")
+add_np_variant(agmpc_share_split_delta_np4 agmpc_share_consistency.cpp 4 DEFS CONSISTENCY_NP=4 EMP_AG_TEST_SPLIT_DELTA PASS_RE "cheat check1")
 # TAMPER_PREFIX: party 1, the primary COT receiver toward party 2, flips one bit of the
 # first correction of the 128-COT bootstrap prefix on the wire. Party 2 must abort in its
 # check of that prefix, before the reverse direction's base OTs are derived from it. Without
