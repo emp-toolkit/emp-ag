@@ -9,8 +9,7 @@
 // with whatever the caller opened before them in the same call. Both AND-gate protocols
 // end with it (triple/leaky_and_prep.h, triple/cut_and_choose_triples.h).
 //
-// The triples are aShares in one region per peer, a = [0, L), b = [L, 2L), c = [2L, 3L).
-// The input masks are what the draw walk wrote into inputs(L): the share bits, and the
+// The triples are a row of aShares (triple/triple_row.h). The input masks are what the draw walk wrote into inputs(L): the share bits, and the
 // MACs and keys per peer or the mu's, whichever OpenCheck reads.
 //
 #include "emp-ag/backend/ashare/ashare_gen.h"   // AShareSource
@@ -18,6 +17,7 @@
 #include "emp-ag/backend/common/lane_mesh.h"
 #include "emp-ag/backend/common/runtime.h"      // parallel_for
 #include "emp-ag/backend/triple/and_prep.h"     // AndInputs
+#include "emp-ag/backend/triple/triple_row.h"
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/core/block_vector.h"
 #include <vector>
@@ -57,9 +57,9 @@ public:
     return in;
   }
 
-  // Open x and y for the L gates against the triples whose MACs are `mac`: this party's
-  // shares go to every peer in one flight, lane-split.
-  void open(const BlockVec mac[nP + 1], int L) {
+  // Open x and y for the L gates against the triples `t`: this party's shares go to every
+  // peer in one flight, lane-split.
+  void open(const TripleRow<nP> &t, int L) {
     const int any_peer = (party_ == 1) ? 2 : 1;
     std::vector<unsigned char>(&x)[nP + 1] = x_;
     std::vector<unsigned char>(&y)[nP + 1] = y_;
@@ -69,8 +69,8 @@ public:
     }
     ag::parallel_for(mesh_.pool, L, [&](int lo, int hi) {
       for (int i = lo; i < hi; ++i) {
-        x[party_][i] = (unsigned char)(in_.alpha_bit[i] ^ getLSB(mac[any_peer][i]));
-        y[party_][i] = (unsigned char)(in_.beta_bit[i] ^ getLSB(mac[any_peer][L + i]));
+        x[party_][i] = (unsigned char)(in_.alpha_bit[i] ^ getLSB(t.mac[0][any_peer][i]));
+        y[party_][i] = (unsigned char)(in_.beta_bit[i] ^ getLSB(t.mac[1][any_peer][i]));
       }
     });
 #ifdef EMP_AG_TEST_FLIP_XY
@@ -100,9 +100,8 @@ public:
   // of every share minted since the last one; with the pairwise check that view is
   // settled on its own here.
   template <class CheckEarlier>
-  void finish(OpenCheck &check, AShareSource<nP> &abit, const BlockVec mac[nP + 1],
-              const BlockVec key[nP + 1], int L, int64_t earlier, CheckEarlier &&check_earlier,
-              AShareBundleVec<nP> &out) {
+  void finish(OpenCheck &check, AShareSource<nP> &abit, const TripleRow<nP> &t, int L,
+              int64_t earlier, CheckEarlier &&check_earlier, AShareBundleVec<nP> &out) {
     const int any_peer = (party_ == 1) ? 2 : 1;
     std::vector<unsigned char>(&x)[nP + 1] = x_;
     std::vector<unsigned char>(&y)[nP + 1] = y_;
@@ -136,10 +135,10 @@ public:
         [[maybe_unused]] block sum_a = zero_block, sum_b = zero_block;
         for (int peer = 1; peer <= nP; ++peer) if (peer != party_) {
           const int slot = peer_slot(party_, peer);
-          const block am = mac[peer][i], bm = mac[peer][L + i];
-          const block ak = key[peer][i], bk = key[peer][L + i];
-          sb.mac(slot) = mac[peer][2 * L + i] ^ (bm & mx) ^ (am & my);
-          sb.key(slot) = key[peer][2 * L + i] ^ (bk & mx) ^ (ak & my);
+          const block am = t.mac[0][peer][i], bm = t.mac[1][peer][i];
+          const block ak = t.key[0][peer][i], bk = t.key[1][peer][i];
+          sb.mac(slot) = t.mac[2][peer][i] ^ (bm & mx) ^ (am & my);
+          sb.key(slot) = t.key[2][peer][i] ^ (bk & mx) ^ (ak & my);
           if constexpr (OpenCheck::kPerPeerOperands) {
             lane_x.sent(peer, i, in_.alpha_mac[peer][i] ^ am);
             lane_x.expected(peer, i, in_.alpha_key[peer][i] ^ ak, x[peer][i]);
@@ -154,9 +153,9 @@ public:
           // mu_i(x) = mu_i(λ_α) ^ own_a * Δ_i ^ sum_a, so the residual adds the
           // captured mu_i(λ_α) to the triple's part; y likewise.
           lane_x.put(i, in_.alpha_mu[i] ^ check.residual(
-                                             (unsigned char)getLSB(mac[any_peer][i]) ^ xv, sum_a));
+                                             (unsigned char)getLSB(t.mac[0][any_peer][i]) ^ xv, sum_a));
           lane_y.put(i, in_.beta_mu[i] ^ check.residual(
-                                            (unsigned char)getLSB(mac[any_peer][L + i]) ^ yv, sum_b));
+                                            (unsigned char)getLSB(t.mac[1][any_peer][i]) ^ yv, sum_b));
         }
         if (xv && yv) {
           if (party_ != 1) {

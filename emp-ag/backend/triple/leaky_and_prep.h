@@ -33,6 +33,7 @@
 #include "emp-ag/backend/triple/bucketing.h"    // bucket_size
 #include "emp-ag/backend/triple/laand.h"
 #include "emp-ag/backend/triple/merge.h"
+#include "emp-ag/backend/triple/triple_row.h"
 #include "emp-tool/runtime/crypto/prg.h"
 #include <algorithm>
 #include <climits>
@@ -95,16 +96,16 @@ public:
         sac_mac_[k].resize(nP + 1);
         sac_key_[k].resize(nP + 1);
       }
+    // A row's vectors are final once it is minted: the mint sizes them, and nothing
+    // resizes them before the coin folds their check2.
+    std::vector<TripleRow<nP>> rows((size_t)B);
     if constexpr (nP == 2) {
-      mint_row_(acc_mac_, acc_key_, L);
-      for (int k = 1; k < B; ++k) mint_row_(sac_mac_[k].data(), sac_key_[k].data(), L);
-      laand_.produce_rows_2pc(acc_mac_, acc_key_, sac_mac_, sac_key_, B, L, feq);
+      for (int k = 0; k < B; ++k) rows[(size_t)k] = mint_row_(k, L);
+      laand_.produce_rows_2pc(rows, L, feq);
     } else {
-      mint_row_(acc_mac_, acc_key_, L);
-      laand_.produce_row(acc_mac_, acc_key_, L, feq);
-      for (int k = 1; k < B; ++k) {
-        mint_row_(sac_mac_[k].data(), sac_key_[k].data(), L);
-        laand_.produce_row(sac_mac_[k].data(), sac_key_[k].data(), L, feq);
+      for (int k = 0; k < B; ++k) {
+        rows[(size_t)k] = mint_row_(k, L);
+        laand_.produce_row(rows[(size_t)k], L, feq);
       }
     }
 
@@ -121,7 +122,6 @@ public:
     const Buckets bk = ag::draw_buckets(cprg, B, L);
 
     // 3. Open the differences and merge.
-    TripleRows<nP> rows = rows_(B, L);
     const int D = (int)bk.differences();
     for (int p = 0; p <= nP; ++p)
       if (d_[p].size() < (size_t)D) d_[p].resize((size_t)D);
@@ -172,8 +172,8 @@ public:
 #endif
     // 5. Beaver on the merged triples, in row 0. The differences are checked in the same
     //    open check, as a run before x and y.
-    beaver_.open(acc_mac_, L);
-    beaver_.finish(open_check_, abit_, acc_mac_, acc_key_, L, D,
+    beaver_.open(rows[0], L);
+    beaver_.finish(open_check_, abit_, rows[0], L, D,
                    [&](const typename OpenCheck::Run &run) { check_differences_(run, rows, bk); },
                    out);
 #ifdef AG_PROFILE
@@ -214,9 +214,12 @@ private:
   std::vector<unsigned char> d_[nP + 1];
   FeqSymmetric2PC feq2_{};   // nP == 2: the leaky ANDs' F_eq, between steps 3 and 4
 
-  // Mint one row of 3L fresh shares. Its check2 waits for the call's coin: the row stays
-  // put until then, changed only by the leaky ANDs' public corrections.
-  void mint_row_(BlockVec mac[nP + 1], BlockVec key[nP + 1], int L) {
+  // Mint row k, 3L fresh shares laid out [a | b | r], and return it. Its check2 waits for
+  // the call's coin: the row stays put until then, changed only by the leaky ANDs'
+  // public corrections.
+  TripleRow<nP> mint_row_(int k, int L) {
+    BlockVec *mac = (k == 0) ? acc_mac_ : sac_mac_[k].data();
+    BlockVec *key = (k == 0) ? acc_key_ : sac_key_[k].data();
 #ifdef AG_PROFILE
     uint64_t _tp_c0 = agmpc_now_ns();
 #endif
@@ -224,29 +227,15 @@ private:
 #ifdef AG_PROFILE
     g_ag_tp_cot_ns += agmpc_now_ns() - _tp_c0;
 #endif
-  }
-
-  TripleRows<nP> rows_(int B, int L) {
-    TripleRows<nP> r;
-    r.stride = L;
-    r.mac.resize((size_t)B);
-    r.key.resize((size_t)B);
-    for (int m = 0; m < B; ++m)
-      for (int p = 0; p <= nP; ++p) {
-        BlockVec &vm = (m == 0) ? acc_mac_[p] : sac_mac_[m][p];
-        BlockVec &vk = (m == 0) ? acc_key_[p] : sac_key_[m][p];
-        r.mac[(size_t)m][p] = vm.data();
-        r.key[(size_t)m][p] = vk.data();
-      }
-    return r;
+    return strided_row<nP>(mac, key, 0, L, party_);
   }
 
   // The differences' checks, in `run`: the pairwise check's tags from this party's MACs
   // and keys on the two b's, or the symmetric check's residuals (this party's share XOR
   // the opened bit, against the same MACs and keys). The b's are untouched since the
   // opening.
-  void check_differences_(const typename OpenCheck::Run &run, const TripleRows<nP> &rows,
-                          const Buckets &bk) {
+  void check_differences_(const typename OpenCheck::Run &run,
+                          const std::vector<TripleRow<nP>> &rows, const Buckets &bk) {
     const int L = (int)bk.ell;
     for (int m = 1; m < bk.B; ++m) {
       const size_t off = (size_t)(m - 1) * L;
@@ -256,13 +245,13 @@ private:
           const size_t j = off + (size_t)i;
           if constexpr (OpenCheck::kPerPeerOperands) {
             for (int peer = 1; peer <= nP; ++peer) if (peer != party_) {
-              lane.sent(peer, (int64_t)j, rows.diff_mac(bk, m, i, peer));
-              lane.expected(peer, (int64_t)j, rows.diff_key(bk, m, i, peer), d_[peer][j]);
+              lane.sent(peer, (int64_t)j, merge_diff_mac(rows, bk, m, i, peer));
+              lane.expected(peer, (int64_t)j, merge_diff_key(rows, bk, m, i, peer), d_[peer][j]);
             }
           } else {
             block s = zero_block;
             for (int peer = 1; peer <= nP; ++peer) if (peer != party_)
-              s = s ^ rows.diff_mac(bk, m, i, peer) ^ rows.diff_key(bk, m, i, peer);
+              s = s ^ merge_diff_mac(rows, bk, m, i, peer) ^ merge_diff_key(rows, bk, m, i, peer);
             lane.put((int64_t)j, open_check_.residual(d_[party_][j] ^ d_[0][j], s));
           }
         }

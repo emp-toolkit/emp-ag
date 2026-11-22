@@ -2,8 +2,8 @@
 #define EMP_AG_BACKEND_TRIPLE_LAAND_H__
 //
 // Pi_LaAND: leaky authenticated AND triples by the half-gate technique. A row of L
-// candidates is laid out per peer as a = [0, L), b = [L, 2L), r = [2L, 3L); the leaky AND
-// turns r into c = a AND b in place. The adversary may learn a through selective failure;
+// candidates is three aShare vectors a, b, r per peer (triple/triple_row.h); the leaky
+// AND turns r into c = a AND b in place. The adversary may learn a through selective failure;
 // b enters only the linear phi. Bucketing (triple/merge.h) removes the leakage on a.
 //
 // One check covers every row of a call:
@@ -36,6 +36,7 @@
 #include "emp-ag/backend/common/profiling.h"
 #include "emp-ag/backend/common/protocols.h"   // role_bound_commitment
 #include "emp-ag/backend/common/runtime.h"     // parallel_for, lane_range
+#include "emp-ag/backend/triple/triple_row.h"
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/core/block_vector.h"
 #include "emp-tool/runtime/crypto/f2k.h"       // vector_inn_prdt_sum_no_red
@@ -130,10 +131,10 @@ public:
     alpha_uzero_.clear();
   }
 
-  // Multi-party half-gate leaky AND over one row of L candidates [a | b | r]. On return r
-  // has been folded into c = a AND b in the same scratch region. This row's check material
-  // is accumulated here; finish_check() runs the check over every row.
-  void produce_row(BlockVec tMAC[nP + 1], BlockVec tKEY[nP + 1], int L, FsHash &feq) {
+  // Multi-party half-gate leaky AND over one row of L candidates (a, b, r). On return r
+  // has been folded into c = a AND b in place. This row's check material is accumulated
+  // here; finish_check() runs the check over every row.
+  void produce_row(const TripleRow<nP> &row, int L, FsHash &feq) {
     // Per-row leaky-AND generator, generic in nP; the schedule calls it at nP>=3
     // (nP==2 runs produce_rows_2pc). FZero and the cross-party phi sum blind the
     // half-gate row, and every peer's row folds into tKEYphi[party] (the shared
@@ -174,12 +175,12 @@ public:
       vector<future<void>> res;
       for (int wi = 0; wi < (int)pool->size(); ++wi) {
         int st = wi * width, ed = std::min((wi + 1) * width, L);
-        res.push_back(pool->enqueue([this, st, ed, L, any_peer, &tKEY, &tMAC, &phi]() {
+        res.push_back(pool->enqueue([this, st, ed, any_peer, &row, &phi]() {
           for (int k = st; k < ed; ++k) {
-            phi[k] ^= (select_mask[getLSB(tMAC[any_peer][L + k])] & Delta_);
+            phi[k] ^= (select_mask[getLSB(row.mac[1][any_peer][k])] & Delta_);
             for (int j = 1; j <= nP; ++j) if (j != party_) {
-              phi[k] ^= tKEY[j][L + k];
-              phi[k] ^= tMAC[j][L + k];
+              phi[k] ^= row.key[1][j][k];
+              phi[k] ^= row.mac[1][j][k];
             }
           }
         }));
@@ -213,7 +214,7 @@ public:
       // local FS challenges snapshot every lane transcript before deriving one shared seed.
 
       // Sender half-gate row transfer for AND-index range [lo,hi) under lane `lane`, on ch.
-      auto laand_send = [this, &tKEY, &phi, hg_chunk, gb, gw](NetIOMP<nP> *ch, int peer, block seed, int lo, int hi, int lane) {
+      auto laand_send = [this, &row, &phi, hg_chunk, gb, gw](NetIOMP<nP> *ch, int peer, block seed, int lo, int hi, int lane) {
         MITCCRH<> mitc;
         mitc.setS(seed ^ makeBlock(0, (uint64_t)lane));   // lane in the free low 64 of the key
         block pad[16];
@@ -225,7 +226,7 @@ public:
           for (int k0 = st; k0 < ed; k0 += 8) {
             int batch = std::min(8, ed - k0);
             for (int j = 0; j < 8; ++j) {
-              block kk = (j < batch) ? tKEY[peer][k0 + j] : zero_block;
+              block kk = (j < batch) ? row.key[0][peer][k0 + j] : zero_block;
               pad[2 * j]     = kk;
               pad[2 * j + 1] = kk ^ Delta_;
             }
@@ -255,7 +256,7 @@ public:
       };
 
       // Receiver: recompute tMACphi[peer][k] for k in [lo,hi) from the shipped rows on ch.
-      auto laand_recv = [&tMAC, &tKEY, &tMACphi, any_peer, L, hg_chunk, gb, gw](NetIOMP<nP> *ch, int peer, block seed, int lo, int hi, int lane) {
+      auto laand_recv = [&row, &tMACphi, any_peer, hg_chunk, gb, gw](NetIOMP<nP> *ch, int peer, block seed, int lo, int hi, int lane) {
         MITCCRH<> mitc;
         mitc.setS(seed ^ makeBlock(0, (uint64_t)lane));   // lane in the free low 64 of the key
         block pad[16];
@@ -275,15 +276,15 @@ public:
           for (int k0 = st; k0 < ed; k0 += 8) {
             int batch = std::min(8, ed - k0);
             for (int j = 0; j < 8; ++j) {
-              pad[2 * j]     = (j < batch) ? tMAC[peer][k0 + j] : zero_block;  // -> H(M)
-              pad[2 * j + 1] = (j < batch) ? tKEY[peer][k0 + j] : zero_block;  // -> H(K)
+              pad[2 * j]     = (j < batch) ? row.mac[0][peer][k0 + j] : zero_block;  // -> H(M)
+              pad[2 * j + 1] = (j < batch) ? row.key[0][peer][k0 + j] : zero_block;  // -> H(K)
             }
             mitc.hash_cir<8, 2>(pad);
             for (int j = 0; j < batch; ++j) {
               int k = k0 + j;
               block HM = pad[2 * j], HK = pad[2 * j + 1];
-              block E = HM ^ (wire[k - st] & select_mask[getLSB(tMAC[any_peer][k])]);
-              tMACphi[peer][k] = HK ^ E ^ tKEY[peer][2 * L + k] ^ tMAC[peer][2 * L + k];
+              block E = HM ^ (wire[k - st] & select_mask[getLSB(row.mac[0][any_peer][k])]);
+              tMACphi[peer][k] = HK ^ E ^ row.key[2][peer][k] ^ row.mac[2][peer][k];
             }
           }
         }
@@ -318,12 +319,12 @@ public:
       vector<future<void>> res;
       for (int wi = 0; wi < (int)pool->size(); ++wi) {
         int st = wi * width, ed = std::min((wi + 1) * width, L);
-        res.push_back(pool->enqueue([this, st, ed, L, any_peer, &tKEYphi, &tMACphi, &tMAC, &phi]() {
+        res.push_back(pool->enqueue([this, st, ed, any_peer, &tKEYphi, &tMACphi, &row, &phi]() {
           for (int k = st; k < ed; ++k) {
             block t = zero_block;
             for (int j = 1; j <= nP; ++j) if (j != party_) t = t ^ tMACphi[j][k];
-            t = t ^ (phi[k] & select_mask[getLSB(tMAC[any_peer][k])]);
-            t = t ^ (Delta_ & select_mask[getLSB(tMAC[any_peer][2 * L + k])]);
+            t = t ^ (phi[k] & select_mask[getLSB(row.mac[0][any_peer][k])]);
+            t = t ^ (Delta_ & select_mask[getLSB(row.mac[2][any_peer][k])]);
             tKEYphi[party_][k] = t;
           }
         }));
@@ -372,10 +373,10 @@ public:
           if (party_ == 1) {
             if (s[0][k]) {
               for (int j = 1; j <= nP; ++j) if (j != party_)
-                tMAC[j][2 * L + k] = tMAC[j][2 * L + k] ^ bit0_mask;
+                row.mac[2][j][k] = row.mac[2][j][k] ^ bit0_mask;
             }
           } else {
-            tKEY[1][2 * L + k] = tKEY[1][2 * L + k] ^ (dxor & mask_s);
+            row.key[2][1][k] = row.key[2][1][k] ^ (dxor & mask_s);
           }
           T[k] = T[k] ^ (Delta_ & mask_s);
         }
@@ -419,27 +420,17 @@ public:
 #endif
   }
 
-  // Two-party batched LaAND schedule: every row's COTs are fixed first, one transcript
-  // root domain-separates the B row seeds, all rows cross in one flight, and all
-  // dependent s bits cross in the next. Row 0 is accMAC/accKEY, row k >= 1 is
-  // sac_macs[k]/sac_keys[k].
-  void produce_rows_2pc(
-      BlockVec accMAC[nP + 1], BlockVec accKEY[nP + 1],
-      std::vector<std::vector<BlockVec>> &sac_macs,
-      std::vector<std::vector<BlockVec>> &sac_keys,
-      int B, int L, FsHash &feq) {
+  // Two-party batched LaAND schedule over the B rows: every row's COTs are fixed first,
+  // one transcript root domain-separates the B row seeds, all rows cross in one flight,
+  // and all dependent s bits cross in the next.
+  void produce_rows_2pc(const std::vector<TripleRow<nP>> &rows, int L, FsHash &feq) {
     if constexpr (nP == 2) {
+      const int B = (int)rows.size();
       ThreadPool *pool = mesh_.pool;
       const int peer = (party_ == 1) ? 2 : 1;
       const int gb = ag::laand_window_bytes(ssp_);
       const int gw = ag::laand_window_bits(ssp_);
       const int BL = B * L;
-      auto layer_mac = [&](int k) -> BlockVec * {
-        return k == 0 ? accMAC : sac_macs[k].data();
-      };
-      auto layer_key = [&](int k) -> BlockVec * {
-        return k == 0 ? accKEY : sac_keys[k].data();
-      };
 
       // Once all COT material is fixed, snapshot one transcript root and RO-expand
       // it by the public batch shape and row index.  Each row restarts MITCCRH's
@@ -473,18 +464,17 @@ public:
       // Do not enqueue per-row tasks on one NetIO: their writes could interleave.
       const int hg_chunk = ag::kLaandRowChunkRows;
       int T = std::min(mesh_.lanes, std::max(1, L));
-      vector<future<void>> rows;
+      vector<future<void>> tasks;
       for (int lane = 0; lane < T; ++lane) {
         auto [lo, hi] = ag::lane_range(lane, L, T);
         NetIOMP<nP> *ch = mesh_.mesh(lane);
-        rows.push_back(pool->enqueue([&, ch, lane, lo, hi]() {
+        tasks.push_back(pool->enqueue([&, ch, lane, lo, hi]() {
           const int len = hi - lo;
           std::vector<unsigned char> gbuf((size_t)std::min(hg_chunk, len) * gb);
           std::vector<unsigned char> packed(ag::laand_row_wire_bytes(std::min(hg_chunk, len), gw));
           block pad[16];
           for (int layer = 0; layer < B; ++layer) {
-            BlockVec *mac = layer_mac(layer);
-            BlockVec *key = layer_key(layer);
+            const TripleRow<nP> &r = rows[(size_t)layer];
             MITCCRH<> mitc;
             mitc.setS(layer_seed[layer] ^ makeBlock(0, (uint64_t)lane));
             for (int st = lo; st < hi; st += hg_chunk) {
@@ -492,7 +482,7 @@ public:
               for (int k0 = st; k0 < ed; k0 += 8) {
                 const int batch = std::min(8, ed - k0);
                 for (int j = 0; j < 8; ++j) {
-                  const block kk = (j < batch) ? key[peer][k0 + j] : zero_block;
+                  const block kk = (j < batch) ? r.key[0][peer][k0 + j] : zero_block;
                   pad[2 * j] = kk;
                   pad[2 * j + 1] = kk ^ Delta_;
                 }
@@ -500,8 +490,8 @@ public:
                 for (int j = 0; j < batch; ++j) {
                   const int k = k0 + j;
                   const block phi =
-                      (select_mask[getLSB(mac[peer][L + k])] & Delta_) ^
-                      key[peer][L + k] ^ mac[peer][L + k];
+                      (select_mask[getLSB(r.mac[1][peer][k])] & Delta_) ^
+                      r.key[1][peer][k] ^ r.mac[1][peer][k];
                   const block row = pad[2 * j] ^ pad[2 * j + 1] ^ phi;
                   memcpy(gbuf.data() + (size_t)(k0 + j - st) * gb, &row, gb);
                 }
@@ -512,15 +502,14 @@ public:
           }
           ch->flush(peer);
         }));
-        rows.push_back(pool->enqueue([&, ch, lane, lo, hi]() {
+        tasks.push_back(pool->enqueue([&, ch, lane, lo, hi]() {
           const int len = hi - lo;
           std::vector<unsigned char> gbuf((size_t)std::min(hg_chunk, len) * gb);
           std::vector<unsigned char> packed(ag::laand_row_wire_bytes(std::min(hg_chunk, len), gw));
           BlockVec wire(std::min(hg_chunk, len));
           block pad[16];
           for (int layer = 0; layer < B; ++layer) {
-            BlockVec *mac = layer_mac(layer);
-            BlockVec *key = layer_key(layer);
+            const TripleRow<nP> &r = rows[(size_t)layer];
             MITCCRH<> mitc;
             mitc.setS(layer_seed[layer] ^ makeBlock(0, (uint64_t)lane));
             for (int st = lo; st < hi; st += hg_chunk) {
@@ -535,23 +524,23 @@ public:
               for (int k0 = st; k0 < ed; k0 += 8) {
                 const int batch = std::min(8, ed - k0);
                 for (int j = 0; j < 8; ++j) {
-                  pad[2 * j] = (j < batch) ? mac[peer][k0 + j] : zero_block;
+                  pad[2 * j] = (j < batch) ? r.mac[0][peer][k0 + j] : zero_block;
                   pad[2 * j + 1] =
-                      (j < batch) ? key[peer][k0 + j] : zero_block;
+                      (j < batch) ? r.key[0][peer][k0 + j] : zero_block;
                 }
                 mitc.hash_cir<8, 2>(pad);
                 for (int j = 0; j < batch; ++j) {
                   const int k = k0 + j;
                   const block E =
                       pad[2 * j] ^
-                      (wire[k - st] & select_mask[getLSB(mac[peer][k])]);
-                  block value = pad[2 * j + 1] ^ E ^ key[peer][2 * L + k] ^
-                                mac[peer][2 * L + k];
+                      (wire[k - st] & select_mask[getLSB(r.mac[0][peer][k])]);
+                  block value = pad[2 * j + 1] ^ E ^ r.key[2][peer][k] ^
+                                r.mac[2][peer][k];
                   const block phi =
-                      (select_mask[getLSB(mac[peer][L + k])] & Delta_) ^
-                      key[peer][L + k] ^ mac[peer][L + k];
-                  value ^= phi & select_mask[getLSB(mac[peer][k])];
-                  value ^= Delta_ & select_mask[getLSB(mac[peer][2 * L + k])];
+                      (select_mask[getLSB(r.mac[1][peer][k])] & Delta_) ^
+                      r.key[1][peer][k] ^ r.mac[1][peer][k];
+                  value ^= phi & select_mask[getLSB(r.mac[0][peer][k])];
+                  value ^= Delta_ & select_mask[getLSB(r.mac[2][peer][k])];
 #ifdef EMP_AG_TEST_FLIP_LAAND
                   // Deterministically corrupt ONE late-row receiver value.
                   // Flipping a shipped row is masked away when its random selector
@@ -578,7 +567,7 @@ public:
           }
         }));
       }
-      joinNclean(rows);
+      joinNclean(tasks);
 #ifdef AG_PROFILE
       g_ag_phi_bytes += (uint64_t)(mesh_.io->count() - _phi0);
       g_ag_tp_hg_ns += agmpc_now_ns() - _tp_hg0;
@@ -603,8 +592,7 @@ public:
       unsigned char delta_bytes[sizeof(block)];
       memcpy(delta_bytes, &Delta_, sizeof(block));
       for (int layer = 0; layer < B; ++layer) {
-        BlockVec *mac = layer_mac(layer);
-        BlockVec *key = layer_key(layer);
+        const TripleRow<nP> &r = rows[(size_t)layer];
         unsigned char *window =
             window_.data() + (size_t)layer * L * gb;
         ag::parallel_for(pool, L, [&](int lo, int hi) {
@@ -613,9 +601,9 @@ public:
             const unsigned char opened = s[1][flat] ^ s[2][flat];
             if (opened) {
               if (party_ == 1)
-                mac[peer][2 * L + k] ^= bit0_mask;
+                r.mac[2][peer][k] ^= bit0_mask;
               else
-                key[1][2 * L + k] ^= dxor;
+                r.key[2][1][k] ^= dxor;
               for (int j = 0; j < gb; ++j)
                 window[(size_t)k * gb + j] ^= delta_bytes[j];
             }
