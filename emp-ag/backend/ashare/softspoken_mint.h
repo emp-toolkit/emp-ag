@@ -129,6 +129,11 @@ class SoftSpokenMint {
 				// so its shares disagree across peers while every MAC stays valid. The
 				// share-consistency check must abort.
 				split = (party == 2 && peer == 3);
+#ifdef EMP_AG_TEST_SPLIT_FIRST_DRAW
+				// TEST-ONLY: only the session's first draw is split (the input masks), so
+				// the triples stay consistent and only that draw's check2 views disagree.
+				split = split && test_draws_ == 0;
+#endif
 #endif
 				res.push_back(pool->enqueue([otS, chS, KEYp, n, din, nfix, dxor]() {
 					otS->next_n(KEYp, n);
@@ -149,6 +154,9 @@ class SoftSpokenMint {
 			}
 		joinNclean(res);
 		cots_minted_since_check = true;
+#if defined(EMP_AG_TEST_SPLIT_CHOICE) && defined(EMP_AG_TEST_SPLIT_FIRST_DRAW)
+		++test_draws_;
+#endif
 	}
 
 	// Flush the deferred COT consistency check before a reveal; no-op when
@@ -183,6 +191,9 @@ class SoftSpokenMint {
 	block Delta_;   // Δ_me, as the sender streams hold it
 	// Fix exchange scratch (grow-only): the corrections sent to and received from each peer.
 	std::vector<uint8_t> fix_out_[nP + 1], fix_in_[nP + 1];
+#if defined(EMP_AG_TEST_SPLIT_CHOICE) && defined(EMP_AG_TEST_SPLIT_FIRST_DRAW)
+	int test_draws_ = 0;   // TEST-ONLY: draws so far
+#endif
 	bool cot_sessions_open = false;
 	bool cots_minted_since_check = false;
 
@@ -315,7 +326,8 @@ class SoftSpokenMint {
 					abit1[peer] = make_cot_extension_(
 						ALICE, ch_send, make_base_ot(base_ot_kind, ch_send));
 					abit1[peer]->set_sid(primary_sid[(size_t)peer]);
-					abit1[peer]->set_delta(delta_me);
+					bool split_delta[128];
+					abit1[peer]->set_delta(test_split_delta(delta_me, party, peer, split_delta));
 					if (planned_sender_cots >= 0) abit1[peer]->begin(planned_sender_cots);
 					else                          abit1[peer]->begin();
 					ch_send->flush();
@@ -396,7 +408,8 @@ class SoftSpokenMint {
 						ALICE, ch_send,
 						std::make_unique<BufferOT>(ch_send, std::move(c), std::move(mc)));
 					abit1[peer]->set_sid(reverse_sid[(size_t)peer]);
-					abit1[peer]->set_delta(delta_me);
+					bool split_delta[128];
+					abit1[peer]->set_delta(test_split_delta(delta_me, party, peer, split_delta));
 					if (planned_sender_cots >= 0) abit1[peer]->begin(planned_sender_cots);
 					else                          abit1[peer]->begin();
 					ch_send->flush();

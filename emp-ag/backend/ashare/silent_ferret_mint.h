@@ -95,7 +95,8 @@ class SilentFerretMint {
 				ALICE, ch_send, /*malicious=*/true, emp::tuning::ferret_b12,
 				make_base_ot(base_ot_kind, ch_send), EMP_AG_FERRET_THREADS);
 			st_[2 * s + 1]->set_sid(sid_send[peer]);
-			st_[2 * s + 1]->set_delta(delta_bits);
+			bool split_delta[128];
+			st_[2 * s + 1]->set_delta(test_split_delta(delta_bits, party, peer, split_delta));
 		}
 		chunk_ = st_[0]->chunk_size();
 		const int64_t plan = (planned_sender_cots < 0) ? -1 : planned_sender_cots + chunk_;
@@ -165,6 +166,9 @@ class SilentFerretMint {
 			}
 		}
 		if (nfix > 0) fix_(MAC, KEY, nfix, xme, dxor);
+#if defined(EMP_AG_TEST_SPLIT_CHOICE) && defined(EMP_AG_TEST_SPLIT_FIRST_DRAW)
+		++test_draws_;
+#endif
 	}
 
  private:
@@ -185,6 +189,9 @@ class SilentFerretMint {
 	BlockVec tail_[K];                               // the last tree, folded
 	int64_t tail_off_ = 0, tail_n_ = 0;              // its unused part
 	std::vector<uint8_t> fix_out_[nP + 1], fix_in_[nP + 1];
+#if defined(EMP_AG_TEST_SPLIT_CHOICE) && defined(EMP_AG_TEST_SPLIT_FIRST_DRAW)
+	int test_draws_ = 0;   // TEST-ONLY: draws so far
+#endif
 
 	// Every stream, in the canonical order: peer-major, sender then receiver.
 	template <typename F>
@@ -278,6 +285,9 @@ class SilentFerretMint {
 			// TEST-ONLY (never in production): party 2 holds the complement of its bits
 			// toward party 3 (see SoftSpokenMint::draw).
 			split = (party_ == 2 && peer == 3);
+#ifdef EMP_AG_TEST_SPLIT_FIRST_DRAW
+			split = split && test_draws_ == 0;   // the first draw only (see SoftSpokenMint::draw)
+#endif
 #endif
 			res.push_back(pool_->enqueue([cs, KEYp, din, nfix, dxor]() {
 				cs->recv_bool(din, nfix);

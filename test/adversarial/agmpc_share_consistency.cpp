@@ -1,6 +1,6 @@
-// Adversarial: the aShare consistency check (check2) at nP >= 3, on a circuit with no AND.
+// Adversarial: the aShare consistency checks (check1, check2) at nP >= 3.
 //
-// Built with ONE of the production-guarded hooks in backend/ashare/ashare_gen.h:
+// Built with the test-only hooks in backend/ashare/ (ashare_gen.h and the mints):
 //   EMP_AG_TEST_SPLIT_CHOICE -- party 2 holds different bits toward party 3 than toward
 //     everyone else, so its shares disagree across peers while every MAC stays valid.
 //     Party 3's check of party 2's tag aborts at the input draw.
@@ -10,15 +10,22 @@
 //     toward that peer give, and opens each input mask to its owner with the bit it holds
 //     toward that owner. Every tag and every MAC check passes, so without the agreement on
 //     the views two honest parties would reveal different outputs.
-// The circuit is PURE-LINEAR (c = a ^ b), so no triple is generated and no open check runs:
-// the consistency views are still pending at the reveal, where settle_check2() must agree on
-// them, so every honest party aborts with "cheat aShare" there or at the tag check. No fault
-// here touches anything the other checks see (the COTs are valid, the input Lambda echo
-// agrees, and there is no AND for the c_gamma MACCheck), so reaching the end of main()
-// means it went undetected.
+//   EMP_AG_TEST_SPLIT_DELTA -- party 2's global key toward party 3 differs from the one
+//     toward everyone else; check1 on the first draw aborts ("cheat check1").
+// With CONSISTENCY_AND the circuit has one AND, so the triple call's open check agrees on
+// the views; EMP_AG_TEST_SPLIT_FIRST_DRAW then splits only the input draw, which keeps the
+// triples consistent, and that agreement aborts ("open check: parties saw different
+// values opened without an echo").
+// Otherwise the circuit is PURE-LINEAR (c = a ^ b), so no triple is generated and no open
+// check runs: the consistency views are still pending at the reveal, where settle_check2()
+// must agree on them, so every honest party aborts with "cheat aShare" there or at the tag
+// check. No fault here touches anything the other checks see (the COTs are valid, the
+// input Lambda echo agrees, and there is no AND for the c_gamma MACCheck), so reaching the
+// end of main() means it went undetected.
 //
-// expecting() prints and exits nonzero, so this is ctest-gated with
-// PASS_REGULAR_EXPRESSION "cheat aShare": it PASSES iff the abort fires.
+// expecting() prints and exits nonzero, so each variant is ctest-gated with the
+// PASS_REGULAR_EXPRESSION of its abort (test/adversarial/CMakeLists.txt): it PASSES iff
+// that abort fires.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
 using namespace std;
@@ -35,8 +42,12 @@ int main(int argc, char **argv) {
   using U32 = UInt_T<typename AGMPCSession<nP>::ctx_t, 32>;
   auto a = sess.input<U32>(1, party == 1 ? 0xa5c3f00du : 0);
   auto b = sess.input<U32>(2, party == 2 ? 0x1234abcdu : 0);
+#ifdef CONSISTENCY_AND
+  auto c = a & b;   // one call of the triple pool, whose open check agrees on the views
+#else
   auto c = a ^ b;   // pure-linear: no triples, no open check
-  (void)sess.reveal(c, PUBLIC);   // aborts here (settle_check2 before the reveal)
+#endif
+  (void)sess.reveal(c, PUBLIC);   // aborts by here (settle_check2 before the reveal)
   cout << "agmpc_share_consistency[np=" << nP << ",party=" << party
        << "]: BAD! inconsistent shares NOT detected" << endl;
   return 1;
