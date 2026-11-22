@@ -216,7 +216,8 @@ void AGMPCProtocol<nP, Cfg>::draw_and_seed(ComputeCtx &ctx, Source &source) {
   }
   // The half-gate hash seed: one domain-separated squeeze of the coin of the AND gates'
   // protocol, so no round of its own. Garbler and evaluator derive it from the same
-  // coin, so their per-gate keys agree. Meaningful only when there are ANDs: with none,
+  // coin, so their per-gate keys agree. The coin may be predictable (and_prep.h); the
+  // seed needs only to be fresh per chunk, since MITCCRH's keys are public. Meaningful only when there are ANDs: with none,
   // the protocol is not run and nothing is hashed.
   if (num_ands > 0)
     ctx.halfgate_seed = fs_coin("AGMPC halfgate seed", coin, zero_block);

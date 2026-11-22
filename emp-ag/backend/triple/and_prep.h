@@ -24,10 +24,19 @@
 //      the last call is folded at a coin drawn after those shares, and every value it
 //      opened is checked against its MACs. These shares include the walk's output masks,
 //      which are drawn with their check2 deferred. After run() the garbling settles any
-//      check2 view still unagreed (AShareGen::settle_check2), and aborts if a draw was
+//      check2 view still unagreed (AShareSource::settle_check2), and aborts if a draw was
 //      never folded.
+//      A protocol may instead agree on that view itself, inside an agreement it runs
+//      anyway, to save the round: it takes the view (AShareSource::take_pending_check2)
+//      and must then put it into an agreement that aborts unless every party holds the
+//      same view, before run() returns. Taking the view clears it, so the garbling no
+//      longer sees it: a view taken and never agreed on goes unchecked, and nothing
+//      aborts.
 //   5. The returned coin is held by every party, drawn in this call after everything its
-//      checks depend on is fixed, and fresh per call.
+//      checks depend on is fixed, and fresh per call. It may be predictable: a party
+//      may know or steer it (the cut-and-choose protocol's is Fiat-Shamir at nP == 2).
+//      The session uses it only to key the chunk's half-gate hash, whose keys are public
+//      anyway and must only be fresh per chunk.
 //   6. It sizes its own buckets or batches, under its own bound. Every coin such a bound
 //      rests on (rotations, a cut, a sacrifice's pairing) is commit-then-open, drawn after
 //      what it checks is fixed. A hash of the transcript will not do: the last party to
