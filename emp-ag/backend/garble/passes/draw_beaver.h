@@ -203,7 +203,8 @@ void AGMPCProtocol<nP, Cfg>::draw_and_seed(ComputeCtx &ctx, Source &source) {
   // AND-output slot straight from it.
   {
     const block *pre_mac[nP + 1] = {nullptr}, *pre_key[nP + 1] = {nullptr};
-    if (num_ands > 0) abit->draw_soa(num_ands, pre_mac, pre_key);
+    // Their check2 waits for the triple call's coin (compute_and_shares, below).
+    if (num_ands > 0) abit->draw_soa(num_ands, pre_mac, pre_key, /*defer_check2=*/true);
     DrawBeaverPass<nP> pass(ctx, pre_mac, pre_key, party, capture);
     pass.Delta_ = Delta;   // for the mu_i captures and P1's records
     // P1: capture the eval records inside the walk itself (the bundles are
