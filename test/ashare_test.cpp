@@ -16,6 +16,7 @@
 // SoftSpokenMint runs once; SilentFerretMint twice, unplanned (its streams prepay the next
 // round on the wire when one runs out) and prepaid for the whole test.
 #include "emp-ag/backend/ashare/ashare_gen.h"
+#include "emp-ag/backend/ashare/open_check.h"   // SymmetricOpenCheck
 #include <cstdio>
 #include <vector>
 using namespace emp;
