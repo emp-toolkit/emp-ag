@@ -57,7 +57,7 @@ public:
   // in party-index order.
   template <typename T>
   void all_bcast(const T *my_v, int len, T *view[nP + 1]) {
-    memcpy(view[party], my_v, sizeof(T) * len);
+    if (view[party] != my_v) memcpy(view[party], my_v, sizeof(T) * len);   // a caller may pass its own slot
     int bytes = (int)(sizeof(T) * len);
     vector<future<void>> res;
     for (int i = 1; i <= nP; ++i) for (int j = 1; j <= nP; ++j)
@@ -92,7 +92,7 @@ public:
   void all_bcast_agree(const T *my_v, int len, T *view[nP + 1], const char *fail_msg) {
     char d_me[FsHash::DIGEST_SIZE];
     h.digest(d_me);   // and resets
-    memcpy(view[party], my_v, sizeof(T) * len);
+    if (view[party] != my_v) memcpy(view[party], my_v, sizeof(T) * len);   // a caller may pass its own slot
     const int bytes = (int)(sizeof(T) * len);
     char d_recv[nP + 1][FsHash::DIGEST_SIZE];
     vector<future<void>> res;

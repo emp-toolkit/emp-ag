@@ -38,11 +38,9 @@
 //   with probability about 2^-128. Residuals are folded as the caller computes them
 //   after seal(), so nothing is stored per value; one gfmul per opened bit per party
 //   at any nP. Rounds: the coin (none at nP == 2, two above) and check_result()'s
-//   commit-then-open zero test (two). absorb() adds shares of zero that other checks
-//   computed (the aShare consistency check's residuals) to the same zero test, with a
-//   digest of the values those checks opened without an echo; the parties must agree
-//   on it, and its comparison rides with the commitments. agree() adds such a digest
-//   alone.
+//   commit-then-open zero test (two). agree() adds to that zero test a digest of values
+//   another check opened without an echo (the aShare consistency check's hash values);
+//   the parties must agree on it, and its comparison rides with the commitments.
 //
 // Both checkers verify, per receiver, that the bit a party sent it matches that party's
 // MAC toward it. That the bits a party sent different receivers agree comes from the
@@ -71,8 +69,8 @@ class PairwiseOpenCheck {
 public:
   // Needs each opened value's MAC and key per peer, not just its SPDZ collapse.
   static constexpr bool kPerPeerOperands = true;
-  // No zero test to share: other shares of zero are settled separately.
-  static constexpr bool kAbsorbsZeroShares = false;
+  // No zero test to carry other checks' views: their callers agree on them separately.
+  static constexpr bool kAgreesViews = false;
 
   // fail_msg is the abort message of a tag mismatch.
   PairwiseOpenCheck(NetIOMP<nP> *io, ThreadPool *pool, int party, block Delta,
@@ -206,16 +204,16 @@ class SymmetricOpenCheck {
 public:
   // Needs only each opened value's SPDZ collapse mu_i, not its MACs per peer.
   static constexpr bool kPerPeerOperands = false;
-  // Its zero test can cover other shares of zero (absorb()).
-  static constexpr bool kAbsorbsZeroShares = true;
+  // Its zero test can carry other checks' views (agree()).
+  static constexpr bool kAgreesViews = true;
 
   // `purpose` separates this check's coin and commitments from every other use;
   // fail_msg, commit_fail_msg and agree_fail_msg are the abort messages of its zero
-  // test (a nonzero sum, a commitment mismatch, disagreeing absorbed views).
+  // test (a nonzero sum, a commitment mismatch, disagreeing views).
   SymmetricOpenCheck(NetIOMP<nP> *io, ThreadPool *pool, int party, block Delta,
                      block session_id, PRG *prg, NetIOMPGroup<nP> *grp,
                      const char *purpose = "emp-ag:open-check",
-                     const char *fail_msg = "open check: opened values or absorbed shares do not match their MACs",
+                     const char *fail_msg = "open check: opened values do not match their MACs",
                      const char *commit_fail_msg = "open check: commit-open mismatch",
                      const char *agree_fail_msg = "open check: parties saw different values opened without an echo")
       : io_(io), pool_(pool), party_(party), Delta_(Delta), session_id_(session_id),
@@ -243,39 +241,10 @@ public:
     sealed_ = true;
   }
 
-  // Add shares of zero computed elsewhere, one block per party each, to this check's
-  // zero test: the c-th share absorbed since the last check_result() gets coefficient
-  // AES_K(2^64 - 1, c), a counter no run reaches. Each share's error must be fixed
-  // before the coin, so call this after seal() (with nothing begun, absorb() draws the
-  // coin itself) and before check_result(). The coefficients are what make one test
-  // cover several shares: in a plain XOR, a share whose error was chosen after another's
-  // coefficients were known could cancel it. `view` (optional, FsHash::DIGEST_SIZE
-  // bytes) digests values the shares' check opened without an echo; check_result()
-  // aborts unless every party absorbed the same views.
-  void absorb(const std::vector<block> &zero_shares, const char *view = nullptr) {
-    if (zero_shares.empty()) return;
-    if (!sealed_) {
-      pending_ = true;
-      seal();
-    }
-    block lo = zero_block, hi = zero_block;
-    for (size_t c = 0; c < zero_shares.size(); ++c) {
-      block g = makeBlock(~0ULL, absorbed_++), l, h;
-      AES_ecb_encrypt_blks(&g, 1, &key_);
-      mul128(g, zero_shares[c], &l, &h);
-      lo = lo ^ l;
-      hi = hi ^ h;
-    }
-    std::lock_guard<std::mutex> lock(mu_);
-    lo_ = lo_ ^ lo;
-    hi_ = hi_ ^ hi;
-    if (view != nullptr) {
-      views_.put(view, FsHash::DIGEST_SIZE);
-      has_views_ = true;
-    }
-  }
-
-  // Add a view, as absorb() does, with no share of zero of its own.
+  // Add `view` (FsHash::DIGEST_SIZE bytes) to this check's zero test: a digest of values
+  // another check opened without an echo. check_result() aborts unless every party
+  // added the same views. Call it after the values behind the view are fixed, and
+  // before check_result(); with nothing begun, it draws the coin itself.
   void agree(const char *view) {
     if (!sealed_) {
       pending_ = true;
@@ -365,11 +334,10 @@ public:
     const block m = reduce(lo_, hi_);
     lo_ = hi_ = zero_block;
     pending_ = sealed_ = false;
-    char agree[FsHash::DIGEST_SIZE];   // the absorbed views, which every party must share
+    char agree[FsHash::DIGEST_SIZE];   // the views added, which every party must share
     const bool has_views = has_views_;
     if (has_views) views_.digest(agree);   // and resets
     has_views_ = false;
-    absorbed_ = 0;
     if constexpr (nP == 2) {
       // XOR_i m_i = 0 <=> m_1 == m_2: the symmetric F_eq on H(m_i), with the views.
       char dme[FsHash::DIGEST_SIZE];
@@ -406,8 +374,7 @@ private:
   bool pending_ = false;   // something recorded since the last check_result()
   bool sealed_ = false;    // the coin for the pending runs is drawn
   block lo_ = zero_block, hi_ = zero_block;   // folded residuals, unreduced
-  uint64_t absorbed_ = 0;  // shares absorbed since the last check_result()
-  FsHash views_;           // their views' digests, in absorb order
+  FsHash views_;           // the views added since the last check_result(), in order
   bool has_views_ = false;
   std::mutex mu_;
 };

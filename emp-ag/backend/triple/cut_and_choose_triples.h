@@ -152,7 +152,7 @@ private:
                                block sid, PRG *prg, NetIOMPGroup<nP> *grp) {
     if constexpr (std::is_same_v<OpenCheck, SymmetricOpenCheck<nP>>)
       return OpenCheck(io, pool, party, Delta, sid, prg, grp, "emp-ag:cut-and-choose",
-                       "cut-and-choose: opened values or absorbed shares do not match their MACs",
+                       "cut-and-choose: opened values do not match their MACs",
                        "cut-and-choose: commit-open mismatch",
                        "cut-and-choose: parties saw different values opened without an echo");
     else
@@ -515,7 +515,7 @@ private:
     const auto run_open = check_.begin(n_open);
     const auto run_res = check_.begin(n_res);
     check_.seal();
-    if constexpr (OpenCheck::kAbsorbsZeroShares) {
+    if constexpr (OpenCheck::kAgreesViews) {
       const auto pending = abit_.take_pending_check2();
       if (pending.any) check_.agree(pending.view);
       if constexpr (nP > 2) check_.agree(zr_view);
@@ -567,7 +567,7 @@ private:
       check_.merge(lane);
     });
     check_.check_result();
-    if constexpr (!OpenCheck::kAbsorbsZeroShares) abit_.settle_check2();
+    if constexpr (!OpenCheck::kAgreesViews) abit_.settle_check2();
     // The public checks, on values the open check has now authenticated (so which check
     // fails says nothing about the shares behind a forged opening).
     expecting(res_sums_ok, "cut-and-choose: a sacrificed pair does not match");

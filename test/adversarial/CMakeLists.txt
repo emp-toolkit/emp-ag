@@ -51,20 +51,21 @@ add_np_variant(agmpc_cheat_d_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_N
 add_np_variant(agmpc_cheat_xy_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_TEST_FLIP_XY EMP_AG_OPEN_CHECK_SYMMETRIC PASS_RE "open check")
 add_np_variant(agmpc_cheat_d_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_D EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "open check")
 add_np_variant(agmpc_cheat_xy_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_XY EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "open check")
-# aShare consistency (check2, nP>=3): its residuals and views are tested by the next zero
-# test -- the symmetric open check's, or one of their own after the pairwise check and
-# before a reveal. FLIP_BW: party 2 sends party 3 a different consistency value, caught by
-# the agreement on the views. SPLIT_CHOICE: party 2's bits differ between peers, every
-# MAC valid, caught by the residuals. TWO_WORLD + SPLIT_CHOICE: party 2 also sends
-# each peer the value its bits toward that peer give, so every residual cancels and only
-# the agreement on the views catches it. agmpc_share_consistency.cpp has no AND, so only
-# the settle before the reveal can catch any of these.
+# aShare consistency (check2, nP>=3): every verifier checks each party's tag on its hash
+# value at the fold, and the parties agree on the hash values later -- in the symmetric
+# open check's zero test, or on their own after the pairwise check and before a reveal.
+# FLIP_BW: party 2 sends party 3 a different hash value; SPLIT_CHOICE: party 2's bits
+# differ between peers, every MAC valid; both fail party 3's tag check. TWO_WORLD +
+# SPLIT_CHOICE: party 2 also sends each peer the value its bits toward that peer give, so
+# every tag passes and only the agreement on the views catches it.
+# agmpc_share_consistency.cpp has no AND, so its agreement is the settle before the
+# reveal.
 add_np_variant(agmpc_cheat_bw_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_BW PASS_RE "cheat aShare")
 add_np_variant(agmpc_cheat_bw_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_BW EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "cheat aShare")
 add_np_variant(agmpc_share_split_choice_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_SPLIT_CHOICE PASS_RE "cheat aShare")
 add_np_variant(agmpc_share_flip_bw_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_FLIP_BW PASS_RE "cheat aShare")
-add_np_variant(agmpc_share_two_world_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_SPLIT_CHOICE EMP_AG_TEST_TWO_WORLD PASS_RE "cheat aShare")
-add_np_variant(agmpc_share_two_world_np4 agmpc_share_consistency.cpp 4 DEFS CONSISTENCY_NP=4 EMP_AG_TEST_SPLIT_CHOICE EMP_AG_TEST_TWO_WORLD PASS_RE "cheat aShare")
+add_np_variant(agmpc_share_two_world_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_SPLIT_CHOICE EMP_AG_TEST_TWO_WORLD PASS_RE "cheat aShare: parties saw different consistency values")
+add_np_variant(agmpc_share_two_world_np4 agmpc_share_consistency.cpp 4 DEFS CONSISTENCY_NP=4 EMP_AG_TEST_SPLIT_CHOICE EMP_AG_TEST_TWO_WORLD PASS_RE "cheat aShare: parties saw different consistency values")
 # TAMPER_PREFIX: party 1, the primary COT receiver toward party 2, flips one bit of the
 # first correction of the 128-COT bootstrap prefix on the wire. Party 2 must abort in its
 # check of that prefix, before the reverse direction's base OTs are derived from it. Without

@@ -1332,7 +1332,7 @@ public:
     const typename OpenCheck::Run run_x = open_check_.begin(L);
     const typename OpenCheck::Run run_y = open_check_.begin(L);
     open_check_.seal();
-    if constexpr (OpenCheck::kAbsorbsZeroShares) {
+    if constexpr (OpenCheck::kAgreesViews) {
       const auto pending = abit.take_pending_check2();
       if (pending.any) open_check_.agree(pending.view);
     }
@@ -1391,7 +1391,7 @@ public:
     });
     // Settle every open of this call -- the d-vector and x, y -- before σ is returned.
     open_check_.check_result();
-    if constexpr (!OpenCheck::kAbsorbsZeroShares) abit.settle_check2();
+    if constexpr (!OpenCheck::kAgreesViews) abit.settle_check2();
 #ifdef AG_PROFILE
     g_ag_tp_open_ns += agmpc_now_ns() - _tp_o0;
     if (party == 1) {
