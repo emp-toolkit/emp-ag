@@ -43,6 +43,9 @@ class AShareSource {
 	virtual ~AShareSource() = default;
 	virtual block delta() const = 0;
 	virtual void compute(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) = 0;
+	// compute(), with check2 left to the next fold_check2() (see AShareGen).
+	virtual void compute_deferred(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) = 0;
+	virtual void fold_check2(block coin) = 0;
 	virtual void maybe_flush_cot_check() = 0;
 	virtual PendingCheck2 take_pending_check2() = 0;
 	virtual void settle_check2() = 0;
@@ -119,6 +122,15 @@ class AShareGen final : public AShareSource<nP> {
 	// running digest of those calls' views (every party's bw as this party received it).
 	std::vector<block> pending_check2_;
 	FsHash pending_check2_view_;
+	// Draws whose check2 waits for fold_check2(): their outputs where compute_deferred()
+	// left them, and their own copy of their hiding shares.
+	struct Deferred {
+		const block *mac[nP + 1] = {}, *key[nP + 1] = {};
+		std::vector<block> pad_mac[nP + 1], pad_key[nP + 1];
+		int64_t n = 0;
+	};
+	std::vector<Deferred> deferred_;
+	bool scratch_deferred_ = false;   // a deferred draw_soa() reads the draw scratch
 	BlockVec draw_mac_[nP + 1], draw_key_[nP + 1];   // reused draw() scratch
 	// x^me for the current call's Fix exchange (nP>2; grow-only).
 	std::vector<uint8_t> fix_x_;
@@ -226,6 +238,8 @@ class AShareGen final : public AShareSource<nP> {
 	// Test check2's pending residuals on their own: a coin, then one commit-open zero
 	// test. No-op when nothing is pending. Call before garbling with, or revealing
 	// anything computed from, shares whose residuals no other zero test took.
+	// Deferred draws are not covered: their residuals join the pending ones only at
+	// fold_check2().
 	void settle_check2() override {
 		if (pending_check2_.empty()) return;
 		SymmetricOpenCheck<nP> settle(io, pool, party, Delta, session_id, &prg, grp,
@@ -256,7 +270,15 @@ class AShareGen final : public AShareSource<nP> {
 		// shares after [0, length); they are never used again.
 		if constexpr (nP > 2) {
 			block seed = sampleRandom<nP>(io, &prg, pool, party, session_id);
-			check2(seed, MAC, KEY, length);
+			Check2Segment g;
+			for (int i = 1; i <= nP; ++i) if (i != party) {
+				g.mac[i] = MAC[i].data();
+				g.key[i] = KEY[i].data();
+				g.pad_mac[i] = MAC[i].data() + length;
+				g.pad_key[i] = KEY[i].data() + length;
+			}
+			g.n = length;
+			check2(seed, &g, 1);
 			for (int i = 1; i <= nP; ++i) if (i != party) {
 				MAC[i].resize(length);
 				KEY[i].resize(length);
@@ -270,6 +292,57 @@ class AShareGen final : public AShareSource<nP> {
 #warning "EMP_AG_DEBUG_CHECKS transmits Delta in the clear (check_MAC) -- DO NOT enable in production"
 		check_MAC(io, MAC, KEY, Delta, length, party);
 #endif
+	}
+
+	// compute(), but with check2 left to the next fold_check2(): no coin and nothing sent
+	// for it now; this draw's hiding shares are kept, and its outputs are read where
+	// compute() leaves them. The caller keeps those arrays, changing them only by
+	// corrections that every party applies alike from public values (a leaky AND's opened
+	// d, a cut-and-choose candidate's opened z ^ r), until the fold. At nP = 2 there is no
+	// check2, and this is compute().
+	void compute_deferred(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) override {
+		if constexpr (nP == 2) {
+			compute(MAC, KEY, length);
+		} else {
+			expecting((int64_t)length + kCheck2Pad <= INT_MAX, "auth_share: padded length overflow");
+			process_phase1(MAC, KEY, length + kCheck2Pad);
+			Deferred d;
+			d.n = length;
+			for (int i = 1; i <= nP; ++i) if (i != party) {
+				d.pad_mac[i].assign(MAC[i].begin() + length, MAC[i].begin() + length + kCheck2Pad);
+				d.pad_key[i].assign(KEY[i].begin() + length, KEY[i].begin() + length + kCheck2Pad);
+				MAC[i].resize(length);
+				KEY[i].resize(length);
+				d.mac[i] = MAC[i].data();
+				d.key[i] = KEY[i].data();
+			}
+			deferred_.push_back(std::move(d));
+#ifdef EMP_AG_DEBUG_CHECKS
+			check_MAC(io, MAC, KEY, Delta, length, party);
+#endif
+		}
+	}
+
+	// check2 of every draw since the last fold, under coefficients from `coin`, which every
+	// party drew after the last of those draws: one fold, one value to every peer, and the
+	// residual joins the pending ones. No-op with nothing deferred (and at nP = 2).
+	void fold_check2(block coin) override {
+		if (deferred_.empty()) return;
+		const block seed = RO("emp-ag:ashare-check2", coin).squeeze_block();
+		std::vector<Check2Segment> segs(deferred_.size());
+		for (size_t s = 0; s < deferred_.size(); ++s) {
+			Deferred &d = deferred_[s];
+			for (int i = 1; i <= nP; ++i) if (i != party) {
+				segs[s].mac[i] = d.mac[i];
+				segs[s].key[i] = d.key[i];
+				segs[s].pad_mac[i] = d.pad_mac[i].data();
+				segs[s].pad_key[i] = d.pad_key[i].data();
+			}
+			segs[s].n = d.n;
+		}
+		check2(seed, segs.data(), (int)segs.size());
+		deferred_.clear();
+		scratch_deferred_ = false;
 	}
 
  private:
@@ -360,7 +433,9 @@ class AShareGen final : public AShareSource<nP> {
 	// report the same view digest. With one bw per party, the coalition's bits must
 	// fold to the same value toward every honest party: on the outputs except with
 	// probability 2^-128 over the coefficients, drawn after the shares; on the hiding
-	// shares always, as a sum of distinct X^k is not zero.
+	// shares of one draw always, as a sum of distinct X^k is not zero. Draws checked
+	// together reuse X^0..X^127, so their hiding bits can cancel one another; that
+	// costs nothing, as hiding shares are never used.
 	//
 	// r is not tested here: it joins pending_check2_, and one later commit-open zero
 	// test covers every pending residual and view -- the triple pool's open check
@@ -372,38 +447,53 @@ class AShareGen final : public AShareSource<nP> {
 		return (k < 64) ? makeBlock(0, 1ULL << k) : makeBlock(1ULL << (k - 64), 0);
 	}
 
-	void check2(block seed, BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) {
-		const int n = length + kCheck2Pad;   // outputs + hiding shares
+	// One draw's shares for check2: outputs at mac[j][0, n) and key[j][0, n), and its
+	// kCheck2Pad hiding shares at pad_mac[j] and pad_key[j].
+	struct Check2Segment {
+		const block *mac[nP + 1] = {}, *key[nP + 1] = {};
+		const block *pad_mac[nP + 1] = {}, *pad_key[nP + 1] = {};
+		int64_t n = 0;
+	};
+	// check2 over one or more draws. The outputs of all of them take coefficients from
+	// PRG(`seed`) in draw order, so one draw gets PRG position k for its output k; the
+	// hiding shares of every draw take X^0..X^127 (a sum of distinct X^k is still never
+	// zero within one draw, and several draws' hiding bits only add to the pad on bw).
+	void check2(block seed, const Check2Segment *segs, int nsegs) {
 		const int any_peer = (party == 1) ? 2 : 1;
-		// One pass over the shares, width-split across the pool. The coefficients are
+		std::vector<int64_t> start((size_t)nsegs + 1, 0);   // each draw's first position
+		for (int s = 0; s < nsegs; ++s) start[(size_t)s + 1] = start[(size_t)s] + segs[s].n;
+		const int64_t total = start[(size_t)nsegs];
+		// One pass over the outputs, width-split across the pool. The coefficients are
 		// streamed in batches that stay in cache; PRG position k is coefficient k
 		// whichever worker produces it.
 		PRG prg2(&seed);
 		const int W = std::max(1, (int)pool->size());
-		const int width = (n + W - 1) / W;
-		const int nr = (n + width - 1) / width;
-		std::vector<block> part_lo((size_t)nr), part_hi((size_t)nr), part_bw((size_t)nr);
+		const int64_t width = std::max<int64_t>(1, (total + W - 1) / W);
+		const int nr = (int)((total + width - 1) / width);
+		std::vector<block> part_lo((size_t)nr + 1), part_hi((size_t)nr + 1), part_bw((size_t)nr + 1);
 		vector<future<void>> fold_res;
 		for (int r = 0; r < nr; ++r) {
-			const int lo = r * width, hi = std::min(lo + width, n);
-			fold_res.push_back(pool->enqueue([this, &prg2, &MAC, &KEY, &part_lo, &part_hi, &part_bw,
-			                                  r, lo, hi, length, any_peer]() {
+			const int64_t lo = r * width, hi = std::min(lo + width, total);
+			fold_res.push_back(pool->enqueue([this, &prg2, segs, &start, &part_lo, &part_hi,
+			                                  &part_bw, r, lo, hi, any_peer]() {
 				block s_lo = zero_block, s_hi = zero_block, b = zero_block;
 				PRG p = prg2.fork_at((uint64_t)lo);
 				alignas(16) block cb[64];
-				for (int base = lo; base < hi; base += 64) {
-					const int m = std::min(64, hi - base);
-					const int pm = std::max(0, std::min(base + m, length) - base);
-					if (pm > 0) p.random_block(cb, pm);
-					for (int t = pm; t < m; ++t) cb[t] = gadget_power_(base + t - length);
+				int s = (int)(std::upper_bound(start.begin(), start.end(), lo) - start.begin()) - 1;
+				for (int64_t base = lo; base < hi; base += 64) {
+					const int m = (int)std::min<int64_t>(64, hi - base);
+					p.random_block(cb, m);
 					for (int t = 0; t < m; ++t) {
-						const int k = base + t;
+						const int64_t pos = base + t;
+						while (pos >= start[(size_t)s + 1]) ++s;
+						const Check2Segment &g = segs[s];
+						const int64_t k = pos - start[(size_t)s];
 						block x = zero_block, l, h;
-						for (int i = 1; i <= nP; ++i) if (i != party) x = x ^ MAC[i][k] ^ KEY[i][k];
+						for (int i = 1; i <= nP; ++i) if (i != party) x = x ^ g.mac[i][k] ^ g.key[i][k];
 						mul128(cb[t], x, &l, &h);
 						s_lo = s_lo ^ l;
 						s_hi = s_hi ^ h;
-						b = b ^ (cb[t] & select_mask[getLSB(MAC[any_peer][k])]);
+						b = b ^ (cb[t] & select_mask[getLSB(g.mac[any_peer][k])]);
 					}
 				}
 				part_lo[(size_t)r] = s_lo;
@@ -411,9 +501,26 @@ class AShareGen final : public AShareSource<nP> {
 				part_bw[(size_t)r] = b;
 			}));
 		}
+		{   // the hiding shares, small: here while the pool folds the outputs
+			block s_lo = zero_block, s_hi = zero_block, b = zero_block;
+			for (int s = 0; s < nsegs; ++s)
+				for (int k = 0; k < kCheck2Pad; ++k) {
+					const block c = gadget_power_(k);
+					block x = zero_block, l, h;
+					for (int i = 1; i <= nP; ++i) if (i != party)
+						x = x ^ segs[s].pad_mac[i][k] ^ segs[s].pad_key[i][k];
+					mul128(c, x, &l, &h);
+					s_lo = s_lo ^ l;
+					s_hi = s_hi ^ h;
+					b = b ^ (c & select_mask[getLSB(segs[s].pad_mac[any_peer][k])]);
+				}
+			part_lo[(size_t)nr] = s_lo;
+			part_hi[(size_t)nr] = s_hi;
+			part_bw[(size_t)nr] = b;
+		}
 		joinNclean(fold_res);
 		block s_lo = zero_block, s_hi = zero_block, bw = zero_block;
-		for (int r = 0; r < nr; ++r) {
+		for (int r = 0; r <= nr; ++r) {
 			s_lo = s_lo ^ part_lo[(size_t)r];
 			s_hi = s_hi ^ part_hi[(size_t)r];
 			bw = bw ^ part_bw[(size_t)r];
@@ -435,13 +542,19 @@ class AShareGen final : public AShareSource<nP> {
 		if (party == 2) {
 			PRG q(&seed);
 			for (int peer = 1; peer <= nP; ++peer) out_to[peer] = zero_block;
-			for (int k = 0; k < n; ++k) {
-				block c;
-				if (k < length) q.random_block(&c, 1);
-				else c = gadget_power_(k - length);
-				for (int peer = 1; peer <= nP; ++peer) if (peer != party)
-					out_to[peer] = out_to[peer] ^ (c & select_mask[getLSB(MAC[peer][k])]);
-			}
+			for (int s = 0; s < nsegs; ++s)
+				for (int64_t k = 0; k < segs[s].n; ++k) {
+					block c;
+					q.random_block(&c, 1);
+					for (int peer = 1; peer <= nP; ++peer) if (peer != party)
+						out_to[peer] = out_to[peer] ^ (c & select_mask[getLSB(segs[s].mac[peer][k])]);
+				}
+			for (int s = 0; s < nsegs; ++s)
+				for (int k = 0; k < kCheck2Pad; ++k) {
+					const block c = gadget_power_(k);
+					for (int peer = 1; peer <= nP; ++peer) if (peer != party)
+						out_to[peer] = out_to[peer] ^ (c & select_mask[getLSB(segs[s].pad_mac[peer][k])]);
+				}
 		}
 #endif
 		block bw_recv[nP + 1];
@@ -562,6 +675,7 @@ class AShareGen final : public AShareSource<nP> {
 	// the full end-to-end check. Prefer one large draw to many small ones — the
 	// per-call fixed cost amortizes.
 	void draw(int n, AShareBundleVec<nP> &out_bundle) {
+		expecting(!scratch_deferred_, "AShareGen: draw() before the deferred draw_soa() was folded");
 		BlockVec(&tmac)[nP + 1] = draw_mac_;
 		BlockVec(&tkey)[nP + 1] = draw_key_;
 		compute(tmac, tkey, n);
@@ -582,8 +696,17 @@ class AShareGen final : public AShareSource<nP> {
 	// walk seeds its wire slots straight from these. Pointers stay valid until the
 	// next draw()/draw_soa() call (both use the grow-only draw_mac_/draw_key_
 	// scratch). draw() serves the small AoS consumers (input authentication).
-	void draw_soa(int n, const block *mac_out[nP + 1], const block *key_out[nP + 1]) {
-		compute(draw_mac_, draw_key_, n);
+	// defer_check2 leaves this draw's check2 to the next fold_check2() (compute_deferred);
+	// no other draw may use the scratch before that fold.
+	void draw_soa(int n, const block *mac_out[nP + 1], const block *key_out[nP + 1],
+	              bool defer_check2 = false) {
+		expecting(!scratch_deferred_, "AShareGen: draw_soa() before the deferred one was folded");
+		if (defer_check2) {
+			compute_deferred(draw_mac_, draw_key_, n);
+			scratch_deferred_ = (nP > 2);
+		} else {
+			compute(draw_mac_, draw_key_, n);
+		}
 		for (int j = 1; j <= nP; ++j) {
 			mac_out[j] = draw_mac_[j].data();
 			key_out[j] = draw_key_[j].data();

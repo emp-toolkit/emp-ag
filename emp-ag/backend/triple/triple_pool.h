@@ -878,7 +878,9 @@ public:
 #ifdef AG_PROFILE
     uint64_t _tp_c0 = agmpc_now_ns();
 #endif
-    abit.compute(layerMAC, layerKEY, 3 * L);
+    // check2 of every layer waits for this call's coin (draw_coins): the layers stay put
+    // until then, changed only by the leaky ANDs' public d corrections.
+    abit.compute_deferred(layerMAC, layerKEY, 3 * L);
 #ifdef AG_PROFILE
     g_ag_tp_cot_ns += agmpc_now_ns() - _tp_c0;
 #endif
@@ -961,8 +963,10 @@ public:
       else c = sampleRandom<nP>(tp->io, &tp->prg, tp->pool, tp->party,
                                 tp->session_id);
       // Every party holds the SAME coin here; callers derive per-call randomness from it
-      // (call_coin_), with no new round.
+      // (call_coin_), with no new round. It also folds check2 of this call's draws (the
+      // draw walk's masks and every layer), drawn before it and not yet bucketed.
       tp->call_coin_ = c;
+      tp->abit.fold_check2(c);
       return c;
     }
 
@@ -1272,6 +1276,9 @@ public:
       else
         c = sampleRandom<nP>(io, &prg, pool, party, session_id);
       call_coin_ = c;
+      // check2 of the draw walk's masks, drawn before this coin; a no-op when the source
+      // folded them at a coin of its own.
+      abit.fold_check2(c);
     } else {
       generate_independent_triples(L, B);
     }

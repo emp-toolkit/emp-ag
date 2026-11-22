@@ -364,9 +364,10 @@ private:
     const int any_peer = (party_ == 1) ? 2 : 1;
 
     // 1. The candidates: a at [0, pop), b at [pop, 2 pop), r at [2 pop, 3 pop). The COT
-    //    check completes before anything is hashed or opened.
+    //    check completes before anything is hashed or opened. Their check2 waits for the
+    //    coin of step 4; until then they change only by step 3's public corrections.
     BlockVec mac[nP + 1], key[nP + 1];
-    abit_.compute(mac, key, (int)(3 * pop));
+    abit_.compute_deferred(mac, key, (int)(3 * pop));
     abit_.maybe_flush_cot_check();
     std::vector<uint8_t> bit((size_t)(3 * pop));
     parallel_for(pool_, (int)(3 * pop), [&](int lo, int hi) {
@@ -410,10 +411,13 @@ private:
       }
     });
 
-    // 4. One coin: the cut, then the sacrifice shifts, then the combine shifts.
+    // 4. One coin: check2 of every draw before it (these candidates, and the masks of a
+    //    draw walk waiting for its triples), then the cut, then the sacrifice shifts, then
+    //    the combine shifts. check2 folds before the cut moves any candidate.
     const block coin = sampleRandom<nP>(
         io_, &prg_, pool_, party_,
         RO("emp-ag:cut-and-choose:coin", sid_).absorb((uint64_t)batches_).squeeze_block());
+    abit_.fold_check2(coin);
     PRG cp(&coin);
     const std::vector<int64_t> subset = uniform_subset_(cp, pop, P.cut);
     std::vector<int64_t> s((size_t)T, 0), rot((size_t)B, 0);
