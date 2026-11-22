@@ -77,8 +77,8 @@ std::vector<SecureWires<nP>> AGMPCProtocol<nP, Cfg>::process_inputs(
       x_of[off + i] = (unsigned char)bits_per_owner[k][i];
   }
 
-  // OpenTo(<λ_w>, owner) for EVERY owning party in ONE all-to-all round; each owner then
-  // sets Λ_w = λ_w ⊕ x_w for its own wires. open_to_targets sends target t only t's wires, so a
+  // Open <λ_w> to its owner, for EVERY owning party in ONE all-to-all round; each owner
+  // then sets Λ_w = λ_w ⊕ x_w for its own wires. open_to_targets sends target t only t's wires, so a
   // party learns λ only for wires it owns (input privacy).
   {
     std::vector<unsigned char> lam = open_to_targets(sw.wire_bundle.data(), wires_of);
@@ -411,9 +411,9 @@ std::vector<bool> AGMPCProtocol<nP, Cfg>::decode(const SecureWires<nP> &wires,
   // Reveal via a MAC-checked open of the wire masks. Every reconstructing party
   // verifies each peer's lambda-share against its OWN (c_gamma-authenticated) keys and forms
   // y_w = Λ_w ⊕ ⊕_p λ_w^p locally -- not trusting P1 to reconstruct and broadcast raw bits. Also
-  // serves reactive host branching (every party learns the same value). PUBLIC (OpenToAll) opens
-  // every wire to EVERY party in ONE all-to-all round (open_to_targets), not nP sequential
-  // OpenTo(i); a directed reveal opens only to `recipient`.
+  // serves reactive host branching (every party learns the same value). PUBLIC opens every
+  // wire to EVERY party in ONE all-to-all round (open_to_targets), not nP sequential
+  // openings to one party each; a directed reveal opens only to `recipient`.
   std::vector<int> all(n);
   for (int i = 0; i < n; ++i) all[i] = i;
   std::vector<std::vector<int>> targets(nP + 1);
