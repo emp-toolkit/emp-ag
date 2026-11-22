@@ -380,7 +380,7 @@ root (`<emp-ag/...>`):
     open checks (`open_check.h`: pairwise and symmetric).
   - **`triple/`** — the products of the AND gates' masks, over the share pool:
     the interface (`and_prep.h`), the leaky ANDs (`laand.h`), bucketing
-    (`merge.h`, with the leaky ANDs' bound in `bucketing.h`), Beaver
+    (`merge.h`, with its bound in `bucketing.h`), Beaver
     (`beaver.h`), and the two protocols, `leaky_and_prep.h` and the
     cut-and-choose bank (`cut_and_choose_triples.h`, `cut_and_choose_bound.h`).
   - **`garble/`** — authenticated garbling: the options (`garble_config.h`),
