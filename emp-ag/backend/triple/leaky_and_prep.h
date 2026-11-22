@@ -20,9 +20,10 @@
 //   1. mint every row's fresh shares in one draw, and run the leaky ANDs on the rows:
 //      every row's half-gate rows in one flight, and every s-bit in the next
 //      (triple/laand.h);
-//   2. draw the post-commitment coin (Fiat-Shamir at nP == 2, commit-then-open at nP > 2):
-//      it folds the consistency check of every share drawn since the last call, gives the
-//      rotations, continues as the nP >= 3 leaky-AND challenge, and is the call's coin;
+//   2. draw the post-commitment coin, commit-then-open at every nP (at nP == 2 its
+//      commitments ride the rows and its openings the s-bits): it folds the consistency
+//      check of every share drawn since the last call, gives the rotations, continues as
+//      the nP >= 3 leaky-AND challenge, and is the call's coin;
 //   3. open every bucket difference in one all-to-all flight (the B-1 sequential
 //      OpenToAll calls of Pi_Prep, batched; at nP == 2 the F_eq commitment rides along),
 //      and merge;
@@ -48,6 +49,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -103,18 +105,28 @@ public:
     g_ag_tp_acheck_ns = g_ag_tp_bkt_ns = g_ag_tp_open_ns = 0;
 #endif
 
-    // 1. B rows of L leaky triples, every share but row 0's b fresh, from one draw.
+    // 1. B rows of L leaky triples, every share but row 0's b fresh, from one draw. At
+    //    nP == 2 the bucket coin's commitments ride the half-gate rows and its openings
+    //    the s-bits.
     FsHash feq;   // nP == 2: the F_eq transcript over every row's windows
     laand_.begin_call();
     const std::vector<TripleRow<nP>> rows = mint_rows_(B, L);
-    laand_.produce_rows(rows, L, feq);
+    [[maybe_unused]] BucketSeeds seeds;
+    typename LeakyAnd<nP>::Carry carry;
+    if constexpr (nP == 2) carry = commit_bucket_seed_(seeds);
+    laand_.produce_rows(rows, L, feq, carry);
 
     // 2. The post-commitment coin, after every row is fixed: every party holds it here.
     //    It folds check2 of this call's draws (the walk's masks and every row), drawn
-    //    before it and not yet bucketed, and seeds the rotations.
+    //    before it and not yet bucketed, and seeds the rotations. It is commit-then-open
+    //    at every nP, never a hash of the transcript: the rotations must be unpredictable
+    //    when the rows fix the leaky triples, and a party's later messages must not move
+    //    them. Its s-bits carry its selective-failure guesses, so with a transcript hash
+    //    a party could try every guess vector offline and send the one whose rotations
+    //    fill a bucket with its leaky triples.
     block coin;
     if constexpr (nP == 2)
-      coin = fs_coin_pair_group<nP>(mesh_.io, mesh_.grp, any_peer, "AGMPC bucket", sid_);
+      coin = open_bucket_seeds_(seeds);
     else
       coin = sampleRandom<nP>(mesh_.io, &prg_, mesh_.pool, party_, sid_);
     abit_.fold_check2(coin);
@@ -214,6 +226,47 @@ private:
   // The differences as each party sent them (d_[p]), and opened (d_[0]).
   std::vector<unsigned char> d_[nP + 1];
   FeqSymmetric2PC feq2_{};   // nP == 2: the leaky ANDs' F_eq, between steps 3 and 4
+
+  // nP == 2: this party's seed of the call's bucket coin and its commitment, and the
+  // peer's as received.
+  struct BucketSeeds {
+    block mine = zero_block, peer = zero_block;
+    char com_mine[FsHash::DIGEST_SIZE] = {}, com_peer[FsHash::DIGEST_SIZE] = {};
+  };
+
+  // nP == 2: draw a fresh seed, commit to it (role-bound, so a commitment cannot be
+  // reflected), and give the commitment to the rows flight and the seed to the s-bits.
+  typename LeakyAnd<nP>::Carry commit_bucket_seed_(BucketSeeds &sd) {
+    prg_.random_block(&sd.mine, 1);
+    role_bound_commitment(sd.com_mine, sid_, "emp-ag:bucket-seed", party_, &sd.mine,
+                          sizeof(block));
+#ifdef EMP_AG_TEST_FLIP_BUCKET_SEED
+    // TEST-ONLY (never in production): a malicious party 2 opens a seed other than the one
+    // it committed to. The opening check must abort.
+    if (party_ == 2) sd.mine = sd.mine ^ makeBlock(0, 1);
+#endif
+    typename LeakyAnd<nP>::Carry c;
+    c.rows_out = sd.com_mine;
+    c.rows_in = sd.com_peer;
+    c.rows_len = FsHash::DIGEST_SIZE;
+    c.s_out = &sd.mine;
+    c.s_in = &sd.peer;
+    c.s_len = sizeof(block);
+    return c;
+  }
+
+  // nP == 2: check the peer's seed against its commitment, then the coin from both seeds
+  // in party order.
+  block open_bucket_seeds_(const BucketSeeds &sd) {
+    const int peer = (party_ == 1) ? 2 : 1;
+    char expect[FsHash::DIGEST_SIZE];
+    role_bound_commitment(expect, sid_, "emp-ag:bucket-seed", peer, &sd.peer, sizeof(block));
+    expecting(memcmp(expect, sd.com_peer, FsHash::DIGEST_SIZE) == 0,
+              "leaky ANDs: the peer's bucket seed does not open its commitment");
+    const block s1 = (party_ == 1) ? sd.mine : sd.peer;
+    const block s2 = (party_ == 1) ? sd.peer : sd.mine;
+    return RO("emp-ag:bucket-coin", sid_).absorb(s1).absorb(s2).squeeze_block();
+  }
 
   // Mint every row's fresh shares in one draw of (3B - 1) L and return the B rows: row 0
   // as [a | r] with the walk's lambda_beta as its b, then every other row as [a | b | r].

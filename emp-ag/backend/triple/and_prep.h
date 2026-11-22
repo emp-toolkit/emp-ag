@@ -28,7 +28,11 @@
 //      never folded.
 //   5. The returned coin is held by every party, drawn in this call after everything its
 //      checks depend on is fixed, and fresh per call.
-//   6. It sizes its own buckets or batches, under its own bound.
+//   6. It sizes its own buckets or batches, under its own bound. Every coin such a bound
+//      rests on (rotations, a cut, a sacrifice's pairing) is commit-then-open, drawn after
+//      what it checks is fixed. A hash of the transcript will not do: the last party to
+//      speak before it can try its own free choices offline and send the one whose coin
+//      it likes.
 // Every party runs the same protocol with the same parameters, and calls it at the same
 // points with the same n.
 //
