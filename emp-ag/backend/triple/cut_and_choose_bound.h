@@ -29,11 +29,13 @@
 // sacrifice bucket was tampered, so there are at most as many leaky heads as tampered
 // candidates, and the batch passes with probability at most 2^-(leaky heads). With c_m
 // leaky heads in combine group m, a union bound over group 0's gives
-// prod_m c_m 2^-c_m / ell^(B-1) <= 2^-B ell^(1-B) that some output has only leaky members.
+// prod_m c_m 2^-c_m / ell^(B-1) <= 2^-B ell^(1-B) that some output has only leaky members:
+// the bucketing's bound (triple/bucketing.h), which the leaky ANDs use too.
 //
 // A session spends its 2^-ssp over its batches: batch i (from 1) is held to
 // 2^-ssp / (i (i + 1)), and these sum to 2^-ssp.
 //
+#include "emp-ag/backend/triple/bucketing.h"   // bucket_log2_leakage
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -87,7 +89,7 @@ inline CutAndChooseParams cut_and_choose_params(int64_t ell, double target) {
   const int max_size = (int)target + 2;
   for (int B = 2; B <= max_size; ++B) {
     if (best.pop > 0 && 2 * (int64_t)B * ell > best.pop) break;   // pop >= 2t >= 2 B ell
-    const double leak = -(double)B - (double)(B - 1) * log2_ell;
+    const double leak = bucket_log2_leakage(B, log2_ell);
     if (leak >= -target) continue;
     int64_t t = (int64_t)B * ell;
     while (!cut_and_choose_is_prime(t)) ++t;

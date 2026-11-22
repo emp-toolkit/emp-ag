@@ -8,7 +8,8 @@
 // differences b_0 ^ b_m, row-major: value (m - 1) ell + j is b_0[j] ^ b_m[member(m, j)].
 // With d those opened bits, bucket j's triple is
 //   a = XOR_m a_m,   b = b_0,   c = c_0 ^ XOR_{m >= 1} (c_m ^ d * a_m),
-// since a b_0 = XOR_m a_m (b_m ^ d). The bound on B is the caller's (triple/bucketing.h).
+// since a b_0 = XOR_m a_m (b_m ^ d). Both callers size B under one bound, 2^-B ell^(1-B)
+// (triple/bucketing.h).
 // Each caller opens the differences with its other openings and checks them against
 // their MACs in its own open check.
 //
