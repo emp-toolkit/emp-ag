@@ -122,11 +122,11 @@ checked before use. This sends fewer bytes per triple when COTs are cheap
 (`Ferret`) and batches are large, at the cost of more computation and of memory
 proportional to the batch. Any other protocol for the AND gates can be passed the
 same way (`backend/triple/and_prep.h` states what it must guarantee). Every party
-must make the same choice; a session binds any choice but the default into its
-session id, so a mismatch fails setup.
+must make the same choice; a session binds every protocol but the leaky ANDs into
+its session id, so a mismatch fails setup.
 
 The garbling options are compile-time: `AGMPCSession<nP, ag::GarbleConfig<A, D, C>>`
-(`backend/garble_config.h`). Every party must use the same options; a session binds
+(`backend/garble/garble_config.h`). Every party must use the same options; a session binds
 any non-default choice into its session id, so a mismatch fails setup.
 `-DEMP_AG_GARBLE_AUTH=WRK`, `-DEMP_AG_GARBLE_DELIVERY=DIRECT` and
 `-DEMP_AG_OT_BACKEND=SilentFerret` change the default for a whole build.
@@ -321,9 +321,8 @@ loaded `BooleanProgram` (an AES/SHA builtin) runs via
 The same passes run at every party count; the algebra is special-cased only
 where it genuinely collapses at two parties: one garbler means no cross-garbler
 `S` terms and no aggregation ring (party 1 receives garbler 2's rows directly);
-triple generation routes through a streamlined 2-party leaky-AND; and the
-output check's zero-test uses the 2-party `F_eq` instead of the multiparty
-commit-open. There is no separate 2pc backend: two-party callers use
+the leaky ANDs need no `F_Zero` and check with the 2-party `F_eq`; and the output
+check's zero-test uses the 2-party `F_eq` instead of the multiparty commit-open. There is no separate 2pc backend: two-party callers use
 `AGMPCSession<2>`, where party 1 evaluates and party 2 garbles, the same
 convention as every larger instance.
 
@@ -382,8 +381,8 @@ root (`<emp-ag/...>`):
     with `buffer_ot.h` for the base OTs), checked openings (`open.h`), and the
     open checks (`open_check.h`: pairwise and symmetric).
   - **`triple/`** — the products of the AND gates' masks, over the share pool:
-    the interface (`and_prep.h`), the leaky ANDs (`laand.h`), bucketing
-    (`merge.h`, with its bound in `bucketing.h`), Beaver
+    the interface (`and_prep.h`), the leaky ANDs (`laand.h`), a row of triples
+    (`triple_row.h`), bucketing (`merge.h`, with its bound in `bucketing.h`), Beaver
     (`beaver.h`), and the two protocols, `leaky_and_prep.h` and the
     cut-and-choose bank (`cut_and_choose_triples.h`, `cut_and_choose_bound.h`).
   - **`garble/`** — authenticated garbling: the options (`garble_config.h`),

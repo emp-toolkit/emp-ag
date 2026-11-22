@@ -56,8 +56,6 @@ namespace emp::ag {
 template <int nP, class OpenCheck = DefaultOpenCheck<nP>>
 class LeakyAndPrep : public AndPrep<nP> {
 public:
-  using open_check_t = OpenCheck;
-
   explicit LeakyAndPrep(const AndPrepContext<nP> &ctx)
       : mesh_(ctx.io, ctx.grp, ctx.pool, ctx.party), party_(ctx.party),
         ssp_(ag::checked_statistical_security(ctx.ssp)), sid_(ctx.session_id),

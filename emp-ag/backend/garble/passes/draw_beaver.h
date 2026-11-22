@@ -190,9 +190,9 @@ void AGMPCProtocol<nP, Cfg>::draw_and_seed(ComputeCtx &ctx, Source &source) {
   }
   // P1 record sweep: fold sigma (born in and_prep->run, so not fusable into
   // the walk above) into the C and s0 records — sigma's mac(i-2) completes each
-  // tgamma row, its spdz collapse completes s0. After this nothing at P1 reads ctx.sigma or the WIRE fabric
-  // until the output decode (which reads the DrawBeaverPass-seeded
-  // output slots, pinned live by liveness).
+  // tgamma row, its spdz collapse completes s0. After this nothing at P1 reads
+  // ctx.sigma or the WIRE fabric until the output decode (which reads the
+  // DrawBeaverPass-seeded output slots, pinned live by liveness).
   if (party == 1 && num_ands > 0) {
     block *tg = ctx.ev_tg.data();
     block *mu = ctx.ev_mu.data();

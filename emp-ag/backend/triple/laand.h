@@ -3,8 +3,9 @@
 //
 // Pi_LaAND: leaky authenticated AND triples by the half-gate technique. A row of L
 // candidates is three aShare vectors a, b, r per peer (triple/triple_row.h); the leaky
-// AND turns r into c = a AND b in place. The adversary may learn a through selective failure;
-// b enters only the linear phi. Bucketing (triple/merge.h) removes the leakage on a.
+// AND turns r into c = a AND b in place. The adversary may learn a through selective
+// failure; b enters only the linear phi. Bucketing (triple/merge.h) removes the leakage
+// on a.
 //
 // One check covers every row of a call:
 //   nP == 2  a symmetric F_EQ over every row's transmitted bit window. feq_commit() gives
@@ -21,10 +22,11 @@
 //     them into local (z^i, u^i), once per call for every row. Each seed contributes to
 //     exactly two parties, so Sigma_p z^p_k = 0 and Sigma_p u^p = 0 (common/fzero.h).
 //
-// (2) F_Com is collapsed to a single send for both d^i and alpha^i. No value derived from
-//     the committed bits is sent before the matching open, so equivocation is impossible
-//     and the commitment phase is redundant. alpha^i is hash-committed first (one round)
-//     and then opened, since the alpha-check needs binding.
+// (2) The s-bits (the spec's d^i) are sent without F_Com, every party's in one flight.
+//     Seeing the honest parties' s-bits first tells a rushing party nothing about a, and
+//     a wrong s-bit is caught by the check except with probability 2^-ssp. The check's
+//     own value alpha^i (nP >= 3) is hash-committed (one flight) and then opened, since
+//     the check needs binding.
 //
 #include "emp-ag/backend/ashare/share.h"       // LSB1
 #include "emp-ag/backend/common/fs_hash.h"     // FsHash
@@ -56,46 +58,13 @@ namespace emp::ag {
 // at both parties: a compile-time constant, never a function of the local pool size.
 inline constexpr int kFeqStripeElems = 1 << 16;
 
-// Fold one row's L-vector into the running F_eq hash, restricted to the low `bits` bits
-// of each element (the transmitted window), zero-padded locally to `gb` bytes. The fold
-// is a fixed two-level hash: the window bytes are gathered and hashed per
-// kFeqStripeElems-element stripe (independent stripes, so gather and hashing run
+// Fold L windows of gb bytes each (the transmitted bits, zero-padded, contiguous at src)
+// into the running F_eq hash. The fold is a fixed two-level hash: the window bytes are
+// hashed per kFeqStripeElems-window stripe (independent stripes, so the hashing runs
 // pool-parallel), and the ordered stripe digests feed the running feq. Collision
 // resistance composes across the levels, so this binds exactly the window bytes; both
 // parties use the same stripe constant and derive the same stripe count from the common
 // L. One terminal symmetric F_eq fires per call; the caller owns it.
-inline void accumulate_leaky_and_window(FsHash &feq, const block *src, int L, int bits,
-                                        std::vector<unsigned char> &scratch,
-                                        ThreadPool *pool) {
-  const int gb = (bits + 7) / 8;
-  // Caller-owned grow-only scratch (a plain member, passed by ref -- no per-access
-  // overhead): this runs B x per chunk, so a fresh L*gb buffer each
-  // call is mmap/fault/munmap churn. Stripes write disjoint ranges.
-  const size_t need = (size_t)L * gb;
-  if (scratch.size() < need) scratch.resize(need);
-  const int ns = (L + kFeqStripeElems - 1) / kFeqStripeElems;
-  std::vector<char> dg((size_t)ns * FsHash::DIGEST_SIZE);
-  vector<future<void>> res;
-  for (int s = 0; s < ns; ++s) {
-    res.push_back(pool->enqueue([&, s]() {
-      const int k0 = s * kFeqStripeElems;
-      const int k1 = std::min(L, k0 + kFeqStripeElems);
-      unsigned char *dst = scratch.data() + (size_t)k0 * gb;
-      for (int k = k0; k < k1; ++k) {
-        memcpy(scratch.data() + (size_t)k * gb, &src[k], gb);
-        scratch[(size_t)(k + 1) * gb - 1] &= laand_last_byte_mask(bits);
-      }
-      FsHash::hash_once(dg.data() + (size_t)s * FsHash::DIGEST_SIZE, dst,
-                      (size_t)(k1 - k0) * gb);
-    }));
-  }
-  joinNclean(res);
-  feq.put(dg.data(), dg.size());
-}
-
-// Batched nP==2 production already keeps each zero-padded bit window contiguous, so
-// preserve the exact same stripe-hash construction without gathering blocks
-// through a second scratch buffer.
 inline void accumulate_leaky_and_window_bytes(FsHash &feq,
                                               const unsigned char *src,
                                               int L, int gb, ThreadPool *pool) {
@@ -128,7 +97,7 @@ public:
   // A new call: no row's check material yet.
   void begin_call() {
     alpha_masked_cat_.clear();
-    alpha_uzero_.clear();
+    alpha_u_ = zero_block;
   }
 
   // The half-gate leaky AND on every row of a call, B rows of L candidates (a, b, r) whose
@@ -150,6 +119,7 @@ public:
     const int any_peer = (party_ == 1) ? 2 : 1;
     const int gb = ag::laand_window_bytes(ssp_);
     const int gw = ag::laand_window_bits(ssp_);
+    [[maybe_unused]] const block window_mask = ag::laand_window_mask(ssp_);
     std::vector<unsigned char>(&s)[nP + 1] = s_;
     for (int p = 1; p <= nP; ++p)
       if (s[p].size() < (size_t)BL) s[p].resize((size_t)BL);
@@ -163,7 +133,7 @@ public:
       if (z_.size() < (size_t)BL + 1) z_.resize((size_t)BL + 1);
       std::fill(z_.begin(), z_.begin() + BL + 1, zero_block);   // fzero_xor XOR-accumulates
       fzero_xor<nP>(mesh_.io, prg_, pool, party_, z_.data(), BL + 1, fzero_);
-      alpha_uzero_.push_back(z_[(size_t)BL]);
+      alpha_u_ = z_[(size_t)BL];
     }
     // phi, the half-gate row's blind: the F_Zero share (nP > 2), the (sel & Delta) term
     // and the cross-peer key/mac sum of b. A cheap local expression over resident row
@@ -207,7 +177,8 @@ public:
     // 3. One flight: one task per (peer, lane, direction) walks every row in canonical
     //    order (peer-major, lanes 0..T-1, direction-adjacent). Do not enqueue per-row
     //    tasks on one NetIO: their writes could interleave. The lane id domain-separates
-    //    the CCR key in the free low 64 bits: key = seed ^ makeBlock(bucket, lane).
+    //    the CCR key in the free low 64 bits: key = seed ^ makeBlock(0, lane), and each
+    //    row has its own seed.
     const int hg_chunk = ag::kLaandRowChunkRows;
     const int T = std::min(mesh_.lanes, std::max(1, L));
     vector<future<void>> tasks;
@@ -335,7 +306,6 @@ public:
     // nP > 2: combine the peers' terms with the local ones into each value's window, the
     //   RLC's check input, and take its s-bit.
     if constexpr (nP > 2) {
-      const block window_mask = ag::laand_window_mask(ssp_);
       alpha_masked_cat_.resize((size_t)BL);
       for (int layer = 0; layer < B; ++layer) {
         const TripleRow<nP> &r = rows[(size_t)layer];
@@ -392,7 +362,6 @@ public:
     //    d * Delta; then the check material: at nP == 2 the row's window folds into F_eq
     //    (binding exactly the transmitted bit window, after the correction).
     const block dxor = Delta_ ^ bit0_mask;
-    [[maybe_unused]] const block window_mask = ag::laand_window_mask(ssp_);
     unsigned char delta_bytes[sizeof(block)];
     memcpy(delta_bytes, &Delta_, sizeof(block));
     for (int layer = 0; layer < B; ++layer) {
@@ -478,9 +447,7 @@ public:
           ip[party][1] = ip[party][1] ^ acc_hi[w];
         }
       }
-      block uz = zero_block;
-      for (block u : alpha_uzero_) uz = uz ^ u;   // all B rows
-      ip[party][0] = ip[party][0] ^ uz;
+      ip[party][0] = ip[party][0] ^ alpha_u_;   // the call's F_Zero u
       char dgst[nP + 1][FsHash::DIGEST_SIZE];
       role_bound_commitment(dgst[party], sid_,
                             "emp-ag:laand-alpha", party,
@@ -547,7 +514,7 @@ private:
   // The batched alpha-check stash (nP>=3): every row's windowed RLC vector and the call's
   // F_Zero u; cleared by begin_call().
   BlockVec alpha_masked_cat_;
-  std::vector<block> alpha_uzero_;
+  block alpha_u_ = zero_block;
   // Reused per-call scratch (grow-only). All assigned before read except z_
   // (XOR-accumulated by fzero_xor -> re-zeroed via std::fill each call).
   BlockVec z_, phi_cat_;                  // nP > 2: F_Zero's z and u; the RLC challenge

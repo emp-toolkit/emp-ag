@@ -246,7 +246,8 @@ class AGMPCEngine {
     st.num_in = (int)in_wires.size();
     std::vector<uint32_t> out_ids = run_liveness_(st, source);
     load_inputs_(st, in_wires, /*trust=*/false);
-    // Half-gate hash seed is set inside draw_and_seed, piggybacked off the triple coin.
+    // Half-gate hash seed is set inside draw_and_seed, from the coin of the AND gates'
+    // protocol.
     return finish_(st, source, out_ids);
   }
 
@@ -625,7 +626,8 @@ class AGMPCEngine {
     st.num_wires = (int)num_wires;
     st.num_ands = (int)num_ands;
     load_inputs_(st, in_wires, /*trust=*/true);
-    // Half-gate hash seed is set inside draw_and_seed, piggybacked off the triple coin.
+    // Half-gate hash seed is set inside draw_and_seed, from the coin of the AND gates'
+    // protocol.
     return finish_(st, source, out_ids);
   }
 

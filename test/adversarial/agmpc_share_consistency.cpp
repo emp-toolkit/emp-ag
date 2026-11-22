@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
   auto a = sess.input<U32>(1, party == 1 ? 0xa5c3f00du : 0);
   auto b = sess.input<U32>(2, party == 2 ? 0x1234abcdu : 0);
 #ifdef CONSISTENCY_AND
-  auto c = a & b;   // one call of the triple pool, whose open check agrees on the views
+  auto c = a & b;   // one call of the AND gates' protocol, whose open check agrees on the views
 #else
   auto c = a ^ b;   // pure-linear: no triples, no open check
 #endif

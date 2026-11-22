@@ -598,8 +598,6 @@ private:
 template <int nP, class OpenCheck = DefaultOpenCheck<nP>>
 class CutAndChoosePrep : public AndPrep<nP> {
 public:
-  using open_check_t = OpenCheck;
-
   // Triples generated `batch` at a time.
   CutAndChoosePrep(const AndPrepContext<nP> &ctx, int64_t batch)
       : mesh_(ctx.io, ctx.grp, ctx.pool, ctx.party), party_(ctx.party),

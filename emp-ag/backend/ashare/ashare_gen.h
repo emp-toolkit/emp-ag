@@ -455,7 +455,7 @@ class AShareGen final : public AShareSource<nP> {
 	// one set of bits only if it sent every peer the same bw. bw goes out without an echo
 	// of its own; every party's view of the opening -- each party's bw as received --
 	// feeds pending_check2_view_ instead, and a later agreement aborts unless all parties
-	// report the same view digest: the triple pool's open check (take_pending_check2 +
+	// report the same view digest: the AND gates' open check (take_pending_check2 +
 	// SymmetricOpenCheck::agree) or settle_check2(). With one bw per party, a party whose
 	// tags all pass holds the same bits toward every peer, or has forged a MAC: on the
 	// outputs except with probability 2^-128 over the coefficients; on the hiding shares

@@ -4,7 +4,7 @@
 // Opt-in profiling for the AG-MPC protocol stack.
 //
 // Compile with -DAG_PROFILE (or define it before including protocol headers)
-// to turn on phase timing, triple-pool subphase timing, communication counters,
+// to turn on phase timing, leaky-AND subphase timing, communication counters,
 // and the shared sub-protocol byte counters. In normal builds the macros compile
 // away.
 
@@ -25,8 +25,8 @@ inline uint64_t g_ag_phi_bytes = 0;
 // Sub-phase wall accumulators for the leaky-AND path (LeakyAndPrep::run resets them
 // per call and prints the [ag-tp] breakdown at the end):
 //   cot    = COT / aShare draw (abit.compute / compute_deferred; a deferred check2's
-//            fold runs at the triple coin, outside it)
-//   hg     = half-gate phi exchange + hash (LeakyAnd::produce_row / produce_rows_2pc)
+//            fold runs at the call's coin, outside it)
+//   hg     = half-gate phi exchange + hash (LeakyAnd::produce_rows)
 //   sopen  = leaky-AND s-bit open
 //   acheck = d-combine + the LaAND consistency accumulation (the striped F_eq
 //            window fold at nP==2 / the windowed-RLC stash at nP>=3)

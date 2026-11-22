@@ -13,8 +13,9 @@
 // their unrotated row lambda_beta as its b. Then y = 0 is known, only x is opened, and
 //   lambda_alpha lambda_beta = c ^ x b.
 //
-// The triples are a row of aShares (triple/triple_row.h). The input masks are what the draw walk wrote into inputs(L): the share bits, and the
-// MACs and keys per peer or the mu's, whichever OpenCheck reads.
+// The triples are a row of aShares (triple/triple_row.h). The input masks are what the
+// draw walk wrote into inputs(L): the share bits, and the MACs and keys per peer or the
+// mu's, whichever OpenCheck reads.
 //
 #include "emp-ag/backend/ashare/ashare_gen.h"   // AShareSource
 #include "emp-ag/backend/ashare/share.h"
@@ -162,7 +163,7 @@ public:
             }
           } else {
             sum_a = sum_a ^ am ^ ak;
-            sum_b = sum_b ^ bm ^ bk;
+            if constexpr (!kBIsBeta) sum_b = sum_b ^ bm ^ bk;
           }
         }
         if constexpr (!OpenCheck::kPerPeerOperands) {
