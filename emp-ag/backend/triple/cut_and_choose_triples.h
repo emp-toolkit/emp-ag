@@ -14,7 +14,7 @@
 //   4. draws one coin for the cut, the sacrifice and the combine (triple/cut_and_choose_bound.h)
 //      and opens every value they need in one round;
 //   5. checks every opened value, and every sacrifice residual against its claim, in one
-//      open check, whose zero test also takes the pending aShare consistency residuals;
+//      open check, whose zero test also agrees on the pending aShare consistency view;
 //   6. builds the ell outputs.
 //
 // Where it departs from FKOS15:
@@ -517,7 +517,7 @@ private:
     check_.seal();
     if constexpr (OpenCheck::kAbsorbsZeroShares) {
       const auto pending = abit_.take_pending_check2();
-      check_.absorb(pending.residuals, pending.view);
+      if (pending.any) check_.agree(pending.view);
       if constexpr (nP > 2) check_.agree(zr_view);
     }
     parallel_for(pool_, (int)n_open, [&](int lo, int hi) {

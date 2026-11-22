@@ -46,7 +46,7 @@ std::vector<SecureWires<nP>> AGMPCProtocol<nP, Cfg>::process_inputs(
   // Authenticated λ-shares (Π_aShare), drawn in one batch; draw() transposes
   // the generator's per-peer MAC/key arrays into the wire bundles.
   // Each share-bit λ_w^i is implicit in bit0(sw.wire_bundle[w].mac(0)).
-  // The draw's share-consistency residual stays pending: the open below
+  // The draw's share-consistency view stays pending: the open below
   // publishes only Λ_w = λ_w ⊕ x_w, which the owner's own share masks whatever
   // bits the other parties hold, and the next open check or decode settles it.
   abit->draw(n_total, sw.wire_bundle);
