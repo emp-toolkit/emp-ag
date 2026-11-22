@@ -27,10 +27,11 @@ template <int nP, Cot C>
 using MintFor = std::conditional_t<C == Cot::SilentFerret, SilentFerretMint<nP>,
                                    SoftSpokenMint<nP>>;
 
-// check2's residuals not yet covered by a zero test, and the digest of their views, which
-// every party must share (AShareGen::take_pending_check2).
+// The digest of check2's openings not yet agreed (every party's hash value, as this party
+// received it), which every party must share; `any` is false when no check2 ran since the
+// last take, and then there is nothing to agree (AShareGen::take_pending_check2).
 struct PendingCheck2 {
-	std::vector<block> residuals;
+	bool any = false;
 	char view[FsHash::DIGEST_SIZE];
 };
 
@@ -51,8 +52,9 @@ class AShareSource {
 };
 
 // Π_aShare, the authenticated-share generator: each call mints fresh shares. check1 is the gadget-tail Δ-consistency check
-// using pair-specific x^{me,j}; check2 is the share-consistency check (nP>2), whose
-// zero test is deferred to the next one the protocol runs (see check2).
+// using pair-specific x^{me,j}; check2 is the share-consistency check (nP>2): every peer
+// checks a MAC tag on a hash of each party's shares at once, and the parties agree on
+// the hash values in the next agreement the protocol runs (see check2).
 // The COTs come from a mint (softspoken_mint.h, silent_ferret_mint.h), one stream
 // per peer and direction.
 // The COT post-processing pins bit0(Δ)=1, bit0(K)=0 and bit0(M)=choice, so each
@@ -82,16 +84,16 @@ class AShareSource {
 //   - compute(MAC, KEY, length) — the full Π_aShare into caller-allocated SoA arrays.
 //     Two phases: process_phase1 (COT extension + the one-time check1
 //     Δ-consistency on the first call) then check2 (share consistency, nP>2 only),
-//     seeded by an internal post-commitment sampleRandom; it leaves one residual
-//     pending.
+//     seeded by an internal post-commitment sampleRandom; it leaves the view of its
+//     opening pending.
 //   - draw(n, out) — one-shot convenience: compute() into the reusable draw
 //     scratch, transposed into caller's AoS bundles. At nP>2 every call also
 //     mints check2's kCheck2Pad hiding shares, and the first call check1's
 //     csp = 128 gadget tail; neither reaches the output.
 //   - maybe_flush_cot_check() — flush the deferred long-lived-COT consistency check
 //     before a reveal (no-op when nothing was minted since the last flush).
-//   - take_pending_check2() / settle_check2() — hand check2's pending residuals to
-//     another zero test, or test them on their own (before garbling or a reveal).
+//   - take_pending_check2() / settle_check2() — hand check2's pending view to another
+//     agreement, or agree on it on its own (before garbling or a reveal).
 template <int nP, class Mint = MintFor<nP, Cot::EMP_AG_COT>>
 class AShareGen final : public AShareSource<nP> {
  public:
@@ -122,10 +124,10 @@ class AShareGen final : public AShareSource<nP> {
 	// check2's hiding shares per call at nP>2: one per bit of the 128-bit value
 	// it broadcasts (see check2).
 	static constexpr int kCheck2Pad = 128;
-	// check2's residuals not yet covered by a zero test, one block per call, and the
-	// running digest of those calls' views (every party's bw as this party received it).
-	std::vector<block> pending_check2_;
+	// The running digest of the views of check2's openings not yet agreed (every party's
+	// bw as this party received it), and whether there is any.
 	FsHash pending_check2_view_;
+	bool pending_views_ = false;
 	// Draws whose check2 waits for fold_check2(): their outputs where compute_deferred()
 	// left them, and their own copy of their hiding shares.
 	struct Deferred {
@@ -237,30 +239,39 @@ class AShareGen final : public AShareSource<nP> {
 	// same count, so a run's final value is the planned count for the same run.
 	int64_t cots_per_stream() const { return cots_per_stream_; }
 
-	// Hand the pending residuals to a zero test the caller runs anyway: it must add them
-	// after drawing its coin, with their view (SymmetricOpenCheck::absorb).
+	// Hand the pending view to an agreement the caller runs anyway
+	// (SymmetricOpenCheck::agree), which aborts unless every party hands in the same one.
 	PendingCheck2 take_pending_check2() override {
 		PendingCheck2 p;
-		p.residuals = std::exchange(pending_check2_, {});
+		p.any = std::exchange(pending_views_, false);
 		pending_check2_view_.digest(p.view);   // and resets
 		return p;
 	}
 
-	// Test check2's pending residuals on their own: one commitment to all of them, with
-	// their view digest riding along, then one opening, and each must sum to zero across
-	// the parties (check_shared_zero_p2p). Two rounds and no coin: a coin would only fold
-	// the residuals into one value first. No-op when nothing is pending. Call before
-	// garbling with, or revealing anything computed from, shares whose residuals no
-	// other zero test took. Deferred draws are not covered: their residuals join the
-	// pending ones only at fold_check2().
+	// Agree on check2's pending view on its own: one round, this party's digest to every
+	// peer and every peer's back, aborting on any mismatch. Two honest parties compare
+	// over their own channel, so a party that sent them different hash values is caught.
+	// No-op when nothing is pending. Call before garbling with, or revealing anything
+	// computed from, shares whose view no other agreement took. Deferred draws are not
+	// covered: their views join the pending one only at fold_check2().
 	void settle_check2() override {
-		if (pending_check2_.empty()) return;
+		if (!pending_views_) return;
 		const PendingCheck2 pending = take_pending_check2();
-		check_shared_zero_p2p<nP>(io, pool, &prg, party, pending.residuals.data(),
-		                          (int)pending.residuals.size(), session_id,
-		                          "emp-ag:ashare-check2", "cheat aShare\n",
-		                          "cheat aShare: commit-open mismatch\n", pending.view,
-		                          "cheat aShare: parties saw different consistency values\n");
+		char recv[nP + 1][FsHash::DIGEST_SIZE];
+		vector<future<void>> res;
+		for (int p = 1; p <= nP; ++p) if (p != party) {
+			res.push_back(pool->enqueue([this, &pending, p]() {
+				io->send_data(p, pending.view, FsHash::DIGEST_SIZE);
+				io->flush(p);
+			}));
+			res.push_back(pool->enqueue([this, &recv, p]() {
+				io->recv_data(p, recv[p], FsHash::DIGEST_SIZE);
+			}));
+		}
+		joinNclean(res);
+		for (int p = 1; p <= nP; ++p) if (p != party)
+			expecting(memcmp(recv[p], pending.view, FsHash::DIGEST_SIZE) == 0,
+			          "cheat aShare: parties saw different consistency values\n");
 	}
 
 	// The full Π_aShare. On entry MAC[i]/KEY[i] may have any size; compute() grows them
@@ -336,8 +347,9 @@ class AShareGen final : public AShareSource<nP> {
 	}
 
 	// check2 of every draw since the last fold, under coefficients from `coin`, which every
-	// party drew after the last of those draws: one fold, one value to every peer, and the
-	// residual joins the pending ones. No-op with nothing deferred (and at nP = 2).
+	// party drew after the last of those draws: one fold, one hash value and one tag to
+	// every peer, every peer's tag checked at once, and the view joins the pending one.
+	// No-op with nothing deferred (and at nP = 2).
 	void fold_check2(block coin) override {
 		if (deferred_.empty()) return;
 		const block seed = RO("emp-ag:ashare-check2", coin).squeeze_block();
@@ -420,49 +432,34 @@ class AShareGen final : public AShareSource<nP> {
 		}
 	}
 
-	// check2: every party must hold the same bits toward every peer. It opens one
-	// masked random combination of the shares and checks it against their MACs. With
-	// coefficients c_k -- PRG(`seed`) on the outputs [0, length), X^0..X^127 on the
-	// kCheck2Pad hiding shares after them (X^k is block bit k, as in check1's packing)
-	// -- each party sends bw = Σ_k c_k·x_k to every peer, and v = ⊕ bw = Σ_k c_k·λ_k.
-	// bw is public, so without the hiding shares the parties' bw would give away 128
-	// GF(2)-linear equations on the shared bits, e.g. on input masks, whose
+	// check2: every party must hold the same bits toward every peer. Each party opens a
+	// hash of its shares, h(x) = Σ_k c_k·x_k, with coefficients c_k drawn after the
+	// shares -- PRG(`seed`) on the outputs [0, length), X^0..X^127 on the kCheck2Pad
+	// hiding shares after them (X^k is block bit k, as in check1's packing). It sends
+	// every peer j the hash value bw = h(x) and the tag h(MAC[j]) = Σ_k c_k·MAC[j][k] on
+	// it, and checks every peer's tag against its own keys on that peer's shares,
+	// h(KEY[j]) ⊕ bw_j·Δ. bw is public, so without the hiding shares the parties' bw would
+	// give away 128 GF(2)-linear equations on the shared bits, e.g. on input masks, whose
 	// Λ = λ ⊕ input is public; the hiding bits add a uniform one-time pad to each bw.
 	//
-	// A party's SPDZ collapse of share k, x_k·Δ ⊕ ⊕_j (MAC[j][k] ⊕ KEY[j][k]), XORs over
-	// the parties to λ_k·(⊕ Δ) when every party holds the same bits toward every peer.
-	// So r = Σ_k c_k·⊕_j (MAC[j][k] ⊕ KEY[j][k]) ⊕ (bw ⊕ v)·Δ is a share of zero.
+	// A verifier checks only the bits a party holds toward it, so the tags bind a party to
+	// one set of bits only if it sent every peer the same bw. bw goes out without an echo
+	// of its own; every party's view of the opening -- each party's bw as received --
+	// feeds pending_check2_view_ instead, and a later agreement aborts unless all parties
+	// report the same view digest: the triple pool's open check (take_pending_check2 +
+	// SymmetricOpenCheck::agree) or settle_check2(). With one bw per party, a party whose
+	// tags all pass holds the same bits toward every peer, or has forged a MAC: on the
+	// outputs except with probability 2^-128 over the coefficients; on the hiding shares
+	// of one draw always, as a sum of distinct X^k is not zero. Draws checked together
+	// reuse X^0..X^127, so their hiding bits can cancel one another; that costs nothing,
+	// as hiding shares are never used.
 	//
-	// This is not the per-verifier check of the protocol description, where every
-	// party broadcasts w = h(x) and sends each peer j the tag h(M_j[x]), which j checks
-	// on its own against h(K_j[x]) ⊕ w·Δ_j. Collapsing every MAC and key of a share
-	// first costs one multiplication per share instead of 2(n-1) (n-1 tags out, n-1
-	// checks in), and leaves a share of zero, whose verdict needs a zero test: usually
-	// one the protocol runs anyway (below), else settle_check2(). It is also a
-	// coalition-level check: it makes the corrupt parties' bits fold to the same value
-	// toward every honest party, which is what reconstructing a shared bit needs, where
-	// the per-verifier check holds each party to its own bits.
-	//
-	// That holds only if every party checks the same v. In honest party j's residual,
-	// each cheater l leaves (F_l^j ⊕ b_l^j)·Δ_j, where F_l^j folds l's bits toward j
-	// and b_l^j is the bw l sent j. With b_l^j free per receiver, l could send each
-	// honest party the fold of its own bits toward it and cancel every term, holding
-	// different bits toward different peers. So bw goes out without an echo of its
-	// own, but every party's view of the opening -- each party's bw as received --
-	// feeds pending_check2_view_, and the settling zero test aborts unless all parties
-	// report the same view digest. With one bw per party, the coalition's bits must
-	// fold to the same value toward every honest party: on the outputs except with
-	// probability 2^-128 over the coefficients, drawn after the shares; on the hiding
-	// shares of one draw always, as a sum of distinct X^k is not zero. Draws checked
-	// together reuse X^0..X^127, so their hiding bits can cancel one another; that
-	// costs nothing, as hiding shares are never used.
-	//
-	// r is not tested here: it joins pending_check2_, and one later commit-open zero
-	// test covers every pending residual and view -- the triple pool's open check
-	// (take_pending_check2 + SymmetricOpenCheck::absorb) or settle_check2(). The shares
-	// are used before that verdict, which still comes before any garbling or reveal;
-	// the input open in between publishes Λ = λ ⊕ input, which the owner's own share
-	// masks whatever bits any other party holds.
+	// Every party is held to its own bits, as the leaky ANDs' security argument assumes
+	// (each party's share is one bit, whichever peer it is authenticated to). It costs
+	// 2(n-1) multiplications per share: n-1 tags out, and n-1 folds of the keys to check
+	// the tags in. The shares are used before their view is agreed, which still comes
+	// before any garbling or reveal; the input open in between publishes Λ = λ ⊕ input,
+	// which the owner's own share masks whatever bits any other party holds.
 	static block gadget_power_(int k) {   // X^k: block bit k
 		return (k < 64) ? makeBlock(0, 1ULL << k) : makeBlock(1ULL << (k - 64), 0);
 	}
@@ -474,6 +471,39 @@ class AShareGen final : public AShareSource<nP> {
 		const block *pad_mac[nP + 1] = {}, *pad_key[nP + 1] = {};
 		int64_t n = 0;
 	};
+	// One worker's part of check2: the hash value, and for every peer j the tag on it
+	// (folding MAC[j]) and the fold of KEY[j] that checks j's tag, unreduced.
+	struct Check2Fold {
+		block bw, t_lo[nP + 1], t_hi[nP + 1], e_lo[nP + 1], e_hi[nP + 1];
+		Check2Fold() {
+			bw = zero_block;
+			for (int j = 0; j <= nP; ++j) t_lo[j] = t_hi[j] = e_lo[j] = e_hi[j] = zero_block;
+		}
+		// Coefficient c on share k: one multiplication per peer for its MAC, one for its key.
+		void add(const block &c, const block *const mac[nP + 1], const block *const key[nP + 1],
+		         int64_t k, int party, int any_peer) {
+			block l, h;
+			for (int j = 1; j <= nP; ++j) if (j != party) {
+				mul128(c, mac[j][k], &l, &h);
+				t_lo[j] = t_lo[j] ^ l;
+				t_hi[j] = t_hi[j] ^ h;
+				mul128(c, key[j][k], &l, &h);
+				e_lo[j] = e_lo[j] ^ l;
+				e_hi[j] = e_hi[j] ^ h;
+			}
+			bw = bw ^ (c & select_mask[getLSB(mac[any_peer][k])]);
+		}
+		void merge(const Check2Fold &o) {
+			bw = bw ^ o.bw;
+			for (int j = 0; j <= nP; ++j) {
+				t_lo[j] = t_lo[j] ^ o.t_lo[j];
+				t_hi[j] = t_hi[j] ^ o.t_hi[j];
+				e_lo[j] = e_lo[j] ^ o.e_lo[j];
+				e_hi[j] = e_hi[j] ^ o.e_hi[j];
+			}
+		}
+	};
+
 	// check2 over one or more draws. The outputs of all of them take coefficients from
 	// PRG(`seed`) in draw order, so one draw gets PRG position k for its output k; the
 	// hiding shares of every draw take X^0..X^127 (a sum of distinct X^k is still never
@@ -490,13 +520,13 @@ class AShareGen final : public AShareSource<nP> {
 		const int W = std::max(1, (int)pool->size());
 		const int64_t width = std::max<int64_t>(1, (total + W - 1) / W);
 		const int nr = (int)((total + width - 1) / width);
-		std::vector<block> part_lo((size_t)nr + 1), part_hi((size_t)nr + 1), part_bw((size_t)nr + 1);
+		std::vector<Check2Fold> part((size_t)nr + 1);
 		vector<future<void>> fold_res;
 		for (int r = 0; r < nr; ++r) {
 			const int64_t lo = r * width, hi = std::min(lo + width, total);
-			fold_res.push_back(pool->enqueue([this, &prg2, segs, &start, &part_lo, &part_hi,
-			                                  &part_bw, r, lo, hi, any_peer]() {
-				block s_lo = zero_block, s_hi = zero_block, b = zero_block;
+			fold_res.push_back(pool->enqueue([this, &prg2, segs, &start, &part, r, lo, hi,
+			                                  any_peer]() {
+				Check2Fold f;
 				PRG p = prg2.fork_at((uint64_t)lo);
 				alignas(16) block cb[64];
 				int s = (int)(std::upper_bound(start.begin(), start.end(), lo) - start.begin()) - 1;
@@ -506,59 +536,42 @@ class AShareGen final : public AShareSource<nP> {
 					for (int t = 0; t < m; ++t) {
 						const int64_t pos = base + t;
 						while (pos >= start[(size_t)s + 1]) ++s;
-						const Check2Segment &g = segs[s];
-						const int64_t k = pos - start[(size_t)s];
-						block x = zero_block, l, h;
-						for (int i = 1; i <= nP; ++i) if (i != party) x = x ^ g.mac[i][k] ^ g.key[i][k];
-						mul128(cb[t], x, &l, &h);
-						s_lo = s_lo ^ l;
-						s_hi = s_hi ^ h;
-						b = b ^ (cb[t] & select_mask[getLSB(g.mac[any_peer][k])]);
+						f.add(cb[t], segs[s].mac, segs[s].key, pos - start[(size_t)s], party, any_peer);
 					}
 				}
-				part_lo[(size_t)r] = s_lo;
-				part_hi[(size_t)r] = s_hi;
-				part_bw[(size_t)r] = b;
+				part[(size_t)r] = f;
 			}));
 		}
 		{   // the hiding shares, small: here while the pool folds the outputs
-			block s_lo = zero_block, s_hi = zero_block, b = zero_block;
+			Check2Fold f;
 			for (int s = 0; s < nsegs; ++s)
-				for (int k = 0; k < kCheck2Pad; ++k) {
-					const block c = gadget_power_(k);
-					block x = zero_block, l, h;
-					for (int i = 1; i <= nP; ++i) if (i != party)
-						x = x ^ segs[s].pad_mac[i][k] ^ segs[s].pad_key[i][k];
-					mul128(c, x, &l, &h);
-					s_lo = s_lo ^ l;
-					s_hi = s_hi ^ h;
-					b = b ^ (c & select_mask[getLSB(segs[s].pad_mac[any_peer][k])]);
-				}
-			part_lo[(size_t)nr] = s_lo;
-			part_hi[(size_t)nr] = s_hi;
-			part_bw[(size_t)nr] = b;
+				for (int k = 0; k < kCheck2Pad; ++k)
+					f.add(gadget_power_(k), segs[s].pad_mac, segs[s].pad_key, k, party, any_peer);
+			part[(size_t)nr] = f;
 		}
 		joinNclean(fold_res);
-		block s_lo = zero_block, s_hi = zero_block, bw = zero_block;
-		for (int r = 0; r <= nr; ++r) {
-			s_lo = s_lo ^ part_lo[(size_t)r];
-			s_hi = s_hi ^ part_hi[(size_t)r];
-			bw = bw ^ part_bw[(size_t)r];
+		Check2Fold all;
+		for (int r = 0; r <= nr; ++r) all.merge(part[(size_t)r]);
+		const block bw = all.bw;
+		block tag_to[nP + 1], key_fold[nP + 1];
+		for (int j = 1; j <= nP; ++j) if (j != party) {
+			tag_to[j] = reduce(all.t_lo[j], all.t_hi[j]);
+			key_fold[j] = reduce(all.e_lo[j], all.e_hi[j]);
 		}
 
-		// Open v: bw to every peer, with no echo of its own (see above).
+		// Open bw to every peer, with no echo of its own (see above), and its tag.
 		block out_to[nP + 1];
 		for (int peer = 1; peer <= nP; ++peer) out_to[peer] = bw;
 #ifdef EMP_AG_TEST_FLIP_BW
 		// TEST-ONLY (never in production): party 2 sends party 3 a different bw than it
-		// sends everyone else. The agreement on the view must abort.
+		// sends everyone else. Party 3's check of party 2's tag must abort.
 		if constexpr (nP >= 3) if (party == 2) out_to[3] = out_to[3] ^ makeBlock(0, 1);
 #endif
 #ifdef EMP_AG_TEST_TWO_WORLD
 		// TEST-ONLY (never in production): party 2, built with EMP_AG_TEST_SPLIT_CHOICE so
 		// that its bits toward party 3 differ from those toward everyone else, sends each
-		// peer the fold of the bits it holds toward that peer. Every residual then
-		// cancels; only the agreement on the view catches it.
+		// peer the fold of the bits it holds toward that peer. Every tag then passes; only
+		// the agreement on the view catches it.
 		if (party == 2) {
 			PRG q(&seed);
 			for (int peer = 1; peer <= nP; ++peer) out_to[peer] = zero_block;
@@ -577,26 +590,31 @@ class AShareGen final : public AShareSource<nP> {
 				}
 		}
 #endif
-		block bw_recv[nP + 1];
+		block bw_recv[nP + 1], tag_recv[nP + 1];
 		vector<future<void>> res;
 		for (int peer = 1; peer <= nP; ++peer) if (peer != party) {
-			res.push_back(pool->enqueue([this, &out_to, peer]() {
+			res.push_back(pool->enqueue([this, &out_to, &tag_to, peer]() {
 				io->send_data(peer, &out_to[peer], sizeof(block));
+				io->send_data(peer, &tag_to[peer], sizeof(block));
 				io->flush(peer);
 			}));
-			res.push_back(pool->enqueue([this, &bw_recv, peer]() {
+			res.push_back(pool->enqueue([this, &bw_recv, &tag_recv, peer]() {
 				io->recv_data(peer, &bw_recv[peer], sizeof(block));
+				io->recv_data(peer, &tag_recv[peer], sizeof(block));
 			}));
 		}
 		joinNclean(res);
+		// Every peer's tag on its bw, under this party's keys on its shares.
+		for (int peer = 1; peer <= nP; ++peer) if (peer != party) {
+			block want;
+			gfmul(bw_recv[peer], Delta, &want);
+			want = want ^ key_fold[peer];
+			expecting(cmpBlock(&tag_recv[peer], &want, 1), "cheat aShare: MAC tag mismatch\n");
+		}
 		// This party's view of the opening, every party's bw in party order.
 		for (int p = 1; p <= nP; ++p)
 			pending_check2_view_.put(p == party ? &bw : &bw_recv[p], sizeof(block));
-		block v = bw;
-		for (int peer = 1; peer <= nP; ++peer) if (peer != party) v = v ^ bw_recv[peer];
-		block t;
-		gfmul(bw ^ v, Delta, &t);
-		pending_check2_.push_back(reduce(s_lo, s_hi) ^ t);
+		pending_views_ = true;
 	}
 
 	// check1: gadget-tail Δ-consistency check, in three rounds: broadcast y, commit to z,

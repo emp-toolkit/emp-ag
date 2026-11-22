@@ -11,7 +11,8 @@
 //   - cots_per_stream() counts every COT drawn: the length, check2's hiding shares at
 //     nP > 2, and check1's tail on the first call;
 //   - many draws of awkward sizes, enough for a SilentFerret stream to cross a round;
-//   - check2's residuals settle on their own, and inside another open check;
+//   - check2's tags pass, and its views are agreed on their own and inside another open
+//     check;
 //   - with SilentFerret prepaid at nP = 2, drawing moves no bytes.
 // SoftSpokenMint runs once; SilentFerretMint twice, unplanned (its streams prepay the next
 // round on the wire when one runs out) and prepaid for the whole test.
@@ -200,18 +201,17 @@ static void exercise(NetIOMP<nP> *io, ThreadPool *pool, const char *name, block 
 	run.draw_soa(kDrawSoaSize);
 	for (int r = 0; r < long_draws; ++r) run.compute(kLongSize, 997);
 
-	// check2's residuals so far settle on their own; the next call's go into another open
-	// check's zero test. Neither may abort with honest shares.
+	// check2's views so far are agreed on their own; the next call's go into another open
+	// check's agreement. Neither may abort with honest shares.
 	ap.maybe_flush_cot_check();
 	ap.settle_check2();
 	run.compute(kSettleSize, 1);
 	const auto pending = ap.take_pending_check2();
-	expecting(pending.residuals.empty() == (nP == 2),
-	          "ashare_test: check2 left no residual pending at nP > 2");
+	expecting(pending.any == (nP > 2), "ashare_test: check2 left no view pending at nP > 2");
 	PRG prg;
 	SymmetricOpenCheck<nP> check(io, pool, party, ap.delta(), sid ^ makeBlock(0, 1), &prg,
 	                             nullptr, "emp-ag:ashare-test");
-	check.absorb(pending.residuals, pending.view);
+	if (pending.any) check.agree(pending.view);
 	check.check_result();
 
 	if (silent)

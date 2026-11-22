@@ -1323,9 +1323,9 @@ public:
     // MACs (keys). Every open of this call is in now: the open check's runs start and
     // its coin is drawn (the symmetric check's; the pairwise one has none). The
     // symmetric check then folds the d-bits; the σ fold below folds x and y. Its zero
-    // test also covers the aShare consistency residuals of every share minted since
-    // the last one (this call's layers, the draw walk, the inputs); with the pairwise
-    // check they are settled on their own below.
+    // test also agrees on the view of the aShare consistency check of every share
+    // minted since the last one (this call's layers, the draw walk, the inputs); with
+    // the pairwise check that view is settled on its own below.
     typename OpenCheck::Run run_d{};
     if constexpr (!OpenCheck::kPerPeerOperands)
       run_d = open_check_.begin((int64_t)(B - 1) * L);
@@ -1334,7 +1334,7 @@ public:
     open_check_.seal();
     if constexpr (OpenCheck::kAbsorbsZeroShares) {
       const auto pending = abit.take_pending_check2();
-      open_check_.absorb(pending.residuals, pending.view);
+      if (pending.any) open_check_.agree(pending.view);
     }
     if constexpr (!OpenCheck::kPerPeerOperands) fold_d_residuals_(run_d, L, B);
 

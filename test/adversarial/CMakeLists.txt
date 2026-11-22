@@ -59,7 +59,7 @@ add_np_variant(agmpc_cheat_xy_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_N
 # each peer the value its bits toward that peer give, so every residual cancels and only
 # the agreement on the views catches it. agmpc_share_consistency.cpp has no AND, so only
 # the settle before the reveal can catch any of these.
-add_np_variant(agmpc_cheat_bw_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_BW PASS_RE "open check")
+add_np_variant(agmpc_cheat_bw_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_BW PASS_RE "cheat aShare")
 add_np_variant(agmpc_cheat_bw_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_TEST_FLIP_BW EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "cheat aShare")
 add_np_variant(agmpc_share_split_choice_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_SPLIT_CHOICE PASS_RE "cheat aShare")
 add_np_variant(agmpc_share_flip_bw_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 EMP_AG_TEST_FLIP_BW PASS_RE "cheat aShare")
@@ -160,8 +160,9 @@ add_test(NAME agmpc_prepared_cheat_agg_np3_offline
 # candidates are wrong. FLIP_ZR: party 2 opens a wrong z ^ r for one candidate to everyone.
 # FLIP_OPEN: party 2 opens a wrong share of one sacrifice difference to everyone. The open
 # check (sacrifice residuals, opened values) or the cut must abort. SPLIT_ZR (nP >= 3): party
-# 2 sends party 3 a different opening of z ^ r than everyone else, caught by the agreement on
-# the views. KING_SPLIT (nP >= 3, kings): as a king, party 2 sends party 3 a different opened
+# 2 sends party 3 a different opening of z ^ r than everyone else, so parties 1 and 3 correct
+# the candidates differently, which the aShare check's tags catch at the cut-and-choose
+# coin, before the agreement on the views runs. KING_SPLIT (nP >= 3, kings): as a king, party 2 sends party 3 a different opened
 # value, which leaves party 3 a residual the symmetric check catches.
 set(_cnc EMP_AG_CUT_AND_CHOOSE_BATCH=1024)
 add_np_variant(agmpc_cheat_cnc_product_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ${_cnc} EMP_AG_TEST_CNC_FLIP_PRODUCT PASS_RE "cut-and-choose")
@@ -170,8 +171,8 @@ add_np_variant(agmpc_cheat_cnc_zr_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 $
 add_np_variant(agmpc_cheat_cnc_zr_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_TEST_CNC_FLIP_ZR PASS_RE "cut-and-choose")
 add_np_variant(agmpc_cheat_cnc_open_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ${_cnc} EMP_AG_TEST_CNC_FLIP_OPEN PASS_RE "cut-and-choose")
 add_np_variant(agmpc_cheat_cnc_open_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_TEST_CNC_FLIP_OPEN PASS_RE "cut-and-choose")
-add_np_variant(agmpc_cheat_cnc_split_zr_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_TEST_CNC_SPLIT_ZR PASS_RE "different values opened")
-add_np_variant(agmpc_cheat_cnc_split_zr_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_TEST_CNC_SPLIT_ZR EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "different values opened")
+add_np_variant(agmpc_cheat_cnc_split_zr_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_TEST_CNC_SPLIT_ZR PASS_RE "cheat aShare: MAC tag mismatch")
+add_np_variant(agmpc_cheat_cnc_split_zr_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_TEST_CNC_SPLIT_ZR EMP_AG_OPEN_CHECK_PAIRWISE PASS_RE "cheat aShare: MAC tag mismatch")
 add_np_variant(agmpc_cheat_cnc_king_split_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_TEST_CNC_KING_SPLIT PASS_RE "cut-and-choose: opened values")
 add_np_variant(agmpc_cheat_cnc_king_split_np4 agmpc_output_cheat.cpp 4 DEFS CHEAT_NP=4 ${_cnc} EMP_AG_TEST_CNC_KING_SPLIT PASS_RE "cut-and-choose: opened values")
 # FLIP_ALL_ZR: party 2 opens every candidate's z ^ r wrong, so every candidate is wrong in
