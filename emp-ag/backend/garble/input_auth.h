@@ -43,8 +43,8 @@ std::vector<SecureWires<nP>> AGMPCProtocol<nP, Cfg>::process_inputs(
   else
     for (int j = 2; j <= nP; ++j) sw.eval_label[j].resize(n_total);
 
-  // Authenticated λ-shares (Π_aShare), drawn in one batch. The pool
-  // stores AoS-by-wire, so draw is a single memcpy into sw.wire_bundle.
+  // Authenticated λ-shares (Π_aShare), drawn in one batch; draw() transposes
+  // the generator's per-peer MAC/key arrays into the wire bundles.
   // Each share-bit λ_w^i is implicit in bit0(sw.wire_bundle[w].mac(0)).
   // The draw's share-consistency residual stays pending: the open below
   // publishes only Λ_w = λ_w ⊕ x_w, which the owner's own share masks whatever
