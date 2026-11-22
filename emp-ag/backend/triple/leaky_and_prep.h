@@ -2,9 +2,9 @@
 #define EMP_AG_BACKEND_TRIPLE_LEAKY_AND_PREP_H__
 //
 // The AND gates' products from leaky AND triples made per call (triple/and_prep.h):
-// Pi_LaAND (triple/laand.h) on B rows of L candidates, bucketing (Pi_Prep,
-// triple/merge.h) of the B rows into L authenticated triples, then Beaver against the
-// gates' input masks (triple/beaver.h). B comes from the leakage bound at L
+// Pi_LaAND (triple/laand.h) on B rows of L candidates, bucketing (triple/merge.h) of
+// the B rows into L authenticated triples, then Beaver against the gates' input masks
+// (triple/beaver.h). B comes from the leakage bound at L
 // (triple/bucketing.h).
 //
 // Row 0, which the rotations leave in place, takes gate j's lambda_beta (the mask of its
@@ -24,9 +24,8 @@
 //      commitments ride the rows and its openings the s-bits): it folds the consistency
 //      check of every share drawn since the last call, gives the rotations, continues as
 //      the nP >= 3 leaky-AND challenge, and is the call's coin;
-//   3. open every bucket difference in one all-to-all flight (the B-1 sequential
-//      OpenToAll calls of Pi_Prep, batched; at nP == 2 the F_eq commitment rides along),
-//      and merge;
+//   3. open every bucket difference in one all-to-all flight (the B-1 rows' openings,
+//      batched; at nP == 2 the F_eq commitment rides along), and merge;
 //   4. finish the leaky ANDs' check;
 //   5. Beaver: open x, and check it and the bucket differences in one open check.
 //
