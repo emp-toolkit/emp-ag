@@ -83,6 +83,43 @@ public:
     all_bcast(&my_v, 1, ptrs);
   }
 
+  // all_bcast whose messages also carry the digest of every view folded since the last
+  // agreement (finalize() or all_bcast_agree): each party compares every peer's digest
+  // with its own and aborts with fail_msg on a mismatch, before it returns the new views.
+  // So the earlier broadcasts are agreed in the same round as this one, with no round of
+  // their own. This round's views are folded for the next agreement.
+  template <typename T>
+  void all_bcast_agree(const T *my_v, int len, T *view[nP + 1], const char *fail_msg) {
+    char d_me[FsHash::DIGEST_SIZE];
+    h.digest(d_me);   // and resets
+    memcpy(view[party], my_v, sizeof(T) * len);
+    const int bytes = (int)(sizeof(T) * len);
+    char d_recv[nP + 1][FsHash::DIGEST_SIZE];
+    vector<future<void>> res;
+    for (int p2 = 1; p2 <= nP; ++p2) if (p2 != party) {
+      res.push_back(pool->enqueue([this, my_v, bytes, &d_me, p2]() {
+        io->send_data(p2, my_v, bytes);
+        io->send_data(p2, d_me, FsHash::DIGEST_SIZE);
+        io->flush(p2);
+      }));
+      res.push_back(pool->enqueue([this, &view, &d_recv, bytes, p2]() {
+        io->recv_data(p2, view[p2], bytes);
+        io->recv_data(p2, d_recv[p2], FsHash::DIGEST_SIZE);
+      }));
+    }
+    joinNclean(res);
+    for (int p = 1; p <= nP; ++p) if (p != party)
+      expecting(memcmp(d_recv[p], d_me, FsHash::DIGEST_SIZE) == 0, fail_msg);
+    for (int p = 1; p <= nP; ++p) h.put(view[p], bytes);
+  }
+
+  template <typename T>
+  void all_bcast_agree(const T &my_v, T view[nP + 1], const char *fail_msg) {
+    T *ptrs[nP + 1];
+    for (int p = 1; p <= nP; ++p) ptrs[p] = &view[p];
+    all_bcast_agree(&my_v, 1, ptrs, fail_msg);
+  }
+
   void finalize() {
     char d_me[FsHash::DIGEST_SIZE];
     h.digest(d_me);
@@ -219,25 +256,30 @@ void check_shared_zero(NetIOMP<nP> *io, ThreadPool *pool, PRG *prg, int party,
 // with agree_fail_msg before anything is opened. Two honest parties compare over their
 // own channel, so a cheater that sent them different values is caught, at the cost of
 // no round of its own.
+//
+// k shares of zero at once (m_i[0, k)): one commitment to all of them, one opening, and
+// every one must sum to zero. That is k zero tests run side by side, with no coin to
+// combine them first, so an error in one cannot be cancelled by another.
 template <int nP>
 void check_shared_zero_p2p(NetIOMP<nP> *io, ThreadPool *pool, PRG *prg, int party,
-                           const block &m_i, block session_id, const char *purpose,
+                           const block *m_i, int k, block session_id, const char *purpose,
                            const char *fail_msg, const char *commit_fail_msg,
                            const char *agree = nullptr,
                            const char *agree_fail_msg = nullptr) {
-  struct OpenT { block m, r; };
+  expecting(k >= 1, "check_shared_zero_p2p: no value to test");
   struct DigestT { char d[FsHash::DIGEST_SIZE]; };
   struct Round1T { DigestT com, agree; };   // the agreement digest only when there is one
-  OpenT mine;
-  mine.m = m_i;
-  prg->random_block(&mine.r, 1);
+  // An opening: the k values, then the randomness r that keeps the commitment hiding.
+  const size_t ob = (size_t)(k + 1) * sizeof(block);
+  std::vector<block> open_view((size_t)(nP + 1) * (size_t)(k + 1));
+  block *mine = open_view.data() + (size_t)party * (size_t)(k + 1);
+  memcpy(mine, m_i, (size_t)k * sizeof(block));
+  prg->random_block(mine + k, 1);
   Round1T r1_mine;
-  role_bound_commitment(r1_mine.com.d, session_id, purpose, party,
-                        &mine, sizeof(OpenT));              // r keeps it hiding
+  role_bound_commitment(r1_mine.com.d, session_id, purpose, party, mine, ob);
   if (agree != nullptr) memcpy(r1_mine.agree.d, agree, FsHash::DIGEST_SIZE);
   const size_t r1_bytes = agree != nullptr ? sizeof(Round1T) : sizeof(DigestT);
   Round1T r1_view[nP + 1];
-  OpenT open_view[nP + 1];
   // One pairwise round: `bytes` of my value to every peer, every peer's into view[p].
   auto exchange = [&](const void *my_v, void *view, size_t bytes, size_t stride) {
     vector<future<void>> res;
@@ -256,18 +298,30 @@ void check_shared_zero_p2p(NetIOMP<nP> *io, ThreadPool *pool, PRG *prg, int part
   if (agree != nullptr)
     for (int p = 1; p <= nP; ++p) if (p != party)
       expecting(memcmp(r1_view[p].agree.d, agree, FsHash::DIGEST_SIZE) == 0, agree_fail_msg);
-  exchange(&mine, open_view, sizeof(OpenT), sizeof(OpenT));   // round 2: openings
+  exchange(mine, open_view.data(), ob, ob);                    // round 2: openings
 
-  block sum = m_i;
+  std::vector<block> sum(m_i, m_i + k);
   for (int p = 1; p <= nP; ++p) if (p != party) {
+    const block *op = open_view.data() + (size_t)p * (size_t)(k + 1);
     DigestT chk;
-    role_bound_commitment(chk.d, session_id, purpose, p,
-                          &open_view[p], sizeof(OpenT));
+    role_bound_commitment(chk.d, session_id, purpose, p, op, ob);
     expecting(memcmp(chk.d, r1_view[p].com.d, FsHash::DIGEST_SIZE) == 0,
               commit_fail_msg);
-    sum = sum ^ open_view[p].m;
+    for (int c = 0; c < k; ++c) sum[(size_t)c] = sum[(size_t)c] ^ op[c];
   }
-  expecting(cmpBlock(&sum, &zero_block, 1), fail_msg);
+  for (int c = 0; c < k; ++c)
+    expecting(cmpBlock(&sum[(size_t)c], &zero_block, 1), fail_msg);
+}
+
+// One share of zero.
+template <int nP>
+void check_shared_zero_p2p(NetIOMP<nP> *io, ThreadPool *pool, PRG *prg, int party,
+                           const block &m_i, block session_id, const char *purpose,
+                           const char *fail_msg, const char *commit_fail_msg,
+                           const char *agree = nullptr,
+                           const char *agree_fail_msg = nullptr) {
+  check_shared_zero_p2p<nP>(io, pool, prg, party, &m_i, 1, session_id, purpose, fail_msg,
+                            commit_fail_msg, agree, agree_fail_msg);
 }
 
 // DEBUG-ONLY MAC-consistency check. WARNING: broadcasts each party's Delta in the CLEAR (line

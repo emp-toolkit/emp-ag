@@ -8,7 +8,6 @@
 #include "emp-ag/backend/common/netmp.h"
 #include "emp-ag/backend/common/fs_hash.h"  // FsHash (FS/check digests)
 #include "emp-ag/backend/common/profiling.h"
-#include "emp-ag/backend/ashare/open_check.h"   // SymmetricOpenCheck (settle_check2)
 #include "emp-ag/backend/ashare/share.h"
 #include "emp-ag/backend/ashare/cot.h"              // Cot, the choice of mint
 #include "emp-ag/backend/ashare/softspoken_mint.h"   // SoftSpokenMint
@@ -74,8 +73,10 @@ class AShareSource {
 //     packing (Δ-consistency, run once per session — the global keys are
 //     fixed, so one check covers every batch).
 //
-// (2) FZero is implemented via pairwise seed-and-expand under
-//     the ideal-cipher assumption on the AES-based PRG; see check1.
+// (2) check1's F_Zero is implemented via pairwise seed-and-expand under the
+//     ideal-cipher assumption on the AES-based PRG, and runs in the ctor: its
+//     masks are pairwise one-time pads, independent of the tail they mask, so
+//     check1 itself needs no round for them.
 //
 // Public API:
 //   - compute(MAC, KEY, length) — the full Π_aShare into caller-allocated SoA arrays.
@@ -114,6 +115,9 @@ class AShareGen final : public AShareSource<nP> {
 	// global keys are fixed at COT setup, so one check certifies them for every
 	// later batch. Set true after the first process_phase1 runs the check.
 	bool delta_checked_ = false;
+	// check1's zero-sharing u^me (nP>2): ⊕_p u^p_k = 0 for every column k. Drawn in
+	// the ctor, used once by check1.
+	block check1_u_[nP];
 
 	// check2's hiding shares per call at nP>2: one per bit of the 128-bit value
 	// it broadcasts (see check2).
@@ -213,6 +217,13 @@ class AShareGen final : public AShareSource<nP> {
 			                               planned_sender_cots, planned_receiver_cots, tmp);
 			Delta = mint_->delta();
 			cots_per_stream_ = mint_->bootstrap_cots();
+
+			// check1's F_Zero, ahead of the tail it will mask (see (2) above).
+			for (int k = 0; k < nP; ++k) check1_u_[k] = zero_block;
+			if constexpr (nP > 2) {
+				BlockVec fz_scratch;   // nP blocks, once per session
+				fzero_xor<nP>(io, &prg, pool, party, check1_u_, nP, fz_scratch);
+			}
 		}
 
 	// Flush the deferred COT consistency check before a reveal; no-op when
@@ -235,20 +246,21 @@ class AShareGen final : public AShareSource<nP> {
 		return p;
 	}
 
-	// Test check2's pending residuals on their own: a coin, then one commit-open zero
-	// test. No-op when nothing is pending. Call before garbling with, or revealing
-	// anything computed from, shares whose residuals no other zero test took.
-	// Deferred draws are not covered: their residuals join the pending ones only at
-	// fold_check2().
+	// Test check2's pending residuals on their own: one commitment to all of them, with
+	// their view digest riding along, then one opening, and each must sum to zero across
+	// the parties (check_shared_zero_p2p). Two rounds and no coin: a coin would only fold
+	// the residuals into one value first. No-op when nothing is pending. Call before
+	// garbling with, or revealing anything computed from, shares whose residuals no
+	// other zero test took. Deferred draws are not covered: their residuals join the
+	// pending ones only at fold_check2().
 	void settle_check2() override {
 		if (pending_check2_.empty()) return;
-		SymmetricOpenCheck<nP> settle(io, pool, party, Delta, session_id, &prg, grp,
-		                              "emp-ag:ashare-check2", "cheat aShare\n",
-		                              "cheat aShare: commit-open mismatch\n",
-		                              "cheat aShare: parties saw different consistency values\n");
 		const PendingCheck2 pending = take_pending_check2();
-		settle.absorb(pending.residuals, pending.view);
-		settle.check_result();
+		check_shared_zero_p2p<nP>(io, pool, &prg, party, pending.residuals.data(),
+		                          (int)pending.residuals.size(), session_id,
+		                          "emp-ag:ashare-check2", "cheat aShare\n",
+		                          "cheat aShare: commit-open mismatch\n", pending.view,
+		                          "cheat aShare: parties saw different consistency values\n");
 	}
 
 	// The full Π_aShare. On entry MAC[i]/KEY[i] may have any size; compute() grows them
@@ -397,9 +409,7 @@ class AShareGen final : public AShareSource<nP> {
 		// is dropped. One check covers every later batch (same fixed global keys
 		// from the long-lived COTs).
 		if (do_delta_check) {
-			EchoBC<nP> echo(io, pool, party);
-			check1(MAC, KEY, length, echo);
-			echo.finalize();
+			check1(MAC, KEY, length);
 			delta_checked_ = true;
 		}
 
@@ -422,6 +432,16 @@ class AShareGen final : public AShareSource<nP> {
 	// A party's SPDZ collapse of share k, x_k·Δ ⊕ ⊕_j (MAC[j][k] ⊕ KEY[j][k]), XORs over
 	// the parties to λ_k·(⊕ Δ) when every party holds the same bits toward every peer.
 	// So r = Σ_k c_k·⊕_j (MAC[j][k] ⊕ KEY[j][k]) ⊕ (bw ⊕ v)·Δ is a share of zero.
+	//
+	// This is not the per-verifier check of the protocol description, where every
+	// party broadcasts w = h(x) and sends each peer j the tag h(M_j[x]), which j checks
+	// on its own against h(K_j[x]) ⊕ w·Δ_j. Collapsing every MAC and key of a share
+	// first costs one multiplication per share instead of 2(n-1) (n-1 tags out, n-1
+	// checks in), and leaves a share of zero, whose verdict needs a zero test: usually
+	// one the protocol runs anyway (below), else settle_check2(). It is also a
+	// coalition-level check: it makes the corrupt parties' bits fold to the same value
+	// toward every honest party, which is what reconstructing a shared bit needs, where
+	// the per-verifier check holds each party to its own bits.
 	//
 	// That holds only if every party checks the same v. In honest party j's residual,
 	// each cheater l leaves (F_l^j ⊕ b_l^j)·Δ_j, where F_l^j folds l's bits toward j
@@ -579,8 +599,13 @@ class AShareGen final : public AShareSource<nP> {
 		pending_check2_.push_back(reduce(s_lo, s_hi) ^ t);
 	}
 
-	// check1: gadget-tail Δ-consistency check.
-	void check1(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length, EchoBC<nP> &echo) {
+	// check1: gadget-tail Δ-consistency check, in three rounds: broadcast y, commit to z,
+	// open z, with F_Zero's masks drawn in the ctor (check1_u_). Each broadcast is agreed
+	// in the round after it: the commitments carry the digest of every party's view of y,
+	// which every party checks before anything is opened, and the openings carry the
+	// digest of the commitments. The openings need no agreement of their own, as each is
+	// checked against a commitment the parties have agreed on.
+	void check1(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int length) {
 		// Pack the csp s-tuple tail through the gadget g = (1, X, …,
 		// X^{λ-1}) to get pair-specific x^{me,j} ∈ F_{2^λ} (one per peer).
 		//   Mx[j] = M_j[x^{me,j}] from MAC tail
@@ -602,24 +627,18 @@ class AShareGen final : public AShareSource<nP> {
 		Kx[party] = zero_block;
 		xv[party] = zero_block;  // x^{me,me} := 0
 
-		// FZero: produce u^me ∈ (F_{2^λ})^nP with ⊕_p u^p_k = 0 for
-		// every column k. See fzero_xor in common/fzero.h.
-		block u_me[nP];
-		for (int k = 0; k < nP; ++k) u_me[k] = zero_block;
-		BlockVec fz_scratch;   // tiny (nP blocks), low-freq check1 -- local is fine
-		fzero_xor<nP>(io, &prg, pool, party, u_me, nP, fz_scratch);
-
-		// y^me_k = x^{me,k} ⊕ u^me_k (with x^{me,me} := 0 so the k+1==me
-		// column is just u^me_k). Broadcast y^me via FBC (echo). Index k
+		// y^me_k = x^{me,k} ⊕ u^me_k, with u^me from F_Zero (⊕_p u^p_k = 0 for every
+		// column k) and x^{me,me} := 0, so the k+1==me column is just u^me_k. Index k
 		// (0-based) here corresponds to column k+1 (1-indexed parties).
 		block y_me[nP];
 		for (int k = 0; k < nP; ++k)
-			y_me[k] = xv[k + 1] ^ u_me[k];
+			y_me[k] = xv[k + 1] ^ check1_u_[k];
 
+		EchoBC<nP> echo(io, pool, party);
 		block y_storage[nP + 1][nP];
 		block *y_view[nP + 1];
 		for (int p = 1; p <= nP; ++p) y_view[p] = y_storage[p];
-		echo.all_bcast(y_me, nP, y_view);
+		echo.all_bcast(y_me, nP, y_view);   // round 1
 
 		// y_j = ⊕_p y^p_j (column sum). By zero-share, y_j = ⊕_{p≠j} x^{p,j}.
 		// Build z^me with z^me_j = M_j[x^{me,j}] for j ≠ me and
@@ -642,7 +661,8 @@ class AShareGen final : public AShareSource<nP> {
 		role_bound_commitment(z_dgst[party].d, session_id,
 		                      "emp-ag:ashare-delta", party,
 		                      z + 1, nP * sizeof(block));
-		echo.all_bcast(z_dgst[party], z_dgst);
+		echo.all_bcast_agree(z_dgst[party], z_dgst,   // round 2, agreeing on y
+		                     "cheat check1: parties saw different y\n");
 
 		// Open z^me; verify ⊕_p z^p_j = 0 for every column j.
 		// Columns where j = some party p collapse via MAC = KEY ⊕ x · Δ_p
@@ -651,7 +671,8 @@ class AShareGen final : public AShareSource<nP> {
 		block z_storage[nP + 1][nP];
 		block *z_recv[nP + 1];
 		for (int i = 1; i <= nP; ++i) z_recv[i] = z_storage[i];
-		echo.all_bcast(z + 1, nP, z_recv);
+		echo.all_bcast_agree(z + 1, nP, z_recv,   // round 3, agreeing on the commitments
+		                     "cheat check1: parties saw different commitments\n");
 		for (int peer = 1; peer <= nP; ++peer) {
 			char chk[FsHash::DIGEST_SIZE];
 			role_bound_commitment(chk, session_id, "emp-ag:ashare-delta",
