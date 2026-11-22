@@ -17,8 +17,8 @@
 // the constant 0, so the alignment holds by construction.
 //
 // Per call:
-//   1. mint the B rows and run the leaky ANDs on them (at nP == 2 every row's half-gate
-//      rows in one flight and every s-bit in the next; at nP >= 3 row by row);
+//   1. mint the B rows and run the leaky ANDs on them: every row's half-gate rows in one
+//      flight, and every s-bit in the next (triple/laand.h);
 //   2. draw the post-commitment coin (Fiat-Shamir at nP == 2, commit-then-open at nP > 2):
 //      it folds the consistency check of every share drawn since the last call, gives the
 //      rotations, continues as the nP >= 3 leaky-AND challenge, and is the call's coin;
@@ -119,15 +119,8 @@ public:
     // A row's vectors are final once it is minted: the mint sizes them, and nothing
     // resizes them before the coin folds their check2.
     std::vector<TripleRow<nP>> rows((size_t)B);
-    if constexpr (nP == 2) {
-      for (int k = 0; k < B; ++k) rows[(size_t)k] = mint_row_(k, L);
-      laand_.produce_rows_2pc(rows, L, feq);
-    } else {
-      for (int k = 0; k < B; ++k) {
-        rows[(size_t)k] = mint_row_(k, L);
-        laand_.produce_row(rows[(size_t)k], L, feq);
-      }
-    }
+    for (int k = 0; k < B; ++k) rows[(size_t)k] = mint_row_(k, L);
+    laand_.produce_rows(rows, L, feq);
 
     // 2. The post-commitment coin, after every row is fixed: every party holds it here.
     //    It folds check2 of this call's draws (the walk's masks and every row), drawn
