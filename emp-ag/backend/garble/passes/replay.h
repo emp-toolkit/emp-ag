@@ -22,8 +22,12 @@
 // a whole WireReuse::Linear program is the I == 0, base == 0 special case (the
 // program's own packed wire ids ARE the slots).
 //
-#include "emp-tool/ir/program.h"   // BooleanProgram, Gate, Op
+#include "emp-tool/ir/context/compose.h"   // ComposePlan
+#include "emp-tool/ir/program.h"           // BooleanProgram, Gate, Op
+#include "emp-tool/runtime/core/utils.h"   // expecting
 #include <cstdint>
+#include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace emp::ag {
@@ -71,6 +75,99 @@ inline void replay_lowered(const LoweredUnit &lu, Pass &pass, uint32_t base,
       case circuit::Op::Const1:
         for (; g < e; ++g) pass.const_at(map(po[g]), pb[g] != 0);
         break;
+    }
+  }
+}
+
+// A composition laid out for replay: each distinct unit lowered once; a slot for every
+// glue gate in emission order; for each unit call a block of its unit's num_wires slots
+// (base), with the call's inputs read from the slots that produce them. Every call's
+// And outputs land in distinct slots, so a walk replays the events in order with the
+// slot-explicit pass interface and no materialized program. Each unit must be
+// WireReuse::Linear or dense (its ids are its slots): a WireReuse::Full unit recycles
+// ids, and its block would clobber live AND state.
+struct ComposedLayout {
+  std::shared_ptr<const ComposePlan> plan;
+  std::unordered_map<const circuit::BooleanProgram *, LoweredUnit> lowered;
+  std::vector<uint32_t> slot;                    // composition wire -> slot
+  std::vector<uint32_t> base;                    // per call: its slot block
+  std::vector<std::vector<uint32_t>> in_slots;   // per call: its inputs' slots
+  std::vector<uint32_t> out_ids;                 // the plan's outputs' slots
+  uint32_t num_wires = 0;
+  int64_t num_ands = 0;
+};
+
+inline ComposedLayout build_composed_layout(std::shared_ptr<const ComposePlan> plan) {
+  expecting(plan != nullptr, "build_composed_layout: null plan");
+  ComposedLayout L;
+  L.plan = std::move(plan);
+  const ComposePlan &P = *L.plan;
+  std::unordered_map<const circuit::BooleanProgram *, int64_t> unit_ands;
+  for (const ComposeInstance &inst : P.instances) {
+    expecting(inst.unit != nullptr, "build_composed_layout: a call of a null unit");
+    expecting(inst.unit->wire_reuse != circuit::WireReuse::Full,
+              "build_composed_layout: WireReuse::Full composition unit not supported (would "
+              "clobber stored AND state); compile composition units Linear");
+    LoweredUnit &lu = L.lowered[inst.unit.get()];
+    if (lu.out.empty() && !inst.unit->gates.empty()) lu.build(*inst.unit);
+    if (unit_ands.count(inst.unit.get()) == 0) {
+      int64_t n = 0;
+      for (const circuit::Gate &g : inst.unit->gates) n += g.op == circuit::Op::And;
+      unit_ands.emplace(inst.unit.get(), n);
+    }
+  }
+  L.slot.assign(P.num_wires, 0);
+  for (uint32_t c = 0; c < P.num_inputs; ++c) L.slot[c] = c;
+  uint64_t next = P.num_inputs;
+  L.base.assign(P.instances.size(), 0);
+  L.in_slots.resize(P.instances.size());
+  for (const ComposeEvent &ev : P.events) {
+    if (ev.instance < 0) {
+      L.slot[ev.gate.out] = (uint32_t)next++;
+      if (ev.gate.op == circuit::Op::And) ++L.num_ands;
+    } else {
+      const ComposeInstance &inst = P.instances[(size_t)ev.instance];
+      const circuit::BooleanProgram &U = *inst.unit;
+      const uint32_t I = U.num_inputs;
+      std::vector<uint32_t> &is = L.in_slots[(size_t)ev.instance];
+      is.resize(I);
+      for (uint32_t j = 0; j < I; ++j) is[j] = L.slot[inst.in_ids[j]];
+      const uint32_t bi = (uint32_t)next;
+      L.base[(size_t)ev.instance] = bi;
+      next += U.num_wires;
+      expecting(next <= UINT32_MAX, "build_composed_layout: the composition's slots overflow uint32_t");
+      for (size_t k = 0; k < U.outputs.size(); ++k) {
+        const uint32_t w = U.outputs[k];
+        L.slot[inst.out_ids[k]] = (w < I) ? is[w] : bi + w;
+      }
+      L.num_ands += unit_ands.find(&U)->second;
+    }
+  }
+  L.num_wires = (uint32_t)next;
+  L.out_ids.resize(P.outputs.size());
+  for (size_t i = 0; i < P.outputs.size(); ++i) L.out_ids[i] = L.slot[P.outputs[i]];
+  return L;
+}
+
+// One walk of a laid-out composition over `pass`, in emission order.
+template <class Pass>
+inline void replay_composed(const ComposedLayout &L, Pass &pass) {
+  const ComposePlan &P = *L.plan;
+  const uint32_t *slot = L.slot.data();
+  for (const ComposeEvent &ev : P.events) {
+    if (ev.instance < 0) {
+      const circuit::Gate &g = ev.gate;
+      switch (g.op) {
+        case circuit::Op::And:    pass.and_at(slot[g.out], slot[g.in0], slot[g.in1]); break;
+        case circuit::Op::Xor:    pass.xor_at(slot[g.out], slot[g.in0], slot[g.in1]); break;
+        case circuit::Op::Not:    pass.not_at(slot[g.out], slot[g.in0]); break;
+        case circuit::Op::Const0: pass.const_at(slot[g.out], false); break;
+        case circuit::Op::Const1: pass.const_at(slot[g.out], true); break;
+      }
+    } else {
+      const ComposeInstance &inst = P.instances[(size_t)ev.instance];
+      replay_lowered(L.lowered.find(inst.unit.get())->second, pass, L.base[(size_t)ev.instance],
+                     inst.unit->num_inputs, L.in_slots[(size_t)ev.instance].data());
     }
   }
 }

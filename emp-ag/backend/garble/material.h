@@ -41,14 +41,23 @@ struct PreparedMaterial {
   PreparedMaterial(PreparedMaterial &&) = default;
   PreparedMaterial &operator=(PreparedMaterial &&) = default;
 
+  // The program prepared: flat (program) or composed (its replay layout).
   std::shared_ptr<const circuit::BooleanProgram> program;
-  LoweredUnit lowered;                  // populated for WireReuse::Linear
+  std::shared_ptr<const ComposedLayout> composed;
+  LoweredUnit lowered;                  // populated for a flat WireReuse::Linear program
   ComputeCtx<nP> ctx;
   EvalChunk<nP> rows;                   // populated only at P1
   SecureWires<nP> target_inputs;        // fresh offline masks + garbling labels
   SecureWires<nP> output_static;        // authenticated bundles (+ garbler label0)
   std::vector<uint32_t> output_ids;
   bool linear = false;
+
+  // Prepared and not yet run; a run consumes it.
+  bool live() const { return program != nullptr || composed != nullptr; }
+  void consume() {
+    program.reset();
+    composed.reset();
+  }
 };
 
 }  // namespace emp::ag

@@ -306,7 +306,12 @@ stored rows, and each output opens only to its recipients, under `Auth::KRRW`
 after the output check and under `Auth::WRK` in the first flight after the
 inputs, with party 1 handing each garbler recipient the outputs' masked values.
 A program built elsewhere, with any number of slots, runs through
-`prepare_computation` / `run_computation` directly. One job is outstanding at a
+`prepare_computation` / `run_computation` directly. A composed program, a
+`ComposePlan` of glue gates and calls of compiled units (emp-tool's
+`ComposeCtx` or `frontend::compose`), goes to `prepare_computation(plan, io)`
+with its slots: the session lays the plan out once, lowers each distinct unit
+once, and replays the layout in every walk, so no walk copies a unit per call.
+One job is outstanding at a
 time; while it is, every other call of the session that sends anything is
 fatal. Values do not cross between this path and the prepared API above.
 

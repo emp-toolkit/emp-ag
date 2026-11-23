@@ -183,13 +183,12 @@ public:
   class ComputationJob {
     friend class AGMPCSession<nP, Cfg>;
     JobSlot_ slot_;
-    std::shared_ptr<const circuit::ComputationArtifact> artifact_;
+    std::shared_ptr<const circuit::IoSignature> io_;   // the Computation's slots
     std::vector<unsigned char> mask_;   // per input wire: its mask where opened to this party
 
-    ComputationJob(JobSlot_ slot,
-                   std::shared_ptr<const circuit::ComputationArtifact> artifact,
+    ComputationJob(JobSlot_ slot, std::shared_ptr<const circuit::IoSignature> io,
                    std::vector<unsigned char> mask)
-        : slot_(std::move(slot)), artifact_(std::move(artifact)), mask_(std::move(mask)) {}
+        : slot_(std::move(slot)), io_(std::move(io)), mask_(std::move(mask)) {}
 
   public:
     ComputationJob(ComputationJob &&) noexcept = default;
@@ -444,8 +443,20 @@ public:
     circuit::validate_computation(art);
 #else
     expecting(art.program != nullptr, "AGMPCSession: a Computation without a program");
+    validate_slots_(art.io, art.program->num_inputs, art.program->outputs.size());
+#endif
+  }
+  // The same for a composed one; debug builds validate the plan and each distinct unit.
+  static void validate_computation_(const ComposePlan &plan, const circuit::IoSignature &io) {
+#if !defined(NDEBUG) || defined(EMP_AG_DEBUG_CHECKS)
+    validate_compose(plan);
+#endif
+    validate_slots_(io, plan.num_inputs, plan.outputs.size());
+  }
+  static void validate_slots_(const circuit::IoSignature &io, uint64_t num_inputs,
+                              uint64_t num_outputs) {
     uint64_t in_bits = 0, out_bits = 0;
-    for (const circuit::InputRole &r : art.io.inputs) {
+    for (const circuit::InputRole &r : io.inputs) {
       expecting((r.kind == circuit::InputKind::Party && r.owner >= 1) ||
                     (r.kind == circuit::InputKind::Public && r.owner == PUBLIC),
                 "AGMPCSession: an input slot's kind and owner disagree");
@@ -453,9 +464,9 @@ public:
                 "AGMPCSession: an input slot is empty, or the widths overflow");
       in_bits += r.width;
     }
-    expecting(in_bits == (uint64_t)art.program->num_inputs,
+    expecting(in_bits == num_inputs,
               "AGMPCSession: the input slots do not cover the program's inputs");
-    for (const circuit::OutputRole &r : art.io.outputs) {
+    for (const circuit::OutputRole &r : io.outputs) {
       expecting((r.kind == circuit::OutputKind::Party && r.recipient >= 1) ||
                     (r.kind == circuit::OutputKind::Public && r.recipient == PUBLIC),
                 "AGMPCSession: an output slot's kind and recipient disagree");
@@ -463,9 +474,8 @@ public:
                 "AGMPCSession: an output slot is empty, or the widths overflow");
       out_bits += r.width;
     }
-    expecting(out_bits == (uint64_t)art.program->outputs.size(),
+    expecting(out_bits == num_outputs,
               "AGMPCSession: the output slots do not cover the program's outputs");
-#endif
   }
 
   // prepare_computation does every step that needs no input value: all
@@ -478,22 +488,21 @@ public:
   job_t prepare_computation(std::shared_ptr<const circuit::ComputationArtifact> art) {
     expecting(art != nullptr, "AGMPCSession::prepare_computation: null computation");
     validate_computation_(*art);
-    for (const circuit::InputRole &r : art->io.inputs)
-      expecting(r.kind == circuit::InputKind::Public || r.owner <= nP,
-                "AGMPCSession::prepare_computation: an input owner is above the party count");
-    for (const circuit::OutputRole &r : art->io.outputs)
-      expecting(r.kind == circuit::OutputKind::Public || r.recipient <= nP,
-                "AGMPCSession::prepare_computation: an output recipient is above the party count");
-    expecting(job_ != JobKind::Prepared,
-              "AGMPCSession::prepare_computation: a prepared execution is outstanding");
-    require_no_computation_job_("AGMPCSession::prepare_computation");
+    std::shared_ptr<const circuit::IoSignature> io(art, &art->io);
+    return prepare_computation_(std::move(io), [&] { return engine_.prepare_program(art->program); });
+  }
 
-    std::unique_ptr<typename Engine::Material> material =
-        engine_.prepare_program(art->program);
-    std::vector<int> owner = computation_input_owners_(*art);
-    std::vector<unsigned char> mask = engine_.open_input_masks(*material, owner);
-    return job_t(begin_job_(JobKind::Computation, std::move(material)), std::move(art),
-                 std::move(mask));
+  // A composed Computation: the circuit as the frontend records it (emp-tool ComposeCtx,
+  // frontend::compose), glue gates and calls of compiled units, with `io`'s slots over
+  // its external inputs and outputs. How it runs is the session's business: the plan is
+  // laid out once and each distinct unit lowered once, and every walk replays that
+  // layout, so a unit called m times is never copied m times. Each unit must be
+  // WireReuse::Linear or dense. run_computation takes the job as it takes any other.
+  job_t prepare_computation(std::shared_ptr<const ComposePlan> plan, circuit::IoSignature io) {
+    expecting(plan != nullptr, "AGMPCSession::prepare_computation: null composed program");
+    validate_computation_(*plan, io);
+    return prepare_computation_(std::make_shared<const circuit::IoSignature>(std::move(io)),
+                                [&] { return engine_.prepare_composed(std::move(plan)); });
   }
 
   // The online half: this party binds its own Party slots and every Public slot
@@ -545,12 +554,34 @@ public:
   }
 
 private:
+  // prepare_computation once the circuit is checked: the slots' parties and the job
+  // state, before any traffic; then `prepare` (every preprocessing walk and the
+  // garbling) and the round that opens the input masks.
+  template <class Prepare>
+  job_t prepare_computation_(std::shared_ptr<const circuit::IoSignature> io, Prepare &&prepare) {
+    for (const circuit::InputRole &r : io->inputs)
+      expecting(r.kind == circuit::InputKind::Public || r.owner <= nP,
+                "AGMPCSession::prepare_computation: an input owner is above the party count");
+    for (const circuit::OutputRole &r : io->outputs)
+      expecting(r.kind == circuit::OutputKind::Public || r.recipient <= nP,
+                "AGMPCSession::prepare_computation: an output recipient is above the party count");
+    expecting(job_ != JobKind::Prepared,
+              "AGMPCSession::prepare_computation: a prepared execution is outstanding");
+    require_no_computation_job_("AGMPCSession::prepare_computation");
+
+    std::unique_ptr<typename Engine::Material> material = prepare();
+    std::vector<int> owner = computation_input_owners_(*io);
+    std::vector<unsigned char> mask = engine_.open_input_masks(*material, owner);
+    return job_t(begin_job_(JobKind::Computation, std::move(material)), std::move(io),
+                 std::move(mask));
+  }
+
   session::RawResult run_computation_(job_t &&job, const session::RawBindings &b_in,
                                       const std::vector<const AShareBundle<nP> *> *authenticated) {
     expecting(holds_job_(job.slot_, JobKind::Computation),
               "AGMPCSession::run_computation: invalid, foreign, abandoned, or consumed job");
-    const std::shared_ptr<const circuit::ComputationArtifact> art = job.artifact_;
-    const circuit::IoSignature &io_sig = art->io;
+    const std::shared_ptr<const circuit::IoSignature> io = job.io_;
+    const circuit::IoSignature &io_sig = *io;
     const int me = party();
     auto is_authenticated = [&](size_t s) {
       return authenticated != nullptr && (*authenticated)[s] != nullptr;
@@ -569,10 +600,14 @@ private:
           b.inputs[s] = session::Bits(io_sig.inputs[s].width, 0);
       }
     }
-    session::check_bindings(*art, me, b);
+    {
+      circuit::ComputationArtifact slots;   // check_bindings reads only the slots
+      slots.io = io_sig;
+      session::check_bindings(slots, me, b);
+    }
 
     const std::vector<uint32_t> in_off = circuit::input_slot_offsets(io_sig);
-    std::vector<int> owner = computation_input_owners_(*art);
+    std::vector<int> owner = computation_input_owners_(io_sig);
     std::vector<unsigned char> lambda(owner.size(), 0);
     ag::AShareBundleVec<nP> source;
     std::vector<unsigned char> from_source;
@@ -606,7 +641,7 @@ private:
 
     // Consume before the first online message: an aborted run is not retryable.
     std::unique_ptr<typename Engine::Material> material = take_job_(job.slot_);
-    job.artifact_.reset();
+    job.io_.reset();
     job.mask_.clear();
     const std::vector<unsigned char> bits = engine_.run_computation(
         *material, owner, lambda, open_to,
@@ -984,10 +1019,9 @@ private:
   }
 
   // The party that supplies each input wire, PUBLIC for a Public slot.
-  static std::vector<int> computation_input_owners_(const circuit::ComputationArtifact &art) {
+  static std::vector<int> computation_input_owners_(const circuit::IoSignature &io) {
     std::vector<int> owner;
-    owner.reserve(art.program->num_inputs);
-    for (const circuit::InputRole &r : art.io.inputs)
+    for (const circuit::InputRole &r : io.inputs)
       owner.insert(owner.end(), r.width,
                    r.kind == circuit::InputKind::Public ? (int)PUBLIC : r.owner);
     return owner;

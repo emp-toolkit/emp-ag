@@ -117,6 +117,37 @@ class AGMPCEngine {
       material->output_ids = run_liveness_(st, source);
     }
 
+    prepare_material_(*material);
+    return material;
+  }
+
+  // The same for a composed program: its layout is built once, here, and every walk
+  // replays it, so each distinct unit is lowered once however often it is called.
+  std::unique_ptr<Material> prepare_composed(std::shared_ptr<const ComposePlan> plan) {
+    expecting(plan != nullptr, "prepare_composed: null composed program");
+    auto material = std::make_unique<Material>();
+    auto layout = std::make_shared<const ComposedLayout>(build_composed_layout(std::move(plan)));
+    expecting(layout->plan->num_inputs <= (uint32_t)INT_MAX &&
+                  layout->num_wires <= (uint32_t)INT_MAX && layout->num_ands <= (int64_t)INT_MAX,
+              "prepare_composed: the composition's inputs, slots or AND gates overflow int");
+    ComputeCtx &st = material->ctx;
+    st.num_in = (int)layout->plan->num_inputs;
+    st.num_wires = (int)layout->num_wires;
+    st.num_ands = (int)layout->num_ands;
+    material->output_ids = layout->out_ids;
+    material->composed = std::move(layout);
+    material->linear = true;   // the layout's ids are the slots
+    prepare_trust_layout_(st);
+    prepare_material_(*material);
+    return material;
+  }
+
+ private:
+  // prepare_program / prepare_composed after the layout: the offline masks of the
+  // inputs, every preprocessing walk, and the garbling (P1 stores the rows).
+  void prepare_material_(Material &m) {
+    ComputeCtx &st = m.ctx;
+    Material *material = &m;
     material->target_inputs = mpc->make_prepared_inputs_(st.num_in);
     load_prepared_inputs_(st, material->target_inputs);
     with_prepared_source_(*material, [&](auto &source) {
@@ -143,12 +174,11 @@ class AGMPCEngine {
     mpc->abit->maybe_flush_cot_check();
     mpc->abit->settle_check2();
     total_ands += (uint64_t)st.num_ands;
-    return material;
   }
 
+ public:
   PreparedRunResult run_prepared(Material &material, const Binding &binding) {
-    expecting(material.program != nullptr,
-              "run_prepared: prepared material was already consumed");
+    expecting(material.live(), "run_prepared: prepared material was already consumed");
     expecting(binding.size() == (size_t)material.ctx.num_in,
               "run_prepared: argument width differs from prepared circuit input width");
 
@@ -166,7 +196,7 @@ class AGMPCEngine {
       if (st.num_ands > 0) mpc->deliver_output_masks_(result.outputs);
       AG_PHASE("deliver_output_masks");
     }
-    material.program.reset();
+    material.consume();
     return result;
   }
 
@@ -177,8 +207,7 @@ class AGMPCEngine {
   // the mask where it was opened to this party.
   std::vector<unsigned char> open_input_masks(const Material &material,
                                               const std::vector<int> &owner) {
-    expecting(material.program != nullptr,
-              "open_input_masks: prepared material was already consumed");
+    expecting(material.live(), "open_input_masks: prepared material was already consumed");
     expecting(owner.size() == (size_t)material.ctx.num_in,
               "open_input_masks: owner count differs from the circuit input width");
     return mpc->open_computation_input_masks_(material.target_inputs, owner);
@@ -200,8 +229,7 @@ class AGMPCEngine {
       const std::vector<std::vector<int>> &open_to,
       const AShareBundle<nP> *source = nullptr,
       const std::vector<unsigned char> *from_source = nullptr) {
-    expecting(material.program != nullptr,
-              "run_computation: prepared material was already consumed");
+    expecting(material.live(), "run_computation: prepared material was already consumed");
     expecting(owner.size() == (size_t)material.ctx.num_in &&
                   lambda.size() == owner.size(),
               "run_computation: input width differs from the prepared circuit");
@@ -237,7 +265,7 @@ class AGMPCEngine {
     const std::vector<int> &mine = open_to[(size_t)party];
     for (size_t j = 0; j < mine.size(); ++j)
       bits[(size_t)mine[j]] = (unsigned char)((mask[j] ^ out.Lambda[(size_t)mine[j]]) & 1);
-    material.program.reset();
+    material.consume();
     return bits;
   }
 
@@ -321,78 +349,14 @@ class AGMPCEngine {
       validate_(*inst.unit);
     }
 
-    std::unordered_map<const circuit::BooleanProgram *, int64_t> and_cache;
-    auto unit_ands = [&](const circuit::BooleanProgram *u) {
-      auto it = and_cache.find(u);
-      if (it != and_cache.end()) return it->second;
-      int64_t n = agmpc_count_ands(*u);
-      and_cache.emplace(u, n);
-      return n;
+    // The layout lives only in this call, so it borrows the plan.
+    const ComposedLayout layout = build_composed_layout(
+        std::shared_ptr<const ComposePlan>(std::shared_ptr<const ComposePlan>(), &plan));
+    auto source = [&layout](auto &pass) -> std::vector<uint32_t> {
+      replay_composed(layout, pass);
+      return layout.out_ids;
     };
-    // Lower each DISTINCT unit once per plan (same dedup rule as the validation
-    // above): the walks below replay the op-run form instead of re-driving
-    // for_each_gate through a per-gate visitor. Per-call (not cached across
-    // calls): a unit pointer is only known stable within this call, and one
-    // 12 B/gate copy per chunk is noise next to the instances x walks it serves.
-    std::unordered_map<const circuit::BooleanProgram *, LoweredUnit> lowered;
-    for (const ComposeInstance &inst : plan.instances) {
-      LoweredUnit &lu = lowered[inst.unit.get()];
-      if (lu.out.empty() && !inst.unit->gates.empty()) lu.build(*inst.unit);
-    }
-
-    std::vector<uint32_t> slot(plan.num_wires, 0);
-    for (uint32_t c = 0; c < plan.num_inputs; ++c) slot[c] = c;
-    uint32_t next = plan.num_inputs;
-    int64_t num_ands = 0;
-    std::vector<uint32_t> base(plan.instances.size(), 0);
-    std::vector<std::vector<uint32_t>> in_slots(plan.instances.size());
-    for (const ComposeEvent &ev : plan.events) {
-      if (ev.instance < 0) {
-        slot[ev.gate.out] = next++;
-        if (ev.gate.op == circuit::Op::And) ++num_ands;
-      } else {
-        const ComposeInstance &inst = plan.instances[(size_t)ev.instance];
-        const circuit::BooleanProgram &U = *inst.unit;
-        const uint32_t I = U.num_inputs;
-        std::vector<uint32_t> &is = in_slots[(size_t)ev.instance];
-        is.resize(I);
-        for (uint32_t j = 0; j < I; ++j) is[j] = slot[inst.in_ids[j]];
-        const uint32_t bi = next;
-        base[(size_t)ev.instance] = bi;
-        next += U.num_wires;
-        for (size_t k = 0; k < U.outputs.size(); ++k) {
-          uint32_t w = U.outputs[k];
-          slot[inst.out_ids[k]] = (w < I) ? is[w] : bi + w;
-        }
-        num_ands += unit_ands(&U);
-      }
-    }
-    const uint32_t num_wires = next;
-    std::vector<uint32_t> out_ids(plan.outputs.size());
-    for (size_t i = 0; i < plan.outputs.size(); ++i) out_ids[i] = slot[plan.outputs[i]];
-
-    auto source = [&](auto &pass) -> std::vector<uint32_t> {
-      using Pass = std::decay_t<decltype(pass)>;
-      for (const ComposeEvent &ev : plan.events) {
-        if (ev.instance < 0) {
-          const circuit::Gate &g = ev.gate;
-          switch (g.op) {
-            case circuit::Op::And:    pass.and_at(slot[g.out], slot[g.in0], slot[g.in1]); break;
-            case circuit::Op::Xor:    pass.xor_at(slot[g.out], slot[g.in0], slot[g.in1]); break;
-            case circuit::Op::Not:    pass.not_at(slot[g.out], slot[g.in0]); break;
-            case circuit::Op::Const0: pass.const_at(slot[g.out], false); break;
-            case circuit::Op::Const1: pass.const_at(slot[g.out], true); break;
-          }
-        } else {
-          const ComposeInstance &inst = plan.instances[(size_t)ev.instance];
-          ag::replay_lowered(lowered.find(inst.unit.get())->second, pass,
-                             base[(size_t)ev.instance], inst.unit->num_inputs,
-                             in_slots[(size_t)ev.instance].data());
-        }
-      }
-      return out_ids;
-    };
-    return run_trust_(inputs, source, num_wires, num_ands, out_ids);
+    return run_trust_(inputs, source, layout.num_wires, layout.num_ands, layout.out_ids);
   }
 
  private:
@@ -433,6 +397,14 @@ class AGMPCEngine {
   // same execute_program source as the dense path.
   template <class F>
   void with_prepared_source_(Material &material, F &&f) {
+    if (material.composed) {
+      auto source = [&material](auto &pass) -> std::vector<uint32_t> {
+        replay_composed(*material.composed, pass);
+        return material.output_ids;
+      };
+      f(source);
+      return;
+    }
     const circuit::BooleanProgram &prog = *material.program;
     if (material.linear) {
       auto source = [&material](auto &pass) -> std::vector<uint32_t> {

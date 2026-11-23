@@ -2,10 +2,10 @@
 // recipients, prepared offline and run online. Every party derives the same
 // programs and inputs from fixed seeds, binds only its own Party slots and every
 // Public slot, and checks each output slot it receives (and only those) against
-// ClearSession's circuit mode over the same artifact. test/CMakeLists.txt builds
-// it for both Auth options, both Delivery options, both triple sources and
-// nP = 2, 3, 4; the COT backend is the build's. The COMP_* switches select the
-// misuse cases that must stop before any traffic.
+// ClearSession's circuit mode over the same artifact (for a composed one, its
+// flattening). test/CMakeLists.txt builds it for both Auth options, both Delivery
+// options, both triple sources and nP = 2, 3, 4; the COT backend is the build's. The
+// COMP_* switches select the misuse cases that must stop before any traffic.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
 #include <cstdint>
@@ -109,10 +109,57 @@ static ComputationArtifact random_computation(std::mt19937_64 &rng, bool ands,
   return a;
 }
 
+// A composed Computation: the plan as the frontend records it and its slots.
+struct Composed {
+  std::shared_ptr<const ComposePlan> plan;
+  IoSignature io;
+};
+
+// The same slots over a composed program: a random unit with AND gates called `calls`
+// times, glue XOR and AND gates between the calls, and every argument and output drawn
+// from the inputs, the glue and the earlier calls' outputs.
+static Composed random_composed_computation(std::mt19937_64 &rng, int calls) {
+  IoSignature io;
+  uint32_t ni = 0;
+  for (int p = 1; p <= nP; ++p) {
+    const uint32_t w = 1 + (uint32_t)(rng() % 6);
+    io.inputs.push_back({w, InputKind::Party, p});
+    ni += w;
+  }
+  const uint32_t wp = 1 + (uint32_t)(rng() % 5);
+  io.inputs.push_back({wp, InputKind::Public, PUBLIC});
+  ni += wp;
+  auto unit = random_program(rng, 4, 20 + (uint32_t)(rng() % 40), true);
+  for (int k = 0; k < 5; ++k) unit->outputs.push_back((uint32_t)(rng() % unit->num_wires));
+
+  ComposeCtx cx;
+  const uint32_t first = cx.external_input(ni);
+  std::vector<uint32_t> live(ni);
+  for (uint32_t i = 0; i < ni; ++i) live[i] = first + i;
+  const auto pick = [&] { return live[rng() % live.size()]; };
+  for (int c = 0; c < calls; ++c) {
+    if (rng() % 2) live.push_back(cx.xor_gate(pick(), pick()));
+    if (rng() % 3 == 0) live.push_back(cx.and_gate(pick(), pick()));
+    const uint32_t args[4] = {pick(), pick(), pick(), pick()};
+    const std::vector<uint32_t> out = cx.call_unit(unit, args, 4);
+    live.insert(live.end(), out.begin(), out.end());
+  }
+  std::vector<uint32_t> outs;
+  auto add_out = [&](OutputRole role) {
+    for (uint32_t k = 0; k < role.width; ++k) outs.push_back(rng() % 8 == 0 ? first + (uint32_t)(rng() % ni) : pick());
+    io.outputs.push_back(role);
+  };
+  add_out({1 + (uint32_t)(rng() % 8), OutputKind::Party, 1});
+  for (int g = 2; g <= nP; ++g) add_out({1 + (uint32_t)(rng() % 8), OutputKind::Party, g});
+  add_out({1 + (uint32_t)(rng() % 4), OutputKind::Public, PUBLIC});
+
+  return {std::make_shared<const ComposePlan>(cx.finish(outs)), std::move(io)};
+}
+
 // Every slot's bits, the same at every party.
-static std::vector<emp::session::Bits> random_inputs(std::mt19937_64 &rng, const ComputationArtifact &a) {
+static std::vector<emp::session::Bits> random_inputs(std::mt19937_64 &rng, const IoSignature &io) {
   std::vector<emp::session::Bits> v;
-  for (const InputRole &r : a.io.inputs) {
+  for (const InputRole &r : io.inputs) {
     emp::session::Bits b(r.width);
     for (uint8_t &x : b) x = (uint8_t)(rng() & 1);
     v.push_back(std::move(b));
@@ -120,31 +167,44 @@ static std::vector<emp::session::Bits> random_inputs(std::mt19937_64 &rng, const
   return v;
 }
 
-// Run `a` on `sess` with this party's bindings and check what it receives.
-static void run_and_check(AgSession &sess, const ComputationArtifact &a,
-                          const std::vector<emp::session::Bits> &in, const char *what) {
+// Run the prepared `job` with this party's bindings and check each output slot it
+// receives (and only those) against ClearSession's run of `flat`, the same computation.
+static void check_run(AgSession &sess, AgSession::job_t job, const ComputationArtifact &flat,
+                      const std::vector<emp::session::Bits> &in, const char *what) {
   const int me = sess.party();
-  auto art = std::make_shared<const ComputationArtifact>(a);
   emp::session::RawBindings mine, all;
-  for (size_t s = 0; s < a.io.inputs.size(); ++s) {
+  for (size_t s = 0; s < flat.io.inputs.size(); ++s) {
     all.inputs.emplace_back(in[s]);
-    mine.inputs.emplace_back(emp::session::binds(a.io.inputs[s], me)
+    mine.inputs.emplace_back(emp::session::binds(flat.io.inputs[s], me)
                                  ? std::optional<emp::session::Bits>(in[s])
                                  : std::nullopt);
   }
   ClearSession oracle;
-  const emp::session::RawResult want = oracle.run_computation(oracle.prepare_computation(art), all);
+  const emp::session::RawResult want = oracle.run_computation(
+      oracle.prepare_computation(std::make_shared<const ComputationArtifact>(flat)), all);
 
-  auto job = sess.prepare_computation(art);
   const emp::session::RawResult got = sess.run_computation(std::move(job), mine);
-  bool ok = got.outputs.size() == a.io.outputs.size();
-  for (size_t s = 0; ok && s < a.io.outputs.size(); ++s) {
-    if (emp::session::receives(a.io.outputs[s], me))
+  bool ok = got.outputs.size() == flat.io.outputs.size();
+  for (size_t s = 0; ok && s < flat.io.outputs.size(); ++s) {
+    if (emp::session::receives(flat.io.outputs[s], me))
       ok = got.outputs[s].has_value() && *got.outputs[s] == *want.outputs[s];
     else
       ok = !got.outputs[s].has_value();
   }
   check(ok, what, me);
+}
+static void run_and_check(AgSession &sess, const ComputationArtifact &a,
+                          const std::vector<emp::session::Bits> &in, const char *what) {
+  check_run(sess, sess.prepare_computation(std::make_shared<const ComputationArtifact>(a)), a,
+            in, what);
+}
+// A composed one runs as composed; ClearSession runs its flattening.
+static void run_and_check(AgSession &sess, const Composed &c,
+                          const std::vector<emp::session::Bits> &in, const char *what) {
+  ComputationArtifact flat;
+  flat.program = std::make_shared<const BooleanProgram>(flatten_compose(*c.plan));
+  flat.io = c.io;
+  check_run(sess, sess.prepare_computation(c.plan, c.io), flat, in, what);
 }
 
 int main(int argc, char **argv) {
@@ -183,26 +243,49 @@ int main(int argc, char **argv) {
     (void)sess.prepare_computation(std::make_shared<const ComputationArtifact>(a));
     return 1;
   }
+#elif defined(COMP_COMPOSED_FULL_UNIT)
+  {
+    std::mt19937_64 rng(7);
+    const Composed c = random_composed_computation(rng, 2);
+    auto plan = std::make_shared<ComposePlan>(*c.plan);
+    auto unit = std::make_shared<BooleanProgram>(*plan->instances[0].unit);
+    unit->wire_reuse = WireReuse::Full;
+    for (ComposeInstance &inst : plan->instances) inst.unit = unit;
+    (void)sess.prepare_computation(plan, c.io);   // must stop: a WireReuse::Full unit
+    return 1;
+  }
 #else
   // Random computations with AND gates: every kind of slot and recipient.
   for (int t = 0; t < 6; ++t) {
     std::mt19937_64 rng(1000 + (uint64_t)t);
     const ComputationArtifact a = random_computation(rng, true);
-    run_and_check(sess, a, random_inputs(rng, a), "random computation");
+    run_and_check(sess, a, random_inputs(rng, a.io), "random computation");
+  }
+
+  // Composed programs: one unit lowered once and replayed per call, glue between.
+  for (int t = 0; t < 4; ++t) {
+    std::mt19937_64 rng(7000 + (uint64_t)t);
+    const Composed c = random_composed_computation(rng, 1 + (int)(rng() % 4));
+    run_and_check(sess, c, random_inputs(rng, c.io), "composed computation");
+  }
+  {
+    std::mt19937_64 rng(7100);
+    const Composed c = random_composed_computation(rng, 40);
+    run_and_check(sess, c, random_inputs(rng, c.io), "a unit called 40 times");
   }
 
   // No AND gate: garblers still decode only through P1's hand-off under WRK.
   for (int t = 0; t < 3; ++t) {
     std::mt19937_64 rng(2000 + (uint64_t)t);
     const ComputationArtifact a = random_computation(rng, false);
-    run_and_check(sess, a, random_inputs(rng, a), "computation with no AND gate");
+    run_and_check(sess, a, random_inputs(rng, a.io), "computation with no AND gate");
   }
 
   // Only Public inputs: no owner broadcast, one flight of labels.
   {
     std::mt19937_64 rng(3000);
     const ComputationArtifact a = random_computation(rng, true, /*public_inputs_only=*/true);
-    run_and_check(sess, a, random_inputs(rng, a), "Public inputs only");
+    run_and_check(sess, a, random_inputs(rng, a.io), "Public inputs only");
   }
 
   // No inputs at all.
@@ -226,7 +309,7 @@ int main(int argc, char **argv) {
   {
     std::mt19937_64 rng(4001);
     const ComputationArtifact a = random_computation(rng, true);
-    run_and_check(sess, a, random_inputs(rng, a), "a computation after a dropped job");
+    run_and_check(sess, a, random_inputs(rng, a.io), "a computation after a dropped job");
   }
 
   // The typed surface, dense and WireReuse::Linear: x from P1, y from the last
@@ -269,7 +352,7 @@ int main(int argc, char **argv) {
     check(s.has_value() && *s == (uint8_t)(200 + 77), "direct mode between computations", party);
     std::mt19937_64 rng(6000);
     const ComputationArtifact c = random_computation(rng, true);
-    run_and_check(sess, c, random_inputs(rng, c), "a computation after direct mode");
+    run_and_check(sess, c, random_inputs(rng, c.io), "a computation after direct mode");
   }
 #endif
 

@@ -272,6 +272,9 @@ add_np_variant(agmpc_computation_bad_owner_np2 agmpc_computation.cpp 2 DEFS COMP
                PASS_RE "an input owner is above the party count")
 add_np_variant(agmpc_computation_full_reuse_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 COMP_FULL_REUSE
                PASS_RE "WireReuse::Full is not supported")
+add_np_variant(agmpc_computation_composed_full_np2 agmpc_computation.cpp 2
+               DEFS COMP_NP=2 COMP_COMPOSED_FULL_UNIT
+               PASS_RE "WireReuse::Full composition unit not supported")
 
 # Fault-injection / adversarial tests: compile the production-guarded EMP_AG_TEST_FLIP_*
 # hooks and assert the protocol aborts.
