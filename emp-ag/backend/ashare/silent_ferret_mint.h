@@ -29,6 +29,9 @@
 // draws, with no bootstrap prefix; the mint prepays one tree more, since it draws whole
 // trees.
 //
+// kLpn is every stream's LPN parameter set: ferret_b12 unless the instantiation names
+// another. A smaller set has shorter rounds.
+//
 #include "emp-ag/backend/common/netmp.h"
 #include "emp-ag/backend/common/runtime.h"            // peer_order, parallel_for
 #include "emp-ag/backend/ashare/cot_extension_factory.h"
@@ -51,7 +54,7 @@
 
 namespace emp::ag {
 
-template <int nP>
+template <int nP, const PrimalLPNParameter &kLpn = emp::tuning::ferret_b12>
 class SilentFerretMint {
  public:
 	// Streams: 2s receives from the peer of slot s (MACs), 2s + 1 sends to it (keys).
@@ -91,11 +94,11 @@ class SilentFerretMint {
 			chan_[2 * s] = ch_recv;
 			chan_[2 * s + 1] = ch_send;
 			st_[2 * s] = std::make_unique<SilentFerret>(
-				BOB, ch_recv, /*malicious=*/true, emp::tuning::ferret_b12,
+				BOB, ch_recv, /*malicious=*/true, kLpn,
 				make_base_ot(base_ot_kind, ch_recv), EMP_AG_FERRET_THREADS);
 			st_[2 * s]->set_sid(sid_recv[peer]);
 			st_[2 * s + 1] = std::make_unique<SilentFerret>(
-				ALICE, ch_send, /*malicious=*/true, emp::tuning::ferret_b12,
+				ALICE, ch_send, /*malicious=*/true, kLpn,
 				make_base_ot(base_ot_kind, ch_send), EMP_AG_FERRET_THREADS);
 			st_[2 * s + 1]->set_sid(sid_send[peer]);
 			bool split_delta[128];

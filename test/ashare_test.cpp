@@ -11,12 +11,13 @@
 //     compute_deferred() draws, an empty one among them, folded at one coin;
 //   - cots_per_stream() counts every COT drawn: the length, check2's hiding shares at
 //     nP > 2, and check1's tail on the first call;
-//   - many draws of awkward sizes, enough for a SilentFerret stream to cross a round;
+//   - many draws of awkward sizes, enough for a SilentFerret stream to cross two rounds;
 //   - check2's tags pass, and its views are agreed on their own and inside another open
 //     check;
 //   - with SilentFerret prepaid at nP = 2, drawing moves no bytes.
 // SoftSpokenMint runs once; SilentFerretMint twice, unplanned (its streams prepay the next
-// round on the wire when one runs out) and prepaid for the whole test.
+// round on the wire when one runs out) and prepaid for the whole test. SilentFerretMint
+// runs on ferret_b9, the smallest LPN set, whose rounds are short.
 #include "emp-ag/backend/ashare/ashare_gen.h"
 #include "emp-ag/backend/ashare/open_check.h"   // SymmetricOpenCheck
 #include <array>
@@ -32,13 +33,19 @@ constexpr int nP = ASHARE_NP;
 static int party;
 
 // The awkward sizes compute() runs at, the draw() and draw_soa() sizes, and the long
-// sequence: enough COTs for a ferret_b12 SilentFerret stream (4059 · 4096 user COTs a
-// round) to cross a round.
+// sequence: enough COTs for a ferret_b9 SilentFerret stream (2229 · 512 user COTs a
+// round) to cross two rounds.
 static const int kSizes[] = {1, 128, 4095, 4096, 4097, 37200};
 // Draws whose check2 waits for one fold, an empty one among them.
 static const int kDeferredSizes[] = {1000, 0, 777, 4097};
 constexpr int kDrawSize = 5000, kDrawSoaSize = 7000, kSettleSize = 4096;
-constexpr int kLongSize = 500009, kLongDraws = 34;
+constexpr int kLongSize = 100003, kLongDraws = 24;
+
+using FerretMint = SilentFerretMint<nP, emp::tuning::ferret_b9>;
+constexpr PrimalLPNParameter kB9 = emp::tuning::ferret_b9;
+constexpr int64_t kRoundCots = (kB9.t - kB9.refill_trees) << kB9.tree_depth;   // 2229 · 512
+static_assert((int64_t)kLongSize * kLongDraws > 2 * kRoundCots,
+              "ashare_test: the long sequence must cross two SilentFerret rounds");
 
 // This party's shares of one draw: mac[j][k] is its MAC on its bit k under peer j's key,
 // key[j][k] its key on j's bit k.
@@ -262,11 +269,10 @@ int main(int argc, char **argv) {
 
 	// SoftSpokenMint draws no rounds, so a few long draws are enough.
 	exercise<SoftSpokenMint<nP>>(&io, &pool, "SoftSpokenMint", makeBlock(0xa5, 1), -1, 3, false);
-	exercise<SilentFerretMint<nP>>(&io, &pool, "SilentFerretMint, unplanned",
-	                               makeBlock(0xa5, 2), -1, kLongDraws, false);
-	exercise<SilentFerretMint<nP>>(&io, &pool, "SilentFerretMint, prepaid",
-	                               makeBlock(0xa5, 3), total_cots(kLongDraws), kLongDraws,
-	                               nP == 2);
+	exercise<FerretMint>(&io, &pool, "SilentFerretMint, unplanned", makeBlock(0xa5, 2), -1,
+	                     kLongDraws, false);
+	exercise<FerretMint>(&io, &pool, "SilentFerretMint, prepaid", makeBlock(0xa5, 3),
+	                     total_cots(kLongDraws), kLongDraws, nP == 2);
 	if (party == 1) std::printf("ashare_test: GOOD\n");
 	return 0;
 }
