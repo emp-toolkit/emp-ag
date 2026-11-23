@@ -55,6 +55,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace emp::ag {
 
@@ -100,10 +101,17 @@ public:
 // (garble/protocol.h), so parties that chose differently fail setup. Every protocol has
 // one. The leaky ANDs (LeakyAndPrep), the default, have kLeakyAndPrepId, which leaves the
 // session id as it is. A factory with neither id nor protocol asks for the default.
+//
+// `draws` states the protocol's share draws for a session's COT plan
+// (AGMPCSession::planned_cots): the length of each draw from the session's pool
+// (AShareSource::compute or compute_deferred), in order, when a fresh protocol's only
+// call is run(n) at statistical security ssp. A session runs a protocol without it, but
+// cannot plan for one.
 template <int nP>
 struct AndPrepFactory {
   std::string id;
   std::function<std::unique_ptr<AndPrep<nP>>(const AndPrepContext<nP> &)> make;
+  std::function<std::vector<int64_t>(int64_t n, int ssp)> draws;
 };
 
 inline constexpr std::string_view kLeakyAndPrepId = "emp-ag:leaky-and";

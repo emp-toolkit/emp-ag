@@ -7,7 +7,10 @@
 //      directions on both meshes arrive on the mesh they were sent on;
 //   2. the real consumer: a full AGMPCSession runs on mesh 0 while mesh 1
 //      carries an independent byte exchange, and the session's reveal matches
-//      cleartext.
+//      cleartext;
+//   3. traffic: each mesh's traffic() is its handshakes (4 bytes sent per connection
+//      dialed, 4 received per connection accepted) plus what its channels carried, the
+//      group's is the meshes' sum, and a session reports its network's.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
 #include <cstdint>
@@ -30,6 +33,14 @@ int main(int argc, char **argv) {
   NetIOMPGroup<nP> grp(party, port, /*n_meshes=*/2);
   bool ok = true;
 
+  // Before any message, a mesh has carried its handshakes only: one connection dialed and
+  // one accepted per peer.
+  const uint64_t hs = (uint64_t)(nP - 1) * kNetmpHandshakeBytes;
+  for (int m = 0; m < 2; ++m) {
+    const NetTraffic t = grp.mesh(m).traffic();
+    ok = ok && grp.mesh(m).count() == 0 && t.sent == hs && t.received == hs;
+  }
+
   // 1) Both meshes, both directions per pair (each direction rides the socket
   //    its sender dialed, so all four sockets per pair carry data).
   for (int m = 0; m < 2; ++m) {
@@ -46,6 +57,13 @@ int main(int argc, char **argv) {
       ok = ok && cmpBlock(&got, &want, 1);
     }
   }
+  // One block each way per peer on each mesh.
+  const uint64_t one = hs + (uint64_t)(nP - 1) * sizeof(block);
+  for (int m = 0; m < 2; ++m) {
+    const NetTraffic t = grp.mesh(m).traffic();
+    ok = ok && t.sent == one && t.received == one;
+  }
+  ok = ok && grp.traffic().sent == 2 * one && grp.traffic().received == 2 * one;
 
   // 2) A full session on mesh 0, with mesh 1 concurrently carrying its own
   //    traffic (a second stamped round-trip) — the two must not interfere.
@@ -53,6 +71,7 @@ int main(int argc, char **argv) {
     ThreadPool pool(ag::default_pool_size(nP));
     AGMPCSession<nP> sess(&grp.mesh(0), &pool, party);
     ok = ok && &sess.io() == &grp.mesh(0) && sess.group() == nullptr;
+    ok = ok && sess.traffic().total() == grp.mesh(0).traffic().total();
     grp.mesh(0).flush();
     using Ctx = AGMPCSession<nP>::ctx_t;
     using U32 = UInt_T<Ctx, 32>;
@@ -89,6 +108,8 @@ int main(int argc, char **argv) {
     AGMPCSession<nP> sess(&grp.mesh(0), &pool, party, 40, &grp);
     ok = ok && &sess.io() == &grp.mesh(0) && sess.group() == &grp;
     ok = ok && sess.lanes() == grp.size();
+    ok = ok && sess.traffic().total() == grp.traffic().total() &&
+         grp.traffic().total() > grp.mesh(0).traffic().total();
   }
 
   if (party == 1) {

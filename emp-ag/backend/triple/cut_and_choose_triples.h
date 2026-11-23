@@ -126,6 +126,17 @@ public:
     }
   }
 
+  // The share draws a fresh bank makes to serve its first n triples at statistical
+  // security ssp: 3 pop for each batch generate_() runs, batch i at its own target.
+  static std::vector<int64_t> draws(int64_t n, int ssp, int64_t batch) {
+    expecting(n >= 0 && batch >= 1, "cut-and-choose: negative count or non-positive batch");
+    const int s = checked_statistical_security(ssp);
+    std::vector<int64_t> out;
+    for (int64_t i = 1, banked = 0; banked < n; ++i, banked += batch)
+      out.push_back(3 * cut_and_choose_params(batch, cut_and_choose_batch_target(s, i)).pop);
+    return out;
+  }
+
   // The parameters of the last batch, and totals over the session's batches.
   const CutAndChooseParams &last_params() const { return params_; }
   int64_t batches() const { return batches_; }
@@ -651,13 +662,17 @@ private:
 };
 
 // The factory for CutAndChoosePrep with batches of `batch` (AGMPCSession's constructor
-// takes one). Its id carries the batch, since the triples served depend on it.
+// takes one). Its id carries the batch, since the triples served depend on it. A call
+// run(n) takes n triples from the bank, so its draws are the bank's.
 template <int nP>
 AndPrepFactory<nP> cut_and_choose_prep(int64_t batch) {
   expecting(batch >= 1, "cut-and-choose: batch must be positive");
   return {"emp-ag:cut-and-choose:" + std::to_string(batch),
           [batch](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
             return std::make_unique<CutAndChoosePrep<nP>>(c, batch);
+          },
+          [batch](int64_t n, int ssp) {
+            return CutAndChooseTriples<nP>::draws(n, ssp, batch);
           }};
 }
 

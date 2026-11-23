@@ -61,7 +61,9 @@ class AShareSource {
 	// M = K ^ b * Delta, the choice b in bit 0. Both ends call it at the same point with
 	// the same n, and a counted plan counts the draw. The stream's deferred consistency
 	// check covers these COTs: run maybe_flush_cot_check() before releasing anything that
-	// depends on them, or a cheating receiver could learn about Delta first. SoftSpoken
+	// depends on them, or a cheating receiver could learn about Delta first. While a
+	// session's computation job is outstanding, the pool refuses both calls: draw and
+	// check through AGMPCSession::draw_cots(job, ...) and check_cots(job). SoftSpoken
 	// mint only.
 	virtual void draw_cots(int peer, bool as_sender, block *out, int64_t n) = 0;
 };
@@ -129,7 +131,7 @@ class AShareGen final : public AShareSource<nP> {
 	int party;
 	block session_id;
 	PRG prg;
-	int csp = 128;
+	int csp = kCheck1Tail;
 	GaloisFieldPacking packer;
 	// check1 (gadget-tail Δ-consistency) runs ONCE per session: the
 	// global keys are fixed at COT setup, so one check certifies them for every
@@ -142,6 +144,12 @@ class AShareGen final : public AShareSource<nP> {
 	// check2's hiding shares per call at nP>2: one per bit of the 128-bit hash value
 	// it opens (see check2).
 	static constexpr int kCheck2Pad = 128;
+	// check1's gadget tail, drawn on the session's first call at nP>2 (csp).
+	static constexpr int kCheck1Tail = 128;
+	// Set while the session's computation job is outstanding: draw_cots() and
+	// maybe_flush_cot_check() then run only through the session's job-scoped calls
+	// (AGMPCSession::draw_cots(job, ...) and check_cots(job)).
+	bool one_way_locked_ = false;
 	// The running digest of the views of check2's openings not yet agreed (every party's
 	// bw as this party received it), and whether there is any.
 	FsHash pending_check2_view_;
@@ -253,8 +261,19 @@ class AShareGen final : public AShareSource<nP> {
 	// Flush the deferred COT consistency check before a reveal; no-op when
 	// nothing was minted since the last flush.
 	void maybe_flush_cot_check() override {
+		expecting(!one_way_locked_,
+		          "AShareGen: a computation job is outstanding: check through AGMPCSession::check_cots(job)");
 		mint_->maybe_flush_check();
 	}
+
+	// The COTs one draw of n shares takes from each stream: n, check2's hiding shares at
+	// nP > 2, and check1's tail on the session's first draw at nP > 2.
+	static constexpr int64_t cots_of_draw(int64_t n, bool first) {
+		return n + (nP > 2 ? kCheck2Pad : 0) + ((nP > 2 && first) ? kCheck1Tail : 0);
+	}
+
+	// The session's lock on draw_cots() and maybe_flush_cot_check() (one_way_locked_).
+	void set_one_way_lock(bool locked) { one_way_locked_ = locked; }
 
 	// COTs drawn so far for shares from each COT stream, any bootstrap prefix included
 	// (SoftSpokenMint's 128 COTs). Every stream, toward every peer and in both directions,
@@ -266,6 +285,8 @@ class AShareGen final : public AShareSource<nP> {
 	}
 
 	void draw_cots(int peer, bool as_sender, block *out, int64_t n) override {
+		expecting(!one_way_locked_,
+		          "AShareGen::draw_cots: a computation job is outstanding: draw through AGMPCSession::draw_cots(job, ...)");
 		expecting(peer >= 1 && peer <= nP && peer != party, "AShareGen::draw_cots: no such peer");
 		expecting(n >= 0, "AShareGen::draw_cots: negative count");
 		if (n == 0) return;

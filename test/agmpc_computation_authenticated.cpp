@@ -1,6 +1,6 @@
 // A computation whose Party slot is bound to a value the session already holds
 // authenticated (AGMPCSession::run_computation with authenticated bundles), on COTs
-// drawn one way from the session's own stream (AShareSource::draw_cots).
+// drawn one way from the session's own stream for the job (AGMPCSession::draw_cots).
 //
 // Party 1 draws 32 COTs as the sender toward party 2, and party 2 as the receiver, so
 // party 2's choices k are authenticated under party 1's global key: M = K ^ k * Delta_1.
@@ -17,6 +17,10 @@
 // flipped), and the opening's MAC check must abort.
 // AUTH_CASE=2: three parties; run_computation refuses the authenticated slot before it
 // sends anything.
+// AUTH_CASE=3: the COTs are drawn from the share pool directly while the job is
+// outstanding, which the pool refuses.
+// AUTH_CASE=4: the pool's COT check is run directly while the job is outstanding, which
+// the pool refuses.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
 #include <cstdint>
@@ -96,7 +100,14 @@ int main(int argc, char **argv) {
   const bool as_sender = party == 1;
   const int64_t before = sess.protocol().abit->cots_drawn(peer, as_sender);
   std::vector<block> cot(W);
+#if AUTH_CASE == 3
   abit.draw_cots(peer, as_sender, cot.data(), W);
+  return 1;   // unreachable: the pool refuses a direct draw while the job is outstanding
+#elif AUTH_CASE == 4
+  abit.maybe_flush_cot_check();
+  return 1;   // unreachable: likewise the pool's own COT check
+#endif
+  sess.draw_cots(job, peer, as_sender, cot.data(), W);
   expecting(sess.protocol().abit->cots_drawn(peer, as_sender) == before + W &&
                 sess.protocol().abit->cots_drawn(peer, !as_sender) == before,
             "agmpc_computation_authenticated: draw_cots() counted on the wrong stream");

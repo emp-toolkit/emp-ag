@@ -290,6 +290,11 @@ public:
   NetIOMPGroup<nP>* group() { return group_view_; }
   const NetIOMPGroup<nP>* group() const { return group_view_; }
   int lanes() const { return L_; }
+  // Every byte the session's network has carried, setup included, over every lane: the
+  // group's total, else mesh 0's. A network shared with other sessions counts theirs too.
+  NetTraffic traffic() const {
+    return group_view_ != nullptr ? group_view_->traffic() : io_view_->traffic();
+  }
 
   int party() const { return proto_.party; }
   // Total ANDs garbled across every flush / run, all strategies (the engine counts
@@ -393,6 +398,43 @@ public:
   // ---- Circuit mode (emp-tool ComputationSession; the typed surface is
   // emp-tool's cf::computation / cf::prepare / cf::run). ----
   //
+  // The COTs each COT stream draws in a session whose work is one Computation of `art`,
+  // prepare_computation then run_computation, at statistical security `ssp` with the AND
+  // gates' protocol `and_prep` (empty: the build default): the mint's bootstrap prefix,
+  // one share per input wire, one per AND gate, and the protocol's own draws
+  // (AndPrepFactory::draws), each draw with check2's hiding shares at nP > 2 and the
+  // first with check1's tail. Every stream draws the same count. Pass it as the
+  // constructor's planned_sender_cots and planned_receiver_cots, adding to a stream the
+  // COTs drawn from it through draw_cots(job, ...).
+  static int64_t planned_cots(const circuit::ComputationArtifact &art, int ssp = 40,
+                              const ag::AndPrepFactory<nP> &and_prep = {}) {
+    circuit::validate_computation(art);
+    return planned_cots((int64_t)art.program->num_inputs, ag::agmpc_count_ands(*art.program),
+                        ssp, and_prep);
+  }
+  // The same, from the Computation's input-wire and AND-gate counts.
+  static int64_t planned_cots(int64_t num_inputs, int64_t num_ands, int ssp,
+                              const ag::AndPrepFactory<nP> &and_prep) {
+    expecting(num_inputs >= 0 && num_ands >= 0, "AGMPCSession::planned_cots: a negative count");
+    ag::validate_and_prep_factory(and_prep);
+    const ag::AndPrepFactory<nP> prep = and_prep.make ? and_prep : ag::default_and_prep<nP>();
+    expecting(static_cast<bool>(prep.draws),
+              "AGMPCSession::planned_cots: the AND-gate protocol does not state its draws");
+    using Pool = typename AGMPCProtocol<nP, Cfg>::ashare_t;
+    int64_t cots = ag::MintFor<nP, Cfg::cot>::kPrefix;
+    bool first = true;
+    auto draw = [&](int64_t n) {
+      cots += Pool::cots_of_draw(n, first);
+      first = false;
+    };
+    if (num_inputs > 0) draw(num_inputs);   // the inputs' masks (make_prepared_inputs_)
+    if (num_ands > 0) {
+      draw(num_ands);                       // the AND gates' output masks (draw_and_seed)
+      for (int64_t n : prep.draws(num_ands, ssp)) draw(n);
+    }
+    return cots;
+  }
+
   // prepare_computation does every step that needs no input value: all
   // preprocessing and the garbling of the whole program (P1 stores the rows),
   // then one MAC-checked round that opens each Party input's mask to its owner
@@ -434,16 +476,39 @@ public:
 
   // run_computation, with some Party slots bound to values this session already holds
   // authenticated: aShare bundles under its global keys, for example values another
-  // protocol proved on draw_cots() correlations. authenticated[s] is null for an
-  // ordinary slot and otherwise points to slot s's width() bundles, each party passing
-  // its own. Such a slot takes no bits, and its owner's entry in `b` is ignored: in place
-  // of the owner's broadcast of x ^ mask, every party opens d = value ^ mask under a MAC
-  // check, so the computation's input is exactly the authenticated value. Two parties
-  // only: above two, nothing would check that a supplied bundle shares the same bit
-  // toward every peer, which the session's own shares get from check2.
+  // protocol proved on COTs from draw_cots(job, ...) below. authenticated[s] is null for
+  // an ordinary slot and otherwise points to slot s's width() bundles, each party
+  // passing its own. Such a slot takes no bits, and its owner's entry in `b` is ignored:
+  // in place of the owner's broadcast of x ^ mask, every party opens d = value ^ mask
+  // under a MAC check, so the computation's input is exactly the authenticated value.
+  // Two parties only: above two, nothing would check that a supplied bundle shares the
+  // same bit toward every peer, which the session's own shares get from check2.
   session::RawResult run_computation(job_t &&job, const session::RawBindings &b,
                                      const std::vector<const AShareBundle<nP> *> &authenticated) {
     return run_computation_(std::move(job), b, &authenticated);
+  }
+
+  // A protocol run between prepare_computation and run_computation, such as a proof whose
+  // values then enter the job's authenticated slots, takes its COTs here: n raw COTs from
+  // this party's stream with `peer` (AShareSource::draw_cots; both ends call it at the
+  // same point with the same n). check_cots runs the streams' deferred consistency check,
+  // which must pass before the protocol releases anything that depends on those COTs;
+  // run_computation runs it again before its first opening. While a job is outstanding
+  // these are the only way to the streams: the share pool refuses its own draw_cots() and
+  // maybe_flush_cot_check(). SoftSpoken mint only.
+  void draw_cots(const job_t &job, int peer, bool as_sender, block *out, int64_t n) {
+    expecting(holds_job_(job.slot_, JobKind::Computation),
+              "AGMPCSession::draw_cots: invalid, foreign, abandoned, or consumed job");
+    proto_.abit->set_one_way_lock(false);
+    proto_.abit->draw_cots(peer, as_sender, out, n);
+    proto_.abit->set_one_way_lock(true);
+  }
+  void check_cots(const job_t &job) {
+    expecting(holds_job_(job.slot_, JobKind::Computation),
+              "AGMPCSession::check_cots: invalid, foreign, abandoned, or consumed job");
+    proto_.abit->set_one_way_lock(false);
+    proto_.abit->maybe_flush_cot_check();
+    proto_.abit->set_one_way_lock(true);
   }
 
 private:
@@ -897,9 +962,12 @@ private:
   // The session's one job slot. begin_job_ fills it, take_job_ consumes a job
   // before its first online message (an aborted run is not retryable), and
   // end_job_ frees it when a handle is dropped unrun.
+  // A Computation job also locks the share pool's one-way draws and COT check for its
+  // lifetime (draw_cots(job, ...) and check_cots(job) unlock them around their calls).
   JobSlot_ begin_job_(JobKind kind, std::unique_ptr<typename Engine::Material> material) {
     job_ = kind;
     job_token_ = ++next_job_token_;
+    proto_.abit->set_one_way_lock(kind == JobKind::Computation);
     return JobSlot_(this, kind, job_token_, std::move(material));
   }
   bool holds_job_(const JobSlot_ &slot, JobKind kind) const {
@@ -913,6 +981,7 @@ private:
     slot.token_ = 0;
     job_ = JobKind::None;
     job_token_ = 0;
+    proto_.abit->set_one_way_lock(false);
     return material;
   }
   // A dropped prepared execution leaves its staged descriptors usable: the next
@@ -922,6 +991,7 @@ private:
     if (job_ != kind || token != job_token_) return;
     job_ = JobKind::None;
     job_token_ = 0;
+    proto_.abit->set_one_way_lock(false);
   }
   // While a Computation job is outstanding, nothing else of this session sends:
   // the job's openings and checks then stand alone, and no value crosses between

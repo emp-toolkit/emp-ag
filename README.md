@@ -129,7 +129,8 @@ instead from a bank of cut-and-choose triples
 checked before use. This sends fewer bytes per triple when COTs are cheap
 (`Ferret`) and batches are large, at the cost of more computation and of memory
 proportional to the batch. Any other protocol for the AND gates can be passed the
-same way (`backend/triple/and_prep.h` states what it must guarantee). Every party
+same way (`backend/triple/and_prep.h` states what it must guarantee, and how its
+factory lists its draws for a session's COT plan). Every party
 must make the same choice; a session binds every protocol but the leaky ANDs into
 its session id, so a mismatch fails setup.
 
@@ -226,7 +227,13 @@ built over.
   includes emp-ag's 128-COT bootstrap prefix, matching peers must agree, and the
   session must be one-lane. With
   `SilentFerret` the two counts are equal, count only the COTs drawn, and set what
-  every stream prepays at setup.
+  every stream prepays at setup. For a session whose work is one `Computation`
+  (below), `AGMPCSession<nP, Cfg>::planned_cots(computation, ssp, and_prep)` gives
+  the count, the same for every stream; COTs a caller draws for the job add to the
+  streams they come from.
+- **`sess.traffic()`** reports every byte the session's network has carried, as
+  this party sent and received it, over every lane and including the connection
+  handshakes that channel counters miss.
 
 ### Offline preparation and online execution
 
@@ -308,10 +315,13 @@ holds authenticated: `run_computation(job, bindings, authenticated)` gives such
 a slot aShare bundles under the session's global keys, and every party opens
 the value XOR the slot's mask under a MAC check in place of the owner's
 broadcast, so the input is exactly the authenticated value. The bundles can
-come from another protocol run on the session's own COTs: the share source's
-`draw_cots(peer, as_sender, out, n)` draws raw COTs from one stream (SoftSpoken
-mint), and `run_computation` runs the session's COT check over them before it
-opens anything.
+come from another protocol run on the session's own COTs between
+`prepare_computation` and `run_computation`: `sess.draw_cots(job, peer,
+as_sender, out, n)` draws raw COTs from one stream (SoftSpoken mint), and
+`sess.check_cots(job)` runs the session's COT check over them, which must pass
+before that protocol releases anything that depends on them; `run_computation`
+runs it again before it opens anything. While the job is outstanding these two
+are the only way to the streams.
 
 ### Values and circuits
 

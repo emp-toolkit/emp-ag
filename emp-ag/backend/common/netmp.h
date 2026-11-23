@@ -47,6 +47,21 @@ using MeshNetIO = TamperNetIO;
 using MeshNetIO = NetIO;
 #endif
 
+// The bytes a network carried, as this party sent and received them.
+struct NetTraffic {
+  uint64_t sent = 0, received = 0;
+  uint64_t total() const { return sent + received; }
+  NetTraffic &operator+=(const NetTraffic &o) {
+    sent += o.sent;
+    received += o.received;
+    return *this;
+  }
+};
+
+// What every dialed connection sends before its channel exists: {party, mesh tag}
+// (netmp_setup, below). Channel counters never see it; NetIOMP::traffic() does.
+inline constexpr uint64_t kNetmpHandshakeBytes = 2 * sizeof(uint16_t);
+
 template <int nP>
 inline constexpr bool valid_netmp_party(int party) {
   return party >= 1 && party <= nP;
@@ -136,6 +151,7 @@ inline void netmp_setup(int party, int port, const char *const *ip, int n_meshes
       dest.sin_port = htons(peer_port);
       if (connect(sock, (sockaddr *)&dest, sizeof(dest)) == 0) {
         uint16_t hs[2] = {(uint16_t)party, tag};
+        static_assert(sizeof(hs) == kNetmpHandshakeBytes);
         if (write(sock, hs, sizeof(hs)) != (ssize_t)sizeof(hs)) {
           fprintf(stderr, "netiomp handshake send failed\n"); exit(1);
         }
@@ -220,12 +236,14 @@ public:
   // Adopt pre-connected channels (used by NetIOMPGroup and the ctor above):
   // routes this party's dialed / accepted connections for one mesh into the
   // ios/ios2 slots per the smaller-party-dials-`ios` convention. Takes
-  // ownership (the dtor deletes every channel).
+  // ownership (the dtor deletes every channel). The connections are netmp_setup's,
+  // so each carried one handshake (traffic()).
   NetIOMP(int party, std::array<NetIO *, nP + 1> &dialed,
           std::array<NetIO *, nP + 1> &accepted) {
     adopt_(party, dialed, accepted);
   }
 
+  // The channels' bytes, both ways; traffic() adds setup.
   int64_t count() {
     int64_t res = 0;
     for (int i = 1; i <= nP; ++i)
@@ -234,6 +252,19 @@ public:
         res += ios2[i]->send_counter + ios2[i]->recv_counter;
       }
     return res;
+  }
+
+  // Every byte this mesh carried: the channels' counters, and the handshake that opened
+  // each connection, one sent per connection this party dialed and one received per
+  // connection it accepted.
+  NetTraffic traffic() const {
+    NetTraffic t;
+    for (int i = 1; i <= nP; ++i)
+      if (i != party) {
+        t.sent += ios[i]->send_counter + ios2[i]->send_counter + kNetmpHandshakeBytes;
+        t.received += ios[i]->recv_counter + ios2[i]->recv_counter + kNetmpHandshakeBytes;
+      }
+    return t;
   }
 
   ~NetIOMP() {
@@ -344,6 +375,12 @@ public:
   NetIOMP<nP> &mesh(int m) { return *meshes_[(size_t)m]; }
   const NetIOMP<nP> &mesh(int m) const { return *meshes_[(size_t)m]; }
   int size() const { return (int)meshes_.size(); }
+  // Every byte the group's meshes carried, setup included (NetIOMP::traffic()).
+  NetTraffic traffic() const {
+    NetTraffic t;
+    for (const auto &m : meshes_) t += m->traffic();
+    return t;
+  }
 
   NetIOMPGroup(const NetIOMPGroup &) = delete;
   NetIOMPGroup &operator=(const NetIOMPGroup &) = delete;

@@ -95,6 +95,8 @@ class SoftSpokenMint {
 	SoftSpokenMint &operator=(const SoftSpokenMint &) = delete;
 
 	block delta() const { return Delta_; }
+	// Each stream's checked bootstrap prefix, which the pool counts as drawn (cots_per_stream).
+	static constexpr int64_t kPrefix = 128;
 	int64_t bootstrap_cots() const { return kPrefix; }
 
 	// ext_len raw COTs from every stream, then the Fix exchange on [0, nfix_all).
@@ -181,7 +183,6 @@ class SoftSpokenMint {
 	}
 
  private:
-	static constexpr int64_t kPrefix = 128;   // each stream's checked bootstrap prefix
 	// Each party holds both COT directions against every peer: abit1 is always
 	// the local extension sender and abit2 is always the local receiver. Slot
 	// [party] is unused. A SoftSpoken ctor takes the role, channel

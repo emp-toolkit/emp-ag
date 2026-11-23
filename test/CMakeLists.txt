@@ -180,6 +180,16 @@ add_np_variant(agmpc_computation_authenticated_cheat agmpc_computation_authentic
 # Above two parties, nothing checks a supplied bundle across receivers: refused.
 add_np_variant(agmpc_computation_authenticated_np3 agmpc_computation_authenticated.cpp 3
                DEFS AUTH_CASE=2 PASS_RE "authenticated slots need two parties")
+# While the job is outstanding, the share pool refuses its own draws and COT check: they go
+# through the job (draw_cots(job, ...), check_cots(job)).
+add_np_variant(agmpc_computation_authenticated_draw agmpc_computation_authenticated.cpp 2
+               DEFS AUTH_CASE=3 PASS_RE "draw through AGMPCSession::draw_cots")
+add_np_variant(agmpc_computation_authenticated_check agmpc_computation_authenticated.cpp 2
+               DEFS AUTH_CASE=4 PASS_RE "check through AGMPCSession::check_cots")
+# A session's COT plan (AGMPCSession::planned_cots) is exactly what its streams draw: the
+# leaky ANDs, cut-and-choose over several batches, no AND gates, and job draws at nP = 2.
+add_np_variant(agmpc_planned_cots_np2 agmpc_planned_cots.cpp 2 DEFS PLANNED_NP=2)
+add_np_variant(agmpc_planned_cots_np3 agmpc_planned_cots.cpp 3 DEFS PLANNED_NP=3)
 add_np_variant(agmpc_independent_triples_direct_np2 agmpc_independent_triples.cpp 2)
 add_np_variant(agmpc_independent_triples_prepared_np2 agmpc_independent_triples.cpp 2
                DEFS INDEPENDENT_TRIPLES_PREPARED=1)

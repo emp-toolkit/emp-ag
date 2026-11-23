@@ -206,6 +206,15 @@ public:
     return coin;
   }
 
+  // The share draws of a call run(n) at statistical security ssp (AndPrepFactory::draws):
+  // one, of (3B - 1) n, in mint_rows_.
+  static std::vector<int64_t> draws(int64_t n, int ssp) {
+    if (n <= 0) return {};
+    expecting(n <= (int64_t)INT_MAX, "leaky ANDs: chunk too large -- split into chunks");
+    const int B = ag::bucket_size((int)n, ag::checked_statistical_security(ssp));
+    return {(3 * (int64_t)B - 1) * n};
+  }
+
 private:
   LaneMesh<nP> mesh_;
   int party_;
@@ -325,12 +334,14 @@ private:
 };
 
 // The factory for LeakyAndPrep (AGMPCSession's constructor takes one): the default, with
-// the empty id.
+// kLeakyAndPrepId.
 template <int nP>
 AndPrepFactory<nP> leaky_and_prep() {
-  return {std::string(kLeakyAndPrepId), [](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
+  return {std::string(kLeakyAndPrepId),
+          [](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
             return std::make_unique<LeakyAndPrep<nP>>(c);
-          }};
+          },
+          [](int64_t n, int ssp) { return LeakyAndPrep<nP>::draws(n, ssp); }};
 }
 
 }  // namespace emp::ag

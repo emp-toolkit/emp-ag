@@ -130,7 +130,8 @@ class SilentFerretMint {
 	SilentFerretMint &operator=(const SilentFerretMint &) = delete;
 
 	block delta() const { return Delta_; }
-	int64_t bootstrap_cots() const { return 0; }
+	static constexpr int64_t kPrefix = 0;   // no bootstrap prefix is drawn from the streams
+	int64_t bootstrap_cots() const { return kPrefix; }
 	void maybe_flush_check() {}   // every stream was checked when it was prepaid
 	// One stream's draw on its own: not offered, since every draw applies the joint LPN
 	// step to all streams at once.
