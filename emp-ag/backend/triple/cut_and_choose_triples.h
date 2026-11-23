@@ -402,17 +402,13 @@ private:
 #endif
     char zr_view[FsHash::DIGEST_SIZE];
     FsHash::hash_once(zr_view, zr_open.data(), zr_open.size());
-    const block dxor = Delta_ ^ bit0_mask;
     parallel_for(pool_, (int)pop, [&](int lo, int hi) {
       for (int q = lo; q < hi; ++q) {
         if (!zr_open[(size_t)q]) continue;
         const size_t e = (size_t)(2 * pop + q);
-        if (party_ == 1) {
-          bit[e] ^= 1;
-          for (int p = 2; p <= nP; ++p) mac[p][e] = mac[p][e] ^ bit0_mask;
-        } else {
-          key[1][e] = key[1][e] ^ dxor;
-        }
+        if (party_ == 1) bit[e] ^= 1;   // party 1's own copy of its share
+        add_public_one<nP>(party_, Delta_, [&](int p) -> block & { return mac[p][e]; },
+                           [&](int p) -> block & { return key[p][e]; });
       }
     });
 
@@ -640,8 +636,9 @@ public:
       coin = sampleRandom<nP>(mesh_.io, &prg_, mesh_.pool, party_, sid_);
     abit_.fold_check2(coin);
     const TripleRow<nP> t = strided_row<nP>(mac_, key_, 0, L, party_);
-    beaver_.open(t, L);
-    beaver_.finish(check_, abit_, t, L, 0, [](const typename OpenCheck::Run &) {}, out);
+    const auto runs = beaver_.begin(check_, 0, L);
+    beaver_.open(check_, runs, t, L);
+    beaver_.finish(check_, abit_, runs, t, L, [](const typename OpenCheck::Run &) {}, out);
     return coin;
   }
 

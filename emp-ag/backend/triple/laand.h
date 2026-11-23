@@ -52,47 +52,31 @@
 
 namespace emp::ag {
 
-// ===== windowed F_eq (nP == 2) =====
-// Fixed stripe width (in elements) for the parallel F_eq window fold below. It shapes the
-// CHECK VALUE (stripe digests are what the running hash binds), so it must be identical
-// at both parties: a compile-time constant, never a function of the local pool size.
-inline constexpr int kFeqStripeElems = 1 << 16;
-
-// Fold L windows of gb bytes each (the transmitted bits, zero-padded, contiguous at src)
-// into the running F_eq hash. The fold is a fixed two-level hash: the window bytes are
-// hashed per kFeqStripeElems-window stripe (independent stripes, so the hashing runs
-// pool-parallel), and the ordered stripe digests feed the running feq. Collision
-// resistance composes across the levels, so this binds exactly the window bytes; both
-// parties use the same stripe constant and derive the same stripe count from the common
-// L. One terminal symmetric F_eq fires per call; the caller owns it.
-inline void accumulate_leaky_and_window_bytes(FsHash &feq,
-                                              const unsigned char *src,
-                                              int L, int gb, ThreadPool *pool) {
-  const int ns = (L + kFeqStripeElems - 1) / kFeqStripeElems;
-  std::vector<char> dg((size_t)ns * FsHash::DIGEST_SIZE);
-  vector<future<void>> res;
-  for (int s = 0; s < ns; ++s) {
-    res.push_back(pool->enqueue([&, s]() {
-      const int k0 = s * kFeqStripeElems;
-      const int k1 = std::min(L, k0 + kFeqStripeElems);
-      FsHash::hash_once(dg.data() + (size_t)s * FsHash::DIGEST_SIZE,
-                        src + (size_t)k0 * gb,
-                        (size_t)(k1 - k0) * gb);
-    }));
-  }
-  joinNclean(res);
-  feq.put(dg.data(), dg.size());
-}
+// The b operand of a row's candidate k toward peer p, as the leaky AND reads it: its MAC
+// and its key. Only phi, a linear blind, reads b. RowB reads the row's own b; a protocol
+// whose b is computed, say a public linear map of fewer authenticated bits, passes a reader
+// of its own to produce_rows.
+template <int nP>
+struct RowB {
+  block mac(const TripleRow<nP> &r, int /*layer*/, int64_t k, int p) const { return r.mac[1][p][k]; }
+  block key(const TripleRow<nP> &r, int /*layer*/, int64_t k, int p) const { return r.key[1][p][k]; }
+};
 
 // The leaky ANDs of one session: one schedule for every nP (produce_rows), the check over
 // a call's rows, and their reused scratch. `prg` is the calling protocol's (F_Zero's seeds,
-// the F_eq nonce).
+// the F_eq nonce). The rows carry `window_bits` bits of each value, ssp + 2 by default
+// (laand_window.h); more widen the check, and fewer than ssp + 2 are refused.
 template <int nP>
 class LeakyAnd {
 public:
-  LeakyAnd(const LaneMesh<nP> &mesh, int ssp, block session_id, block Delta, PRG *prg)
-      : mesh_(mesh), party_(mesh.party), ssp_(ssp), sid_(session_id), Delta_(Delta),
-        prg_(prg) {}
+  LeakyAnd(const LaneMesh<nP> &mesh, int ssp, block session_id, block Delta, PRG *prg,
+           int window_bits = 0)
+      : mesh_(mesh), party_(mesh.party), sid_(session_id), Delta_(Delta),
+        prg_(prg), gw_(window_bits ? window_bits : ag::laand_window_bits(ssp)),
+        gb_((gw_ + 7) / 8), window_mask_(ag::laand_bits_mask(gw_)) {
+    expecting(gw_ >= ag::laand_window_bits(ssp) && gw_ <= 128,
+              "leaky ANDs: the row window must keep ssp + 2 bits and fit a block");
+  }
 
   // A new call: no row's check material yet.
   void begin_call() {
@@ -124,17 +108,22 @@ public:
   //   4. One flight: every row's s-bits; carry's s bytes on mesh 0.
   //   5. Per row, the d-combine and the check material: the F_eq window fold at nP == 2,
   //      the windowed values for the RLC at nP > 2.
+  // `bread` reads each row's b operand (RowB above). roots[peer], when given, replaces the
+  // transcript root of the hash streams shared with peer (step 2): a coin both ends hold,
+  // drawn after every row's COTs are fixed.
+  template <class BRead = RowB<nP>>
   void produce_rows(const std::vector<TripleRow<nP>> &rows, int L, FsHash &feq,
-                    const Carry &carry = {}) {
+                    const Carry &carry = {}, const BRead &bread = {},
+                    const block *roots = nullptr) {
     expecting(nP == 2 || (carry.rows_len == 0 && carry.s_len == 0),
               "leaky ANDs: carried bytes are for nP == 2");
     ThreadPool *pool = mesh_.pool;
     const int B = (int)rows.size();
     const int BL = B * L;
     const int any_peer = (party_ == 1) ? 2 : 1;
-    const int gb = ag::laand_window_bytes(ssp_);
-    const int gw = ag::laand_window_bits(ssp_);
-    [[maybe_unused]] const block window_mask = ag::laand_window_mask(ssp_);
+    const int gb = gb_;
+    const int gw = gw_;
+    [[maybe_unused]] const block window_mask = window_mask_;
     std::vector<unsigned char>(&s)[nP + 1] = s_;
     for (int p = 1; p <= nP; ++p)
       if (s[p].size() < (size_t)BL) s[p].resize((size_t)BL);
@@ -153,10 +142,12 @@ public:
     // phi, the half-gate row's blind: the F_Zero share (nP > 2), the (sel & Delta) term
     // and the cross-peer key/mac sum of b. A cheap local expression over resident row
     // material, so each use recomputes it instead of retaining B*L extra blocks.
-    auto phi = [this, any_peer](const TripleRow<nP> &r, int k, size_t flat) -> block {
-      block p = select_mask[getLSB(r.mac[1][any_peer][k])] & Delta_;
+    auto phi = [this, any_peer, &bread](const TripleRow<nP> &r, int layer, int k,
+                                        size_t flat) -> block {
+      block p = select_mask[getLSB(bread.mac(r, layer, k, any_peer))] & Delta_;
       if constexpr (nP > 2) p = p ^ z_[flat];
-      for (int j = 1; j <= nP; ++j) if (j != party_) p = p ^ r.key[1][j][k] ^ r.mac[1][j][k];
+      for (int j = 1; j <= nP; ++j)
+        if (j != party_) p = p ^ bread.key(r, layer, k, j) ^ bread.mac(r, layer, k, j);
       return p;
     };
 
@@ -165,8 +156,9 @@ public:
     //    MITCCRH's gid, so the row separation is load-bearing.
     std::vector<block> seed((size_t)(nP + 1) * B, zero_block);
     for (int peer = 1; peer <= nP; ++peer) if (peer != party_) {
-      const block root = fs_coin_pair_group<nP>(
-          mesh_.io, mesh_.grp, peer, "AGMPC laand batch seed", sid_);
+      const block root = roots != nullptr
+          ? roots[peer]
+          : fs_coin_pair_group<nP>(mesh_.io, mesh_.grp, peer, "AGMPC laand batch seed", sid_);
       for (int k = 0; k < B; ++k)
         seed[(size_t)peer * B + k] =
             RO("emp-ag:laand-layer-seed", sid_)
@@ -224,7 +216,7 @@ public:
                 for (int j = 0; j < batch; ++j) {
                   const int k = k0 + j;
                   const block row =
-                      pad[2 * j] ^ pad[2 * j + 1] ^ phi(r, k, (size_t)layer * L + k);
+                      pad[2 * j] ^ pad[2 * j + 1] ^ phi(r, layer, k, (size_t)layer * L + k);
                   memcpy(gbuf.data() + (size_t)(k0 + j - st) * gb, &row, gb);
                 }
               }
@@ -287,7 +279,7 @@ public:
                       pad[2 * j] ^ (wire[k - st] & select_mask[getLSB(r.mac[0][any_peer][k])]);
                   block value = pad[2 * j + 1] ^ E ^ r.key[2][peer][k] ^ r.mac[2][peer][k];
                   if constexpr (nP == 2) {
-                    value ^= phi(r, k, flat) & select_mask[getLSB(r.mac[0][any_peer][k])];
+                    value ^= phi(r, layer, k, flat) & select_mask[getLSB(r.mac[0][any_peer][k])];
                     value ^= Delta_ & select_mask[getLSB(r.mac[2][any_peer][k])];
 #ifdef EMP_AG_TEST_FLIP_LAAND
                     // Deterministically corrupt ONE late-row receiver value.
@@ -337,7 +329,7 @@ public:
               memcpy(&w, win_[p].data() + flat * gb, gb);
               t = t ^ w;
             }
-            t = t ^ (phi(r, k, flat) & select_mask[getLSB(r.mac[0][any_peer][k])]);
+            t = t ^ (phi(r, layer, k, flat) & select_mask[getLSB(r.mac[0][any_peer][k])]);
             t = t ^ (Delta_ & select_mask[getLSB(r.mac[2][any_peer][k])]);
             t = t & window_mask;
             s[party_][flat] = LSB1(t);
@@ -382,7 +374,6 @@ public:
     //    everyone else its key on party 1's share) and corrects the check input by
     //    d * Delta; then the check material: at nP == 2 the row's window folds into F_eq
     //    (binding exactly the transmitted bit window, after the correction).
-    const block dxor = Delta_ ^ bit0_mask;
     unsigned char delta_bytes[sizeof(block)];
     memcpy(delta_bytes, &Delta_, sizeof(block));
     for (int layer = 0; layer < B; ++layer) {
@@ -394,11 +385,9 @@ public:
           unsigned char d = 0;
           for (int p = 1; p <= nP; ++p) d ^= s[p][flat];
           if (d) {
-            if (party_ == 1) {
-              for (int j = 2; j <= nP; ++j) r.mac[2][j][k] ^= bit0_mask;
-            } else {
-              r.key[2][1][k] ^= dxor;
-            }
+            add_public_one<nP>(party_, Delta_,
+                               [&](int p) -> block & { return r.mac[2][p][k]; },
+                               [&](int p) -> block & { return r.key[2][p][k]; });
             if constexpr (nP == 2) {
               for (int j = 0; j < gb; ++j) window[(size_t)k * gb + j] ^= delta_bytes[j];
             } else {
@@ -528,10 +517,11 @@ public:
 private:
   LaneMesh<nP> mesh_;
   int party_;
-  int ssp_;
   block sid_;
   block Delta_;
   PRG *prg_;
+  int gw_, gb_;           // the row window's bits and bytes
+  block window_mask_;     // its bits within a block
   // The batched alpha-check stash (nP>=3): every row's windowed RLC vector and the call's
   // F_Zero u; cleared by begin_call().
   BlockVec alpha_masked_cat_;

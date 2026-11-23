@@ -31,6 +31,7 @@
 //
 #include "emp-ag/backend/ashare/ashare_gen.h"
 #include "emp-ag/backend/ashare/open_check.h"   // DefaultOpenCheck
+#include "emp-ag/backend/common/bucket_coin.h"
 #include "emp-ag/backend/common/feq.h"
 #include "emp-ag/backend/common/fs_hash.h"
 #include "emp-ag/backend/common/lane_mesh.h"
@@ -110,9 +111,13 @@ public:
     FsHash feq;   // nP == 2: the F_eq transcript over every row's windows
     laand_.begin_call();
     const std::vector<TripleRow<nP>> rows = mint_rows_(B, L);
-    [[maybe_unused]] BucketSeeds seeds;
+    [[maybe_unused]] BucketCoin2PC seeds;
     typename LeakyAnd<nP>::Carry carry;
-    if constexpr (nP == 2) carry = commit_bucket_seed_(seeds);
+    if constexpr (nP == 2) {
+      bucket_coin_commit(seeds, prg_, sid_, party_);
+      carry = {seeds.com_mine, seeds.com_peer, FsHash::DIGEST_SIZE,
+               &seeds.mine, &seeds.peer, sizeof(block)};
+    }
     laand_.produce_rows(rows, L, feq, carry);
 
     // 2. The post-commitment coin, after every row is fixed: every party holds it here.
@@ -125,7 +130,7 @@ public:
     //    fill a bucket with its leaky triples.
     block coin;
     if constexpr (nP == 2)
-      coin = open_bucket_seeds_(seeds);
+      coin = bucket_coin_open(seeds, sid_, party_);
     else
       coin = sampleRandom<nP>(mesh_.io, &prg_, mesh_.pool, party_, sid_);
     abit_.fold_check2(coin);
@@ -182,10 +187,16 @@ public:
     uint64_t _tp_o0 = agmpc_now_ns();
 #endif
     // 5. Beaver on the merged triples, in row 0. The differences are checked in the same
-    //    open check, as a run before x.
-    beaver_.open(rows[0], L);
-    beaver_.finish(open_check_, abit_, rows[0], L, D,
-                   [&](const typename OpenCheck::Run &run) { check_differences_(run, rows, bk); },
+    //    open check, as a run before x; with tags that ride the bits, their tags go out
+    //    with x, so their sent() halves come first.
+    const auto runs = beaver_.begin(open_check_, D, L);
+    if constexpr (OpenCheck::kTagRidesBits)
+      check_differences_(runs.earlier, rows, bk, /*sent=*/true, /*expected=*/false);
+    beaver_.open(open_check_, runs, rows[0], L);
+    beaver_.finish(open_check_, abit_, runs, rows[0], L,
+                   [&](const typename OpenCheck::Run &run) {
+                     check_differences_(run, rows, bk, !OpenCheck::kTagRidesBits, true);
+                   },
                    out);
 #ifdef AG_PROFILE
     g_ag_tp_open_ns += agmpc_now_ns() - _tp_o0;
@@ -235,47 +246,6 @@ private:
   std::vector<unsigned char> d_[nP + 1];
   FeqSymmetric2PC feq2_{};   // nP == 2: the leaky ANDs' F_eq, between steps 3 and 4
 
-  // nP == 2: this party's seed of the call's bucket coin and its commitment, and the
-  // peer's as received.
-  struct BucketSeeds {
-    block mine = zero_block, peer = zero_block;
-    char com_mine[FsHash::DIGEST_SIZE] = {}, com_peer[FsHash::DIGEST_SIZE] = {};
-  };
-
-  // nP == 2: draw a fresh seed, commit to it (role-bound, so a commitment cannot be
-  // reflected), and give the commitment to the rows flight and the seed to the s-bits.
-  typename LeakyAnd<nP>::Carry commit_bucket_seed_(BucketSeeds &sd) {
-    prg_.random_block(&sd.mine, 1);
-    role_bound_commitment(sd.com_mine, sid_, "emp-ag:bucket-seed", party_, &sd.mine,
-                          sizeof(block));
-#ifdef EMP_AG_TEST_FLIP_BUCKET_SEED
-    // TEST-ONLY (never in production): a malicious party 2 opens a seed other than the one
-    // it committed to. The opening check must abort.
-    if (party_ == 2) sd.mine = sd.mine ^ makeBlock(0, 1);
-#endif
-    typename LeakyAnd<nP>::Carry c;
-    c.rows_out = sd.com_mine;
-    c.rows_in = sd.com_peer;
-    c.rows_len = FsHash::DIGEST_SIZE;
-    c.s_out = &sd.mine;
-    c.s_in = &sd.peer;
-    c.s_len = sizeof(block);
-    return c;
-  }
-
-  // nP == 2: check the peer's seed against its commitment, then the coin from both seeds
-  // in party order.
-  block open_bucket_seeds_(const BucketSeeds &sd) {
-    const int peer = (party_ == 1) ? 2 : 1;
-    char expect[FsHash::DIGEST_SIZE];
-    role_bound_commitment(expect, sid_, "emp-ag:bucket-seed", peer, &sd.peer, sizeof(block));
-    expecting(memcmp(expect, sd.com_peer, FsHash::DIGEST_SIZE) == 0,
-              "leaky ANDs: the peer's bucket seed does not open its commitment");
-    const block s1 = (party_ == 1) ? sd.mine : sd.peer;
-    const block s2 = (party_ == 1) ? sd.peer : sd.mine;
-    return RO("emp-ag:bucket-coin", sid_).absorb(s1).absorb(s2).squeeze_block();
-  }
-
   // Mint every row's fresh shares in one draw of (3B - 1) L and return the B rows: row 0
   // as [a | r] with the walk's lambda_beta as its b, then every other row as [a | b | r].
   // The draw's check2 waits for the call's coin: the rows stay put until then, changed
@@ -303,11 +273,12 @@ private:
   }
 
   // The differences' checks, in `run`: the pairwise check's tags from this party's MACs
-  // and keys on the two b's, or the symmetric check's residuals (this party's share XOR
-  // the opened bit, against the same MACs and keys). The b's are untouched since the
-  // opening.
+  // (`sent`) and from its keys and the bits it received (`expected`) on the two b's, or
+  // the symmetric check's residuals (this party's share XOR the opened bit, against the
+  // same MACs and keys), which need both flags. The b's are untouched since the opening.
   void check_differences_(const typename OpenCheck::Run &run,
-                          const std::vector<TripleRow<nP>> &rows, const Buckets &bk) {
+                          const std::vector<TripleRow<nP>> &rows, const Buckets &bk,
+                          bool sent, bool expected) {
     const int L = (int)bk.ell;
     for (int m = 1; m < bk.B; ++m) {
       const size_t off = (size_t)(m - 1) * L;
@@ -317,8 +288,9 @@ private:
           const size_t j = off + (size_t)i;
           if constexpr (OpenCheck::kPerPeerOperands) {
             for (int peer = 1; peer <= nP; ++peer) if (peer != party_) {
-              lane.sent(peer, (int64_t)j, merge_diff_mac(rows, bk, m, i, peer));
-              lane.expected(peer, (int64_t)j, merge_diff_key(rows, bk, m, i, peer), d_[peer][j]);
+              if (sent) lane.sent(peer, (int64_t)j, merge_diff_mac(rows, bk, m, i, peer));
+              if (expected)
+                lane.expected(peer, (int64_t)j, merge_diff_key(rows, bk, m, i, peer), d_[peer][j]);
             }
           } else {
             block s = zero_block;

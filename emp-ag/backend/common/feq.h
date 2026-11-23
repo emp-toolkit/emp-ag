@@ -117,7 +117,7 @@ inline FeqSymmetric2PC feq_prepare_symmetric_2pc(
 // so the digest itself never crosses the wire; the check binds role, session
 // and purpose.
 inline void feq_finish_symmetric_2pc(
-    NetIO *send_io, NetIO *recv_io, block session_id, const char *purpose,
+    IOChannel *send_io, IOChannel *recv_io, block session_id, const char *purpose,
     int party, const FeqSymmetric2PC &state, const char *fail_msg) {
   send_io->send_data(&state.nonce, sizeof(block));
   send_io->flush();

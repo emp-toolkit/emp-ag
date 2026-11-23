@@ -25,7 +25,10 @@
 //   Delta. F is used as a random function; no output of it on a secret input is ever
 //   sent, only compared. No coin: seal() does nothing, and lanes may run before the
 //   bits they check arrive (the sender's half needs none). Lanes AES sixteen values at
-//   a time; check_result() is one flight of one block per directed pair.
+//   a time; check_result() is one flight of one block per directed pair. A party's tag
+//   depends only on its own MACs, so it is final before its bits go out and can ride the
+//   flight of the last bits it covers (kTagRidesBits): check_result(peer_tags) then
+//   compares with no flight of its own.
 //
 // SymmetricOpenCheck: each party turns every opened bit into its share of zero,
 //   r_i = mu_i(x) ^ v * Delta_i, where mu_i is its SPDZ collapse of the bit's BDOZ
@@ -71,6 +74,8 @@ public:
   static constexpr bool kPerPeerOperands = true;
   // No zero test to carry other checks' views: their callers agree on them separately.
   static constexpr bool kAgreesViews = false;
+  // A tag can ride the flight of the bits it covers (tag(), check_result(peer_tags)).
+  static constexpr bool kTagRidesBits = true;
 
   // `purpose` is the domain of the tag key, as it is of SymmetricOpenCheck's coin: two
   // instances on one session id need different ones, since positions restart at 0 in
@@ -165,6 +170,11 @@ public:
     });
   }
 
+  // This party's tag toward peer over every value recorded since the last check_result():
+  // final once every one of them has its sent() merged, so it can go out with the last
+  // of their bits.
+  block tag(int peer) const { return sent_[peer]; }
+
   // Exchange one tag per directed pair and compare each peer's with the one this
   // party expects from it.
   void check_result() {
@@ -181,6 +191,17 @@ public:
       }));
     }
     joinNclean(res);
+    compare_(got);
+  }
+
+  // check_result(), with the tags the peers sent with their bits (tag()): no flight.
+  void check_result(const block peer_tag[nP + 1]) {
+    if (!pending_) return;
+    compare_(peer_tag);
+  }
+
+private:
+  void compare_(const block got[nP + 1]) {
     bool good = true;
     for (int peer = 1; peer <= nP; ++peer) if (peer != party_)
       good = good && cmpBlock(&got[peer], &expected_[peer], 1);
@@ -189,7 +210,6 @@ public:
     expecting(good, fail_msg_);
   }
 
-private:
   NetIOMP<nP> *io_;
   ThreadPool *pool_;
   int party_;
@@ -209,6 +229,8 @@ public:
   static constexpr bool kPerPeerOperands = false;
   // Its zero test can carry other checks' views (agree()).
   static constexpr bool kAgreesViews = true;
+  // Its residuals need the opened values, so nothing of it rides the bits.
+  static constexpr bool kTagRidesBits = false;
 
   // `purpose` separates this check's coin and commitments from every other use;
   // fail_msg, commit_fail_msg and agree_fail_msg are the abort messages of its zero

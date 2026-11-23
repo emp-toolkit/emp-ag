@@ -11,9 +11,12 @@
 // since a b_0 = XOR_m a_m (b_m ^ d). Both callers size B under one bound, 2^-B ell^(1-B)
 // (triple/bucketing.h).
 // Each caller opens the differences with its other openings and checks them against
-// their MACs in its own open check.
+// their MACs in its own open check. A protocol that assigns triples to buckets otherwise
+// (any member from any row) calls the general merge_combine below with its own member
+// and difference accessors, under a bound of its own.
 //
 #include "emp-ag/backend/common/runtime.h"   // parallel_for
+#include "emp-ag/backend/common/uniform_index.h"
 #include "emp-ag/backend/triple/triple_row.h"
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/crypto/prg.h"
@@ -22,25 +25,6 @@
 #include <vector>
 
 namespace emp::ag {
-
-// An exactly uniform integer in [0, bound). A plain `word % bound` is biased unless bound
-// divides the word range; the bucketing proof assumes uniform rotations. Threshold
-// rejection over a little-endian uint64_t is exact and deterministic across
-// architectures, and rejects with probability below 2^-33 for bound <= INT_MAX. Each
-// attempt consumes one PRG block.
-inline int64_t uniform_index(PRG &prg, int64_t bound) {
-  expecting(bound > 0, "uniform_index: bound must be positive");
-  const uint64_t n = (uint64_t)bound;
-  const uint64_t threshold = (uint64_t(0) - n) % n;
-  uint64_t raw;
-  do {
-    unsigned char bytes[8];
-    prg.random_data_unaligned(bytes, sizeof(bytes));
-    raw = 0;
-    for (int i = 0; i < 8; ++i) raw |= (uint64_t)bytes[i] << (8 * i);
-  } while (raw < threshold);
-  return (int64_t)(raw % n);
-}
 
 // The rotations of B rows of ell triples.
 struct Buckets {
@@ -94,29 +78,37 @@ void merge_difference_shares(const std::vector<TripleRow<nP>> &rows, const Bucke
   }
 }
 
-// Merge every bucket into row 0 with the opened differences d (row-major). Linear in the
-// MACs and keys toward each peer, so no party adds a public constant. Width-split: each
-// task owns one peer's range of buckets, and every row's member is read once.
-template <int nP>
-void merge_combine(const std::vector<TripleRow<nP>> &rows, const Buckets &bk,
-                   const unsigned char *d, int party, ThreadPool *pool) {
-  const int64_t ell = bk.ell;
-  if (bk.B < 2 || ell == 0) return;
+// Where bucket j's member from row m >= 1 sits: a row of the caller's and an index in it.
+struct MergeSource {
+  int row;
+  int64_t index;
+};
+
+// Merge every bucket into row 0: bucket j's member from row m >= 1 is member(m, j), a
+// MergeSource into `rows` other than row 0, and d(m, j) is its opened difference, the b of
+// row 0's j-th triple XOR the member's b. Linear in the MACs and keys toward each peer, so
+// no party adds a public constant. Width-split: each task owns one peer's range of
+// buckets, and every member is read once.
+template <int nP, class Member, class DBit>
+void merge_combine(const std::vector<TripleRow<nP>> &rows, int B, int64_t ell,
+                   Member &&member, DBit &&d, int party, ThreadPool *pool) {
+  if (B < 2 || ell == 0) return;
   const int per_peer = std::max(1, (int)pool->size() / (nP - 1));
   const int64_t step = (ell + per_peer - 1) / per_peer;
   vector<future<void>> res;
   for (int p = 1; p <= nP; ++p) if (p != party)
     for (int64_t i0 = 0; i0 < ell; i0 += step) {
       const int64_t i1 = std::min(i0 + step, ell);
-      res.push_back(pool->enqueue([&rows, &bk, d, p, i0, i1, ell]() {
+      res.push_back(pool->enqueue([&rows, &member, &d, B, p, i0, i1]() {
         block *am = rows[0].mac[0][p], *ak = rows[0].key[0][p];
         block *cm = rows[0].mac[2][p], *ck = rows[0].key[2][p];
         for (int64_t j = i0; j < i1; ++j) {
           block ma = am[j], ka = ak[j], mc = cm[j], kc = ck[j];
-          for (int m = 1; m < bk.B; ++m) {
-            const int64_t q = bk.member(m, j);
-            const TripleRow<nP> &r = rows[(size_t)m];
-            const block sel = select_mask[d[(size_t)(m - 1) * ell + j]];
+          for (int m = 1; m < B; ++m) {
+            const MergeSource src = member(m, j);
+            const TripleRow<nP> &r = rows[(size_t)src.row];
+            const int64_t q = src.index;
+            const block sel = select_mask[d(m, j)];
             ma = ma ^ r.mac[0][p][q];
             ka = ka ^ r.key[0][p][q];
             mc = mc ^ r.mac[2][p][q] ^ (r.mac[0][p][q] & sel);
@@ -130,6 +122,17 @@ void merge_combine(const std::vector<TripleRow<nP>> &rows, const Buckets &bk,
       }));
     }
   joinNclean(res);
+}
+
+// The rotations' merge (Buckets): row m's member of bucket j is its (j + r_m)-th triple,
+// and the opened differences d are row-major.
+template <int nP>
+void merge_combine(const std::vector<TripleRow<nP>> &rows, const Buckets &bk,
+                   const unsigned char *d, int party, ThreadPool *pool) {
+  const int64_t ell = bk.ell;
+  merge_combine<nP>(
+      rows, bk.B, ell, [&bk](int m, int64_t j) { return MergeSource{m, bk.member(m, j)}; },
+      [d, ell](int m, int64_t j) { return d[(size_t)(m - 1) * ell + j]; }, party, pool);
 }
 
 }  // namespace emp::ag

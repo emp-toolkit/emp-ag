@@ -90,6 +90,19 @@ inline int peer_slot(int self, int peer) {
   return (peer < self) ? (peer - 1) : (peer - 2);
 }
 
+// Add the public bit 1 to an authenticated bit in this encoding: party 1 flips its share,
+// bit 0 of its MAC toward every peer, and every other party moves its key on party 1's
+// share by Delta, keeping that key's bit 0 clear. mac(p) and key(p) return, by
+// reference, this party's MAC toward peer p and its key on p's share.
+template <int nP, class Mac, class Key>
+inline void add_public_one(int party, const block &Delta, Mac &&mac, Key &&key) {
+  if (party == 1) {
+    for (int p = 2; p <= nP; ++p) mac(p) = mac(p) ^ bit0_mask;
+  } else {
+    key(1) = key(1) ^ Delta ^ bit0_mask;
+  }
+}
+
 // Bit 1 (second-lowest) of a block. Reserved for the half-gate Λ_γ recovery
 // invariant LSB1(⊕_p Δ_p) = 1; bit 0 is reserved for share-value encoding
 // (AShareBundle, above).

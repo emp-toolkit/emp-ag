@@ -45,7 +45,30 @@
 // Every party runs the same protocol with the same parameters, and calls it at the same
 // points with the same n.
 //
-#include "emp-ag/backend/ashare/ashare_gen.h"   // AShareSource
+// The pieces emp-ag's two protocols are built from, which another protocol may call too.
+// A change to any of them is noted in the changelog.
+//   LeakyAnd (triple/laand.h)      The half-gate leaky ANDs: produce_rows() sends every
+//       row in one flight and every s-bit in the next, with a caller's bytes (Carry) on
+//       each; feq_commit() and finish_check() are the check (at nP == 2, an F_eq whose
+//       commitment rides the caller's next flight, then the nonce flight). A b-reader
+//       (RowB) gives b's MAC and key per candidate; b enters only the linear phi, so it
+//       may be any aShare the parties hold, computed or stored, but never a hashed
+//       operand. A window wider than ssp + 2 bits, and roots for the hash streams, are
+//       options.
+//   bucket_coin_commit / _open (common/bucket_coin.h)   The zero-flight two-party bucket
+//       coin: its commitment rides the rows, its opening the s-bits. Every coin that
+//       decides buckets, cuts or pairings is commit-then-open and drawn after what it
+//       checks is fixed (guarantee 6 above); a transcript hash is not enough.
+//   merge_combine (triple/merge.h)  Folds buckets into row 0 given each member's row and
+//       index and its opened difference.
+//   Beaver (triple/beaver.h)        begin(), open() (x, and y, in one flight; with
+//       PairwiseOpenCheck the tags ride it), finish().
+//   PairwiseOpenCheck / SymmetricOpenCheck (ashare/open_check.h)   The MAC checks of
+//       opened bits.
+//   uniform_index (common/uniform_index.h), the window fold and row packing
+//       (common/laand_window.h), F_eq (common/feq.h), add_public_one (ashare/share.h).
+//
+#include "emp-ag/backend/ashare/source.h"       // AShareSource
 #include "emp-ag/backend/ashare/share.h"        // AShareBundleVec
 #include "emp-ag/backend/common/netmp.h"
 #include "emp-tool/runtime/core/block.h"

@@ -1,10 +1,14 @@
 #ifndef EMP_AG_BACKEND_COMMON_LAAND_WINDOW_H__
 #define EMP_AG_BACKEND_COMMON_LAAND_WINDOW_H__
 
+#include "emp-ag/backend/common/fs_hash.h"   // FsHash
 #include "emp-tool/runtime/core/block.h"
+#include "emp-ag/backend/common/runtime.h"     // ThreadPool, joinNclean
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <future>
+#include <vector>
 
 namespace emp::ag {
 
@@ -21,15 +25,17 @@ inline int64_t laand_row_wire_bytes(int64_t rows, int bits) {
 }
 inline constexpr int kLaandRowChunkRows = 1 << 16;
 
-inline block laand_window_mask(int ssp) {
+// The low `bits` bits of a block.
+inline block laand_bits_mask(int bits) {
   unsigned char bytes[sizeof(block)] = {};
-  const int n = laand_window_bytes(ssp);
+  const int n = (bits + 7) / 8;
   std::fill_n(bytes, n, static_cast<unsigned char>(0xff));
-  bytes[n - 1] = laand_last_byte_mask(laand_window_bits(ssp));
+  bytes[n - 1] = laand_last_byte_mask(bits);
   block result;
   std::memcpy(&result, bytes, sizeof(result));
   return result;
 }
+inline block laand_window_mask(int ssp) { return laand_bits_mask(laand_window_bits(ssp)); }
 
 // Canonical little-endian bit stream: row i starts at bit i*bits. Unused
 // bits in the last wire byte are zero; unused bits of each local row are ignored.
@@ -75,6 +81,38 @@ inline bool unpack_laand_rows(unsigned char* dst, const unsigned char* src,
     }
   }
   return true;
+}
+
+// ===== windowed F_eq (nP == 2) =====
+// Fixed stripe width (in elements) for the parallel F_eq window fold below. It shapes the
+// CHECK VALUE (stripe digests are what the running hash binds), so it must be identical
+// at both parties: a compile-time constant, never a function of the local pool size.
+inline constexpr int kFeqStripeElems = 1 << 16;
+
+// Fold L windows of gb bytes each (the transmitted bits, zero-padded, contiguous at src)
+// into the running F_eq hash. The fold is a fixed two-level hash: the window bytes are
+// hashed per kFeqStripeElems-window stripe (independent stripes, so the hashing runs
+// pool-parallel), and the ordered stripe digests feed the running feq. Collision
+// resistance composes across the levels, so this binds exactly the window bytes; both
+// parties use the same stripe constant and derive the same stripe count from the common
+// L. One terminal symmetric F_eq fires per call; the caller owns it.
+inline void accumulate_leaky_and_window_bytes(FsHash &feq,
+                                              const unsigned char *src,
+                                              int L, int gb, ThreadPool *pool) {
+  const int ns = (L + kFeqStripeElems - 1) / kFeqStripeElems;
+  std::vector<char> dg((size_t)ns * FsHash::DIGEST_SIZE);
+  vector<future<void>> res;
+  for (int s = 0; s < ns; ++s) {
+    res.push_back(pool->enqueue([&, s]() {
+      const int k0 = s * kFeqStripeElems;
+      const int k1 = std::min(L, k0 + kFeqStripeElems);
+      FsHash::hash_once(dg.data() + (size_t)s * FsHash::DIGEST_SIZE,
+                        src + (size_t)k0 * gb,
+                        (size_t)(k1 - k0) * gb);
+    }));
+  }
+  joinNclean(res);
+  feq.put(dg.data(), dg.size());
 }
 
 }  // namespace emp::ag
