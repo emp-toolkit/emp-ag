@@ -107,11 +107,15 @@ if(EMP_AG_INSTALL)
         ${CMAKE_CURRENT_BINARY_DIR}/emp-ag-config.cmake
         ${CMAKE_CURRENT_BINARY_DIR}/emp-ag-config-version.cmake
         DESTINATION ${_cmake_install_dir})
-endif()
 
-# Build-tree export so siblings can consume without `make install`.
-export(TARGETS emp-ag NAMESPACE emp-ag::
-       FILE ${CMAKE_CURRENT_BINARY_DIR}/emp-agTargets.cmake)
+    # Build-tree export so siblings can consume without `make install`.
+    # Gated on EMP_AG_INSTALL, as emp-ot gates its own: in the add_subdirectory
+    # case emp-ot's target is in no export set, so an export() of emp-ag, which
+    # links it, would abort configure. add_subdirectory consumers link the
+    # emp-ag::emp-ag ALIAS target directly and need no exported file.
+    export(TARGETS emp-ag NAMESPACE emp-ag::
+           FILE ${CMAKE_CURRENT_BINARY_DIR}/emp-agTargets.cmake)
+endif()
 
 # ---------------------------------------------------------------------
 # Tests, benchmarks, examples
