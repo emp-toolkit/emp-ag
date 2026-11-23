@@ -114,15 +114,15 @@ int main(int argc, char **argv) {
 #endif
 
   const uint32_t x = 0x0ff00ff0u;
-  session::RawBindings b;
+  emp::session::RawBindings b;
   b.inputs.resize(2);
   if (party == 1) {
-    session::Bits xb(W);
+    emp::session::Bits xb(W);
     for (int i = 0; i < W; ++i) xb[(size_t)i] = (uint8_t)((x >> i) & 1);
     b.inputs[1] = std::move(xb);
   }
   const std::vector<const ag::AShareBundle<nP> *> authenticated = {bundles.data(), nullptr};
-  const session::RawResult r = sess.run_computation(std::move(job), b, authenticated);
+  const emp::session::RawResult r = sess.run_computation(std::move(job), b, authenticated);
 
   bool ok = true;
   if (party == 1) {
@@ -133,12 +133,12 @@ int main(int argc, char **argv) {
 
   // A second, ordinary computation: party 2's k bits now enter as plain input bits.
   auto job2 = sess.prepare_computation(art);
-  session::RawBindings b2;
+  emp::session::RawBindings b2;
   b2.inputs.resize(2);
-  session::Bits mine(W);
+  emp::session::Bits mine(W);
   for (int i = 0; i < W; ++i) mine[(size_t)i] = (uint8_t)(((party == 2 ? k : x) >> i) & 1);
   b2.inputs[party == 2 ? 0 : 1] = std::move(mine);
-  const session::RawResult r2 = sess.run_computation(std::move(job2), b2);
+  const emp::session::RawResult r2 = sess.run_computation(std::move(job2), b2);
   if (party == 1) {
     uint32_t got = 0;
     for (int i = 0; i < W; ++i) got |= (uint32_t)((*r2.outputs[0])[(size_t)i] & 1) << i;
