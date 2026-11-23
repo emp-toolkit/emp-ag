@@ -72,12 +72,15 @@ public:
   // No zero test to carry other checks' views: their callers agree on them separately.
   static constexpr bool kAgreesViews = false;
 
-  // fail_msg is the abort message of a tag mismatch.
+  // `purpose` is the domain of the tag key, as it is of SymmetricOpenCheck's coin: two
+  // instances on one session id need different ones, since positions restart at 0 in
+  // each. fail_msg is the abort message of a tag mismatch.
   PairwiseOpenCheck(NetIOMP<nP> *io, ThreadPool *pool, int party, block Delta,
                     block session_id, PRG * /*prg*/, NetIOMPGroup<nP> * /*grp*/,
+                    const char *purpose = "emp-ag:open-check",
                     const char *fail_msg = "open check: MAC tag mismatch")
       : io_(io), pool_(pool), party_(party), Delta_(Delta), fail_msg_(fail_msg) {
-    AES_set_encrypt_key(RO("emp-ag:open-check", session_id).squeeze_block(), &aes_);
+    AES_set_encrypt_key(RO(purpose, session_id).squeeze_block(), &aes_);
     for (int p = 0; p <= nP; ++p) sent_[p] = expected_[p] = zero_block;
   }
 

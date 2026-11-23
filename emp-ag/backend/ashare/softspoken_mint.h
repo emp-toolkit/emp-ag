@@ -283,6 +283,15 @@ class SoftSpokenMint {
 			role, channel, /*malicious=*/true, std::move(base));
 	}
 
+	// A sender stream must run under the Delta it was given. The share layer pins bits of
+	// Delta (AShareGen), and at nP == 2 no later check would notice a supplied stream that
+	// kept its own. Read once the stream's prefix is drawn and checked, when it is final.
+	static void expect_requested_delta_(const OTExt &stream, const bool *requested) {
+		const block want = bool_to_block(requested);
+		expecting(cmpBlock(&stream.Delta, &want, 1),
+		          "COT streams: a sender stream does not run under the Delta it was given");
+	}
+
 	// A pair's primary stream: the supplied one, or SoftSpoken over a public-key base OT.
 	std::unique_ptr<OTExt> make_primary_(int role, NetIO *channel, BaseOtKind base_ot_kind) {
 		if (cot_.supplied()) return supplied_stream_(cot_.primary(role, channel));
@@ -358,12 +367,14 @@ class SoftSpokenMint {
 					abit1[peer] = make_primary_(ALICE, ch_send, base_ot_kind);
 					abit1[peer]->set_sid(primary_sid[(size_t)peer]);
 					bool split_delta[128];
-					abit1[peer]->set_delta(test_split_delta(delta_me, party, peer, split_delta));
+					const bool *requested = test_split_delta(delta_me, party, peer, split_delta);
+					abit1[peer]->set_delta(requested);
 					if (planned_sender_cots >= 0) abit1[peer]->begin(planned_sender_cots);
 					else                          abit1[peer]->begin();
 					ch_send->flush();
 					abit1[peer]->next_n(primary[(size_t)peer].data(), K); ch_send->flush();
 					abit1[peer]->check(); ch_send->flush();   // certify the prefix
+					expect_requested_delta_(*abit1[peer], requested);
 				} else {
 					// Lower party: primary receiver.
 					abit2[peer] = make_primary_(BOB, ch_recv, base_ot_kind);
@@ -439,12 +450,14 @@ class SoftSpokenMint {
 						std::make_unique<BufferOT>(ch_send, std::move(c), std::move(mc)));
 					abit1[peer]->set_sid(reverse_sid[(size_t)peer]);
 					bool split_delta[128];
-					abit1[peer]->set_delta(test_split_delta(delta_me, party, peer, split_delta));
+					const bool *requested = test_split_delta(delta_me, party, peer, split_delta);
+					abit1[peer]->set_delta(requested);
 					if (planned_sender_cots >= 0) abit1[peer]->begin(planned_sender_cots);
 					else                          abit1[peer]->begin();
 					ch_send->flush();
 					abit1[peer]->next_n(reverse_prefix.data(), K); ch_send->flush();
 					abit1[peer]->check(); ch_send->flush();
+					expect_requested_delta_(*abit1[peer], requested);
 				}
 			}));
 		}

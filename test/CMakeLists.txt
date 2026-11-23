@@ -164,11 +164,22 @@ add_np_variant(agmpc_cot_extension_factory_lanes agmpc_cot_extension_factory.cpp
                DEFS COT_FACTORY_NP=2 COT_FACTORY_CASE=1 PASS_RE "supplied streams run on one lane")
 add_np_variant(agmpc_cot_extension_factory_noid agmpc_cot_extension_factory.cpp 2
                DEFS COT_FACTORY_NP=2 COT_FACTORY_CASE=2 PASS_RE "supplied factory needs an id")
+add_np_variant(agmpc_cot_extension_factory_owndelta agmpc_cot_extension_factory.cpp 2
+               DEFS COT_FACTORY_NP=2 COT_FACTORY_CASE=3 PASS_RE "does not run under the Delta it was given")
+# The AND gates' protocol a session is given: an id without a protocol, or a protocol
+# without an id, is refused before any traffic.
+add_np_variant(agmpc_and_prep_factory_noprotocol agmpc_and_prep_factory.cpp 2
+               DEFS AND_PREP_CASE=1 PASS_RE "an id without a protocol")
+add_np_variant(agmpc_and_prep_factory_noid agmpc_and_prep_factory.cpp 2
+               DEFS AND_PREP_CASE=2 PASS_RE "a supplied protocol needs an id")
 # A computation's Party slot bound to authenticated bundles made from one-way draw_cots()
 # COTs, and the opening's MAC check catching a false claim.
 add_np_variant(agmpc_computation_authenticated agmpc_computation_authenticated.cpp 2)
 add_np_variant(agmpc_computation_authenticated_cheat agmpc_computation_authenticated.cpp 2
                DEFS AUTH_CASE=1 PASS_RE "share-MAC hash mismatch")
+# Above two parties, nothing checks a supplied bundle across receivers: refused.
+add_np_variant(agmpc_computation_authenticated_np3 agmpc_computation_authenticated.cpp 3
+               DEFS AUTH_CASE=2 PASS_RE "authenticated slots need two parties")
 add_np_variant(agmpc_independent_triples_direct_np2 agmpc_independent_triples.cpp 2)
 add_np_variant(agmpc_independent_triples_prepared_np2 agmpc_independent_triples.cpp 2
                DEFS INDEPENDENT_TRIPLES_PREPARED=1)
@@ -219,6 +230,9 @@ foreach(_agmpc2 agmpc_context_api agmpc_direct_chunks agmpc_program_replay agmpc
              COMMAND ${PROJECT_SOURCE_DIR}/runN 2 $<TARGET_FILE:test_${_agmpc2}>
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 endforeach()
+# The session id of a build that chose a non-default open checker is bound to it.
+add_np_variant(agmpc_session_id_open_check agmpc_session_id.cpp 2
+               DEFS EMP_AG_OPEN_CHECK_SYMMETRIC BUILD_OPTIONS_BOUND)
 
 # Circuit mode (Computation): the knob matrix, Auth x Delivery x triple source x nP
 # (the two Delivery options coincide at nP = 2), plus a non-default ssp, and the

@@ -306,7 +306,9 @@ std::vector<unsigned char> AGMPCProtocol<nP, Cfg>::open_computation_input_masks_
 // value's sharing). Every party opens d = source ^ mask under the MAC check of
 // open_to_targets, and Lambda = d: the computation's input is then exactly the
 // source's value. Opening the mask to the slot's owner at prepare time does not change
-// this: the other parties learn only d, as from a broadcast.
+// this: the other parties learn only d, as from a broadcast. As before every other
+// opening, the deferred COT check and check2 run first: the caller may have drawn COTs
+// (draw_cots) for the sources since prepare_computation; with none drawn, nothing is sent.
 template <int nP, class Cfg>
 void AGMPCProtocol<nP, Cfg>::bind_computation_inputs_(
     SecureWires<nP> &target, const std::vector<int> &owner,
@@ -322,6 +324,8 @@ void AGMPCProtocol<nP, Cfg>::bind_computation_inputs_(
   std::vector<int> source_wires;
   for (int w = 0; w < n; ++w) if (sourced(w)) source_wires.push_back(w);
   if (!source_wires.empty()) {
+    abit->maybe_flush_cot_check();
+    abit->settle_check2();
     AShareBundleVec<nP> d((size_t)n);
     std::vector<std::vector<int>> to_all(nP + 1);
     for (int w : source_wires) {

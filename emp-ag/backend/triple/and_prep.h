@@ -96,18 +96,33 @@ public:
 };
 
 // How a session builds its protocol for the AND gates, after setup. `id` names the
-// protocol and its parameters: a session binds a nonempty id into its session id before
-// setup (garble/protocol.h), so parties that chose differently fail setup. The leaky ANDs
-// (LeakyAndPrep), the default, have the empty id; any other protocol needs its own.
+// protocol and its parameters: a session binds the id into its session id before setup
+// (garble/protocol.h), so parties that chose differently fail setup. Every protocol has
+// one. The leaky ANDs (LeakyAndPrep), the default, have kLeakyAndPrepId, which leaves the
+// session id as it is. A factory with neither id nor protocol asks for the default.
 template <int nP>
 struct AndPrepFactory {
   std::string id;
   std::function<std::unique_ptr<AndPrep<nP>>(const AndPrepContext<nP> &)> make;
 };
 
-// The session id under the protocol `id` names: unchanged for the empty id.
+inline constexpr std::string_view kLeakyAndPrepId = "emp-ag:leaky-and";
+
+// A supplied protocol needs an id, and an id needs a protocol: either alone is a mistake,
+// not a request for the default.
+template <int nP>
+inline void validate_and_prep_factory(const AndPrepFactory<nP> &f) {
+  if (!f.make) {
+    expecting(f.id.empty(), "AND-gate protocol: an id without a protocol");
+    return;
+  }
+  expecting(!f.id.empty(), "AND-gate protocol: a supplied protocol needs an id");
+}
+
+// The session id under the protocol `id` names: unchanged for the leaky ANDs.
 inline block bind_and_prep(block session_id, const std::string &id) {
-  if (id.empty()) return session_id;
+  expecting(!id.empty(), "AND-gate protocol: an empty id");
+  if (id == kLeakyAndPrepId) return session_id;
   return RO("emp-ag:and-prep", session_id).absorb(std::string_view(id)).squeeze_block();
 }
 

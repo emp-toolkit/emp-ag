@@ -161,8 +161,9 @@ private:
                        "cut-and-choose: opened values do not match their MACs",
                        "cut-and-choose: commit-open mismatch",
                        "cut-and-choose: parties saw different values opened without an echo");
-    else
-      return OpenCheck(io, pool, party, Delta, sid, prg, grp, "cut-and-choose: MAC tag mismatch");
+    else   // the bank's sid is its own, so it keeps the default purpose
+      return OpenCheck(io, pool, party, Delta, sid, prg, grp, "emp-ag:open-check",
+                       "cut-and-choose: MAC tag mismatch");
   }
 
   // A uniform k-subset of [0, n), ascending (Floyd's algorithm).

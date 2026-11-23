@@ -438,7 +438,9 @@ public:
   // ordinary slot and otherwise points to slot s's width() bundles, each party passing
   // its own. Such a slot takes no bits, and its owner's entry in `b` is ignored: in place
   // of the owner's broadcast of x ^ mask, every party opens d = value ^ mask under a MAC
-  // check, so the computation's input is exactly the authenticated value.
+  // check, so the computation's input is exactly the authenticated value. Two parties
+  // only: above two, nothing would check that a supplied bundle shares the same bit
+  // toward every peer, which the session's own shares get from check2.
   session::RawResult run_computation(job_t &&job, const session::RawBindings &b,
                                      const std::vector<const AShareBundle<nP> *> &authenticated) {
     return run_computation_(std::move(job), b, &authenticated);
@@ -462,6 +464,7 @@ private:
       if (b.inputs.size() < io_sig.inputs.size()) b.inputs.resize(io_sig.inputs.size());
       for (size_t s = 0; s < io_sig.inputs.size(); ++s) {
         if (!is_authenticated(s)) continue;
+        expecting(nP == 2, "AGMPCSession::run_computation: authenticated slots need two parties");
         expecting(io_sig.inputs[s].kind == circuit::InputKind::Party,
                   "AGMPCSession::run_computation: an authenticated slot must be a Party slot");
         if (session::binds(io_sig.inputs[s], me))   // the owner binds no bits for it

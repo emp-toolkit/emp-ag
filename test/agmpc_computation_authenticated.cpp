@@ -10,8 +10,13 @@
 // and gives party 1 k | x. A second, ordinary computation then runs on the same
 // session: its two streams have drawn different counts, and stay in step.
 //
+// The COTs are drawn after prepare_computation and never flushed here: run_computation
+// runs the deferred COT check before it opens the authenticated slot.
+//
 // AUTH_CASE=1: party 2 claims the other value of k's first bit (bit 0 of its MAC
 // flipped), and the opening's MAC check must abort.
+// AUTH_CASE=2: three parties; run_computation refuses the authenticated slot before it
+// sends anything.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
 #include <cstdint>
@@ -26,7 +31,7 @@ using namespace emp::circuit;
 #ifndef AUTH_CASE
 #define AUTH_CASE 0
 #endif
-constexpr int nP = 2;
+constexpr int nP = AUTH_CASE == 2 ? 3 : 2;
 constexpr int W = 32;
 // One-direction draws need the SoftSpoken mint, whatever the build's default.
 using Cfg = ag::GarbleConfig<ag::Auth::EMP_AG_GARBLE_AUTH, ag::Delivery::EMP_AG_GARBLE_DELIVERY,
@@ -63,6 +68,20 @@ int main(int argc, char **argv) {
   const int party = parse_party(argv, nP);
   const int port = peer_port();
   if (party > nP) return 0;
+#if AUTH_CASE == 2
+  {
+    NetIOMP<nP> io(party, port);
+    ThreadPool pool(ag::default_pool_size(nP));
+    AgSession sess(&io, &pool, party);
+    auto job = sess.prepare_computation(std::make_shared<const ComputationArtifact>(or_computation()));
+    ag::AShareBundleVec<nP> bundles(W);
+    emp::session::RawBindings b;
+    b.inputs.resize(2);
+    const std::vector<const ag::AShareBundle<nP> *> authenticated = {bundles.data(), nullptr};
+    (void)sess.run_computation(std::move(job), b, authenticated);
+    return 1;   // unreachable: three parties refuse authenticated slots
+  }
+#else
   const int peer = 3 - party;
 
   NetIOMP<nP> io(party, port);
@@ -81,7 +100,6 @@ int main(int argc, char **argv) {
   expecting(sess.protocol().abit->cots_drawn(peer, as_sender) == before + W &&
                 sess.protocol().abit->cots_drawn(peer, !as_sender) == before,
             "agmpc_computation_authenticated: draw_cots() counted on the wrong stream");
-  abit.maybe_flush_cot_check();
 
   // Test only: party 2 shows party 1 its MACs, which party 1 checks against its keys.
   std::vector<block> mac(W);
@@ -146,4 +164,5 @@ int main(int argc, char **argv) {
     std::printf("agmpc_computation_authenticated: %s\n", ok ? "GOOD!" : "BAD!");
   }
   return ok ? 0 : 1;
+#endif
 }

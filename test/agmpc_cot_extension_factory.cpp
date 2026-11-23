@@ -5,10 +5,12 @@
 // computes correctly over the streams.
 //
 // COT_FACTORY_CASE selects a misuse the session must refuse instead: 1 asks for two lanes
-// (supplied streams run on one), 2 leaves the id empty.
+// (supplied streams run on one), 2 leaves the id empty, 3 supplies primary sender streams
+// that keep a Delta of their own in place of the one they are given.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
 #include "emp-ot/base_ot/base_ot_select.h"
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <memory>
@@ -27,6 +29,17 @@ using Cfg = ag::GarbleConfig<ag::Auth::EMP_AG_GARBLE_AUTH, ag::Delivery::EMP_AG_
 using AgSession = AGMPCSession<nP, Cfg>;
 using UInt32 = UInt_T<AgSession::ctx_t, 32>;
 
+// COT_FACTORY_CASE 3: a sender stream that flips one bit of the Delta it is given.
+struct OwnDelta final : ag::SoftSpokenCot {
+  using ag::SoftSpokenCot::SoftSpokenCot;
+  void set_delta(const bool *bits) override {
+    bool own[128];
+    std::copy(bits, bits + 128, own);
+    own[5] = !own[5];
+    ag::SoftSpokenCot::set_delta(own);
+  }
+};
+
 int main(int argc, char **argv) {
   const int party = parse_party(argv, nP);
   const int port = peer_port();
@@ -37,6 +50,8 @@ int main(int argc, char **argv) {
   cot.id = COT_FACTORY_CASE == 2 ? "" : "test:softspoken-over-bmm";
   cot.primary = [&](int role, NetIO *ch) -> std::unique_ptr<OTExtension> {
     ++primaries;
+    if (COT_FACTORY_CASE == 3 && role == ALICE)
+      return std::make_unique<OwnDelta>(role, ch, /*malicious=*/true, make_base_ot(BaseOtKind::BMM, ch));
     return std::make_unique<ag::SoftSpokenCot>(role, ch, /*malicious=*/true,
                                                make_base_ot(BaseOtKind::BMM, ch));
   };
@@ -61,9 +76,9 @@ int main(int argc, char **argv) {
     // Every party builds one primary and one reverse stream per peer.
     expecting(primaries == nP - 1 && reverses == nP - 1,
               "agmpc_cot_extension_factory: the factory did not build every stream");
-    const block want = ag::bind_cot_extension(
-        ag::bind_and_prep(ag::bind_garble_config<nP, Cfg>(given), ag::default_and_prep<nP>().id),
-        cot.id);
+    const block options = ag::bind_build_options<nP, Cfg>(ag::bind_garble_config<nP, Cfg>(given));
+    const block want =
+        ag::bind_cot_extension(ag::bind_and_prep(options, ag::default_and_prep<nP>().id), cot.id);
     const block kept = sess.protocol().session_id;
     expecting(cmpBlock(&kept, &want, 1),
               "agmpc_cot_extension_factory: the factory's id is not bound into the session id");

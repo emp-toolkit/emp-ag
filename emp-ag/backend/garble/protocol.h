@@ -66,6 +66,21 @@ AndPrepFactory<nP> default_and_prep() {
 #endif
 }
 
+// The build options that change the wire without a type of their own: the open checker
+// (EMP_AG_OPEN_CHECK_*, ashare/open_check.h) and SoftSpoken's k (EMP_AG_SOFTSPOKEN_K). As
+// with the garbling options, the defaults leave the session id as it is, and any other
+// choice binds it, so parties built differently fail setup.
+template <int nP, class Cfg>
+inline block bind_build_options(block session_id) {
+  constexpr bool pairwise = std::is_same_v<DefaultOpenCheck<nP>, PairwiseOpenCheck<nP>>;
+  constexpr int k = Cfg::cot == Cot::SoftSpoken ? EMP_AG_SOFTSPOKEN_K : 0;
+  if (pairwise == (nP == 2) && (k == 0 || k == 8)) return session_id;
+  return RO("emp-ag:build-options", session_id)
+      .absorb((uint64_t)(pairwise ? 1 : 2))
+      .absorb((uint64_t)k)
+      .squeeze_block();
+}
+
 template <int nP, class Cfg = GarbleConfig<>>
 class AGMPCProtocol {
   static_assert(nP >= 2, "AGMPC requires at least 2 parties");
@@ -116,6 +131,7 @@ public:
                 const CotExtensionFactory &cot = {})
       : io(io_), pool(pool_), party(party_) {
     validate_cot_extension_factory(cot);
+    validate_and_prep_factory(make_and_prep);
     ag::validate_protocol_runtime(pool_, party_, nP);
     ssp = ag::checked_statistical_security(ssp_);
     expecting(io_ != nullptr, "AGMPCProtocol: NetIOMP must not be null");
@@ -127,9 +143,11 @@ public:
     // so none of them picks it.
     session_id = session_id_ ? *session_id_ : sampleRandom<nP>(io_, &prg, pool_, party_);
     // Parties that disagree on the garbling options then disagree on the id, and setup
-    // fails; likewise on the AND gates' protocol, every one of which but the leaky ANDs
-    // binds its id, and on supplied COT streams.
+    // fails; likewise on the build options that change the wire, on the AND gates'
+    // protocol, every one of which but the leaky ANDs binds its id, and on supplied COT
+    // streams.
     session_id = bind_garble_config<nP, Cfg>(session_id);
+    session_id = bind_build_options<nP, Cfg>(session_id);
     const AndPrepFactory<nP> prep = make_and_prep.make ? make_and_prep : default_and_prep<nP>();
     session_id = bind_and_prep(session_id, prep.id);
     session_id = bind_cot_extension(session_id, cot.id);

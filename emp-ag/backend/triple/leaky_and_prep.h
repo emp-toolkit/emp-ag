@@ -328,7 +328,7 @@ private:
 // the empty id.
 template <int nP>
 AndPrepFactory<nP> leaky_and_prep() {
-  return {"", [](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
+  return {std::string(kLeakyAndPrepId), [](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
             return std::make_unique<LeakyAndPrep<nP>>(c);
           }};
 }
