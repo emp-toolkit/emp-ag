@@ -115,6 +115,11 @@ endforeach()
 # white-box (check_MAC sends Delta: EMP_AG_DEBUG_CHECKS), across batches and the bank, under
 # each checker; then the golden matrix with every session's triples from it, which covers
 # the Beaver step and the per-call half-gate seed.
+#
+# The sessions' batch: every session generates at least one whole batch, so a Debug build,
+# where generating one is far slower, uses a smaller batch. The cnc goldens carry the
+# debug_heavy label, which CI's macOS Debug job leaves out (.github/workflows/build.yml).
+set(AG_TEST_CNC_BATCH "$<IF:$<CONFIG:Debug>,1024,16384>")
 add_np_variant(agmpc_cut_and_choose_np2 agmpc_cut_and_choose.cpp 2 DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS)
 add_np_variant(agmpc_cut_and_choose_np3 agmpc_cut_and_choose.cpp 3 DEFS CNC_NP=3 EMP_AG_DEBUG_CHECKS)
 add_np_variant(agmpc_cut_and_choose_np4 agmpc_cut_and_choose.cpp 4 DEFS CNC_NP=4 EMP_AG_DEBUG_CHECKS)
@@ -122,10 +127,15 @@ add_np_variant(agmpc_cut_and_choose_symmetric_np2 agmpc_cut_and_choose.cpp 2
                DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS EMP_AG_OPEN_CHECK_SYMMETRIC)
 add_np_variant(agmpc_cut_and_choose_pairwise_np3 agmpc_cut_and_choose.cpp 3
                DEFS CNC_NP=3 EMP_AG_DEBUG_CHECKS EMP_AG_OPEN_CHECK_PAIRWISE)
-add_np_variant(agmpc_golden_cnc_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2 EMP_AG_CUT_AND_CHOOSE_BATCH=16384)
-add_np_variant(agmpc_golden_cnc_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_CUT_AND_CHOOSE_BATCH=16384)
+add_np_variant(agmpc_golden_cnc_np2 agmpc_golden_snapshot.cpp 2
+               DEFS GOLDEN_NP=2 EMP_AG_CUT_AND_CHOOSE_BATCH=${AG_TEST_CNC_BATCH})
+add_np_variant(agmpc_golden_cnc_np3 agmpc_golden_snapshot.cpp 3
+               DEFS GOLDEN_NP=3 EMP_AG_CUT_AND_CHOOSE_BATCH=${AG_TEST_CNC_BATCH})
 add_np_variant(agmpc_golden_cnc_pairwise_np3 agmpc_golden_snapshot.cpp 3
-               DEFS GOLDEN_NP=3 EMP_AG_CUT_AND_CHOOSE_BATCH=16384 EMP_AG_OPEN_CHECK_PAIRWISE)
+               DEFS GOLDEN_NP=3 EMP_AG_CUT_AND_CHOOSE_BATCH=${AG_TEST_CNC_BATCH}
+                    EMP_AG_OPEN_CHECK_PAIRWISE)
+set_tests_properties(agmpc_golden_cnc_np2 agmpc_golden_cnc_np3 agmpc_golden_cnc_pairwise_np3
+                     PROPERTIES LABELS debug_heavy)
 
 # Pure-linear (zero AND gates) revealed to a GARBLER: covers the num_ands==0
 # garbler-MASK propagation (a garbler sets its fabric MASK only in the output-check walk,
@@ -219,7 +229,7 @@ foreach(_np 2 3 4)
             string(TOLOWER "agmpc_computation_${_auth}_${_src}_np${_np}" _name)
             set(_defs COMP_NP=${_np} EMP_AG_GARBLE_AUTH=${_auth})
             if(_src STREQUAL "cnc")
-                list(APPEND _defs EMP_AG_CUT_AND_CHOOSE_BATCH=16384)
+                list(APPEND _defs EMP_AG_CUT_AND_CHOOSE_BATCH=${AG_TEST_CNC_BATCH})
             endif()
             add_np_variant(${_name} agmpc_computation.cpp ${_np} DEFS ${_defs})
             if(NOT _np EQUAL 2)

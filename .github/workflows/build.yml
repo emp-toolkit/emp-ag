@@ -58,8 +58,13 @@ jobs:
 
       - name: Build
         # Bounded parallelism: the nP-templated test/adversarial binaries are
-        # memory-heavy, and an unbounded -j OOMs the hosted runners.
-        run: cmake --build build -j 2
+        # memory-heavy, and an unbounded -j OOMs the hosted runners. The macOS
+        # runners have three cores, and three of their compiles fit in memory.
+        run: cmake --build build -j ${{ runner.os == 'macOS' && 3 || 2 }}
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        # macOS Debug runs the suite several times slower than any other job, so
+        # it leaves out the tests labeled debug_heavy (test/CMakeLists.txt).
+        run: >
+          ctest --test-dir build --output-on-failure
+          ${{ (runner.os == 'macOS' && matrix.build_type == 'Debug') && '-LE debug_heavy' || '' }}
