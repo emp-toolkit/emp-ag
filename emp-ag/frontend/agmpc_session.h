@@ -408,7 +408,7 @@ public:
   // COTs drawn from it through draw_cots(job, ...).
   static int64_t planned_cots(const circuit::ComputationArtifact &art, int ssp = 40,
                               const ag::AndPrepFactory<nP> &and_prep = {}) {
-    circuit::validate_computation(art);
+    validate_computation_(art);
     return planned_cots((int64_t)art.program->num_inputs, ag::agmpc_count_ands(*art.program),
                         ssp, and_prep);
   }
@@ -435,6 +435,39 @@ public:
     return cots;
   }
 
+  // A Computation's program comes from the application's own code. Release builds take
+  // it as is, as they take a raw program (engine.h, validate_raw_), and check only the
+  // slots, whose kinds, parties and widths index the session's input and output tables;
+  // debug builds, or EMP_AG_DEBUG_CHECKS, also validate the program, gate by gate.
+  static void validate_computation_(const circuit::ComputationArtifact &art) {
+#if !defined(NDEBUG) || defined(EMP_AG_DEBUG_CHECKS)
+    circuit::validate_computation(art);
+#else
+    expecting(art.program != nullptr, "AGMPCSession: a Computation without a program");
+    uint64_t in_bits = 0, out_bits = 0;
+    for (const circuit::InputRole &r : art.io.inputs) {
+      expecting((r.kind == circuit::InputKind::Party && r.owner >= 1) ||
+                    (r.kind == circuit::InputKind::Public && r.owner == PUBLIC),
+                "AGMPCSession: an input slot's kind and owner disagree");
+      expecting(r.width != 0 && r.width <= UINT32_MAX - in_bits,
+                "AGMPCSession: an input slot is empty, or the widths overflow");
+      in_bits += r.width;
+    }
+    expecting(in_bits == (uint64_t)art.program->num_inputs,
+              "AGMPCSession: the input slots do not cover the program's inputs");
+    for (const circuit::OutputRole &r : art.io.outputs) {
+      expecting((r.kind == circuit::OutputKind::Party && r.recipient >= 1) ||
+                    (r.kind == circuit::OutputKind::Public && r.recipient == PUBLIC),
+                "AGMPCSession: an output slot's kind and recipient disagree");
+      expecting(r.width != 0 && r.width <= UINT32_MAX - out_bits,
+                "AGMPCSession: an output slot is empty, or the widths overflow");
+      out_bits += r.width;
+    }
+    expecting(out_bits == (uint64_t)art.program->outputs.size(),
+              "AGMPCSession: the output slots do not cover the program's outputs");
+#endif
+  }
+
   // prepare_computation does every step that needs no input value: all
   // preprocessing and the garbling of the whole program (P1 stores the rows),
   // then one MAC-checked round that opens each Party input's mask to its owner
@@ -444,7 +477,7 @@ public:
   // anything is fatal.
   job_t prepare_computation(std::shared_ptr<const circuit::ComputationArtifact> art) {
     expecting(art != nullptr, "AGMPCSession::prepare_computation: null computation");
-    circuit::validate_computation(*art);
+    validate_computation_(*art);
     for (const circuit::InputRole &r : art->io.inputs)
       expecting(r.kind == circuit::InputKind::Public || r.owner <= nP,
                 "AGMPCSession::prepare_computation: an input owner is above the party count");
