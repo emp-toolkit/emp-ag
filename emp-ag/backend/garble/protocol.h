@@ -97,7 +97,7 @@ public:
   // circuit-run and decode calls: the share generator over the session's COT streams
   // (Cfg::cot; ashare/ashare_gen.h) and the protocol for the AND gates over it
   // (triple/and_prep.h).
-  using ashare_t = AShareGen<nP, MintFor<nP, Cfg::cot>>;
+  using ashare_t = AShareGen<nP, MintFor<nP, Cfg::cot, Cfg::lpn>>;
   ashare_t *abit = nullptr;
   std::unique_ptr<AndPrep<nP>> and_prep;
   NetIOMP<nP> *io;

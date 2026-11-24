@@ -3,7 +3,8 @@
 //
 // The options of a session, fixed at compile time: AGMPCSession<nP, Cfg> and everything
 // below it take a GarbleConfig Cfg, which sets how the garbling runs (Auth, Delivery) and
-// which COT streams make the aShares (Cot, ashare/cot.h). The garbled rows do not vary:
+// which COT streams make the aShares (Cot, and SilentFerret's LPN set FerretLpn,
+// ashare/cot.h). The garbled rows do not vary:
 // half-gates for each garbler's own label and three rows toward every other garbler.
 //
 // Auth: how P1's masked values Lambda are authenticated.
@@ -47,17 +48,18 @@ enum class Delivery : uint8_t { RING, DIRECT };
 #endif
 
 template <Auth A = Auth::EMP_AG_GARBLE_AUTH, Delivery D = Delivery::EMP_AG_GARBLE_DELIVERY,
-          Cot C = Cot::EMP_AG_COT>
+          Cot C = Cot::EMP_AG_COT, FerretLpn L = FerretLpn::B12>
 struct GarbleConfig {
   static constexpr Auth auth = A;
   static constexpr Delivery delivery = D;
   static constexpr Cot cot = C;
+  static constexpr FerretLpn lpn = L;
 };
 
 // The session id a party runs under: the given one for the default, KRRW with the ring
 // over SoftSpoken, so the default transcript does not depend on the options; otherwise
 // one bound to the options. The delivery does not count at nP = 2, where both choices are
-// the same.
+// the same, nor the LPN set on SoftSpoken streams.
 template <int nP, class Cfg>
 inline block bind_garble_config(block session_id) {
   const bool ring = nP == 2 || Cfg::delivery == Delivery::RING;
@@ -65,6 +67,7 @@ inline block bind_garble_config(block session_id) {
   RO ro("emp-ag:garble-config", session_id);
   ro.absorb((uint64_t)Cfg::auth).absorb((uint64_t)(ring ? Delivery::RING : Delivery::DIRECT));
   if (Cfg::cot != Cot::SoftSpoken) ro.absorb((uint64_t)Cfg::cot);
+  if (Cfg::cot == Cot::SilentFerret && Cfg::lpn != FerretLpn::B12) ro.absorb((uint64_t)Cfg::lpn);
   return ro.squeeze_block();
 }
 

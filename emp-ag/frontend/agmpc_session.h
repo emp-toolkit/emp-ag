@@ -420,7 +420,7 @@ public:
     expecting(static_cast<bool>(prep.draws),
               "AGMPCSession::planned_cots: the AND-gate protocol does not state its draws");
     using Pool = typename AGMPCProtocol<nP, Cfg>::ashare_t;
-    int64_t cots = ag::MintFor<nP, Cfg::cot>::kPrefix;
+    int64_t cots = ag::MintFor<nP, Cfg::cot, Cfg::lpn>::kPrefix;
     bool first = true;
     auto draw = [&](int64_t n) {
       cots += Pool::cots_of_draw(n, first);

@@ -8,11 +8,16 @@
 // a non-default choice into the session id); -DEMP_AG_COT=<SoftSpoken|SilentFerret>
 // changes the default for a whole build.
 //
+// FerretLpn is SilentFerret's LPN parameter set (emp-ot tuning.h): B12 (ferret_b12) by
+// default, or B13 (ferret_b13), whose longer rounds send fewer bits per COT and need LPN
+// tables twice the size. SoftSpoken streams ignore it.
+//
 #include <cstdint>
 
 namespace emp::ag {
 
 enum class Cot : uint8_t { SoftSpoken, SilentFerret };
+enum class FerretLpn : uint8_t { B12, B13 };
 
 #ifndef EMP_AG_COT
 #define EMP_AG_COT SoftSpoken

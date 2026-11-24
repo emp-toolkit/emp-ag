@@ -189,7 +189,8 @@ add_np_variant(agmpc_computation_authenticated_draw agmpc_computation_authentica
 add_np_variant(agmpc_computation_authenticated_check agmpc_computation_authenticated.cpp 2
                DEFS AUTH_CASE=4 PASS_RE "check through AGMPCSession::check_cots")
 # A session's COT plan (AGMPCSession::planned_cots) is exactly what its streams draw: the
-# leaky ANDs, cut-and-choose over several batches, no AND gates, and job draws at nP = 2.
+# leaky ANDs, cut-and-choose over several batches, no AND gates, job draws at nP = 2, and
+# the B13 LPN set on SilentFerret streams.
 add_np_variant(agmpc_planned_cots_np2 agmpc_planned_cots.cpp 2 DEFS PLANNED_NP=2)
 add_np_variant(agmpc_planned_cots_np3 agmpc_planned_cots.cpp 3 DEFS PLANNED_NP=3)
 add_np_variant(agmpc_independent_triples_direct_np2 agmpc_independent_triples.cpp 2)
