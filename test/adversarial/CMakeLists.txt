@@ -100,9 +100,9 @@ add_np_variant(agmpc_cheat_agg_mid_np4 agmpc_output_cheat.cpp 4 DEFS CHEAT_NP=4 
 # flip_direct (nP>=3, direct delivery): the last garbler corrupts a row it sends P1 directly ->
 # wrong Lambda_gamma -> the c_gamma MACCheck aborts, in streaming and prepared runs.
 add_np_variant(agmpc_cheat_direct_np3 agmpc_output_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_DELIVERY=DIRECT HOOKS flip_direct PASS_RE "cheat in c_gamma MACCheck")
+               DEFS CHEAT_NP=3 ARGS delivery=direct HOOKS flip_direct PASS_RE "cheat in c_gamma MACCheck")
 add_np_variant(agmpc_cheat_direct_np4 agmpc_output_cheat.cpp 4
-               DEFS CHEAT_NP=4 EMP_AG_GARBLE_DELIVERY=DIRECT HOOKS flip_direct PASS_RE "cheat in c_gamma MACCheck")
+               DEFS CHEAT_NP=4 ARGS delivery=direct HOOKS flip_direct PASS_RE "cheat in c_gamma MACCheck")
 # Auth::WRK, where P1 checks every gate itself. flip_p1_row: a garbler (the last, or party 2
 # with flip_party=2) flips a bit of its unconditional row toward P1, so P1's check
 # of that gate fails. flip_g (nP=2), flip_agg / flip_agg_mid (ring) and flip_direct corrupt
@@ -114,13 +114,13 @@ add_np_variant(agmpc_cheat_wrk_p1row_np2 agmpc_output_cheat.cpp 2
 add_np_variant(agmpc_cheat_wrk_p1row_np3 agmpc_output_cheat.cpp 3
                DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_p1_row PASS_RE "WRK: a garbled gate failed")
 add_np_variant(agmpc_cheat_wrk_p1row_direct_np3 agmpc_output_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT HOOKS flip_p1_row
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK ARGS delivery=direct HOOKS flip_p1_row
                PASS_RE "WRK: a garbled gate failed")
 add_np_variant(agmpc_cheat_wrk_p1row_party2_np3 agmpc_output_cheat.cpp 3
                DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_p1_row flip_party=2
                PASS_RE "WRK: a garbled gate failed")
 add_np_variant(agmpc_cheat_wrk_p1row_party2_direct_np3 agmpc_output_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT HOOKS flip_p1_row flip_party=2
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK ARGS delivery=direct HOOKS flip_p1_row flip_party=2
  PASS_RE "WRK: a garbled gate failed")
 add_np_variant(agmpc_cheat_wrk_g_np2 agmpc_output_cheat.cpp 2
                DEFS CHEAT_NP=2 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_g PASS_RE "WRK: P1's output masks")
@@ -135,7 +135,7 @@ add_np_variant(agmpc_cheat_wrk_agg_depth2_np3 agmpc_output_cheat.cpp 3
 add_np_variant(agmpc_cheat_wrk_agg_mid_np4 agmpc_output_cheat.cpp 4
                DEFS CHEAT_NP=4 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_agg_mid PASS_RE "WRK: P1's output masks")
 add_np_variant(agmpc_cheat_wrk_direct_np3 agmpc_output_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT HOOKS flip_direct
+               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK ARGS delivery=direct HOOKS flip_direct
                PASS_RE "WRK: P1's output masks")
 add_np_variant(agmpc_cheat_wrk_lambda_np2 agmpc_output_cheat.cpp 2
                DEFS CHEAT_NP=2 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_delivered_lambda
@@ -152,7 +152,7 @@ add_np_variant(agmpc_prepared_cheat_wrk_p1row_np3 agmpc_prepared_cheat.cpp 3
 add_np_variant(agmpc_prepared_cheat_b_np2 agmpc_prepared_cheat.cpp 2 DEFS CHEAT_NP=2 HOOKS flip_b PASS_RE "cheat in c_gamma MACCheck")
 add_np_variant(agmpc_prepared_cheat_agg_np3 agmpc_prepared_cheat.cpp 3 DEFS CHEAT_NP=3 HOOKS flip_agg PASS_RE "cheat in c_gamma MACCheck")
 add_np_variant(agmpc_prepared_cheat_direct_np3 agmpc_prepared_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_DELIVERY=DIRECT HOOKS flip_direct PASS_RE "cheat in c_gamma MACCheck")
+               DEFS CHEAT_NP=3 ARGS delivery=direct HOOKS flip_direct PASS_RE "cheat in c_gamma MACCheck")
 add_np_variant(agmpc_prepared_input_equiv_np3 agmpc_prepared_cheat.cpp 3 DEFS CHEAT_NP=3 HOOKS flip_input_lambda PASS_RE "input Lambda equivocation")
 
 # A caller-provided adopted bundle must be authenticated under this session's

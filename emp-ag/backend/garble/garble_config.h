@@ -1,11 +1,13 @@
 #ifndef EMP_AG_BACKEND_GARBLE_GARBLE_CONFIG_H__
 #define EMP_AG_BACKEND_GARBLE_GARBLE_CONFIG_H__
 //
-// The options of a session, fixed at compile time: AGMPCSession<nP, Cfg> and everything
-// below it take a GarbleConfig Cfg, which sets how the garbling runs (Auth, Delivery) and
-// which COT streams make the aShares (Cot, and SilentFerret's LPN set FerretLpn,
-// ashare/cot.h). The garbled rows do not vary:
-// half-gates for each garbler's own label and three rows toward every other garbler.
+// The options of a session. AGMPCSession<nP, Cfg> and everything below it take a
+// GarbleConfig Cfg, which fixes at compile time which COT streams make the aShares (Cot,
+// and SilentFerret's LPN set FerretLpn, ashare/cot.h) and sets the defaults of the options
+// chosen at run time (ProtocolOptions below): how the garbling runs (Auth, Delivery), the
+// open checker, share evaluation's tags and the AND gates' protocol. The garbled rows do
+// not vary: half-gates for each garbler's own label and three rows toward every other
+// garbler.
 //
 // Auth: how P1's masked values Lambda are authenticated.
 //   KRRW  P2 sends one extra bit per AND gate and P1 reads Lambda off it. After
@@ -62,6 +64,8 @@ inline constexpr int64_t kBuildCutAndChooseBatch = 0;
 // (bind_build_options, garble/protocol.h), so parties that chose differently fail setup.
 // The build macros set the defaults.
 struct ProtocolOptions {
+  // How the garblers' rows reach P1 at nP >= 3 (Delivery above).
+  Delivery delivery = Delivery::EMP_AG_GARBLE_DELIVERY;
   // The open checker of the AND gates' protocol (ashare/open_check.h).
   OpenCheckKind open_check = kBuildOpenCheck;
   // The width, in bytes, of share evaluation's tags (triple/share_eval.h): 10 to 16.
@@ -72,6 +76,8 @@ struct ProtocolOptions {
 };
 
 inline void validate_protocol_options(const ProtocolOptions &o) {
+  expecting(o.delivery == Delivery::RING || o.delivery == Delivery::DIRECT,
+            "ProtocolOptions: an unknown delivery");
   expecting(o.open_check == OpenCheckKind::Default || o.open_check == OpenCheckKind::Pairwise ||
                 o.open_check == OpenCheckKind::Symmetric,
             "ProtocolOptions: an unknown open checker");
@@ -89,19 +95,36 @@ struct GarbleConfig {
   static constexpr FerretLpn lpn = L;
 };
 
+// The options a session of configuration Cfg runs with unless it is given others: the
+// build's defaults, with Cfg's own choices. Options given to a session replace these, so
+// to change one option of Cfg's, start from default_options<Cfg>().
+template <class Cfg>
+inline ProtocolOptions default_options() {
+  ProtocolOptions o;
+  o.delivery = Cfg::delivery;
+  return o;
+}
+
 // The session id a party runs under: the given one for the default, KRRW with the ring
 // over SoftSpoken, so the default transcript does not depend on the options; otherwise
 // one bound to the options. The delivery does not count at nP = 2, where both choices are
 // the same, nor the LPN set on SoftSpoken streams.
+template <int nP>
+inline block bind_garble_options(block session_id, Auth auth, Delivery delivery, Cot cot,
+                                 FerretLpn lpn) {
+  const bool ring = nP == 2 || delivery == Delivery::RING;
+  if (auth == Auth::KRRW && ring && cot == Cot::SoftSpoken) return session_id;
+  RO ro("emp-ag:garble-config", session_id);
+  ro.absorb((uint64_t)auth).absorb((uint64_t)(ring ? Delivery::RING : Delivery::DIRECT));
+  if (cot != Cot::SoftSpoken) ro.absorb((uint64_t)cot);
+  if (cot == Cot::SilentFerret && lpn != FerretLpn::B12) ro.absorb((uint64_t)lpn);
+  return ro.squeeze_block();
+}
+
+// The same, for the options of Cfg itself.
 template <int nP, class Cfg>
 inline block bind_garble_config(block session_id) {
-  const bool ring = nP == 2 || Cfg::delivery == Delivery::RING;
-  if (Cfg::auth == Auth::KRRW && ring && Cfg::cot == Cot::SoftSpoken) return session_id;
-  RO ro("emp-ag:garble-config", session_id);
-  ro.absorb((uint64_t)Cfg::auth).absorb((uint64_t)(ring ? Delivery::RING : Delivery::DIRECT));
-  if (Cfg::cot != Cot::SoftSpoken) ro.absorb((uint64_t)Cfg::cot);
-  if (Cfg::cot == Cot::SilentFerret && Cfg::lpn != FerretLpn::B12) ro.absorb((uint64_t)Cfg::lpn);
-  return ro.squeeze_block();
+  return bind_garble_options<nP>(session_id, Cfg::auth, Cfg::delivery, Cfg::cot, Cfg::lpn);
 }
 
 EMP_AG_NAMESPACE_END

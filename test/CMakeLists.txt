@@ -94,16 +94,16 @@ add_np_variant(agmpc_golden_pairwise_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN
 
 # Garbling options (backend/garble/garble_config.h): the golden matrix and prepared runs under each
 # option that is not the default.
-add_np_variant(agmpc_golden_direct_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_GARBLE_DELIVERY=DIRECT)
-add_np_variant(agmpc_golden_direct_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 EMP_AG_GARBLE_DELIVERY=DIRECT)
-add_np_variant(agmpc_prepared_direct_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3 EMP_AG_GARBLE_DELIVERY=DIRECT)
+add_np_variant(agmpc_golden_direct_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 ARGS delivery=direct)
+add_np_variant(agmpc_golden_direct_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 ARGS delivery=direct)
+add_np_variant(agmpc_prepared_direct_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3 ARGS delivery=direct)
 add_np_variant(agmpc_golden_wrk_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2 EMP_AG_GARBLE_AUTH=WRK)
 add_np_variant(agmpc_golden_wrk_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_GARBLE_AUTH=WRK)
 add_np_variant(agmpc_golden_wrk_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 EMP_AG_GARBLE_AUTH=WRK)
 add_np_variant(agmpc_golden_wrk_direct_np3 agmpc_golden_snapshot.cpp 3
-               DEFS GOLDEN_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT)
+               DEFS GOLDEN_NP=3 EMP_AG_GARBLE_AUTH=WRK ARGS delivery=direct)
 add_np_variant(agmpc_golden_wrk_direct_np4 agmpc_golden_snapshot.cpp 4
-               DEFS GOLDEN_NP=4 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT)
+               DEFS GOLDEN_NP=4 EMP_AG_GARBLE_AUTH=WRK ARGS delivery=direct)
 add_np_variant(agmpc_prepared_wrk_np2 agmpc_prepared.cpp 2 DEFS PREP_NP=2 EMP_AG_GARBLE_AUTH=WRK)
 add_np_variant(agmpc_prepared_wrk_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3 EMP_AG_GARBLE_AUTH=WRK)
 add_np_variant(agmpc_linear_wrk_np3 agmpc_linear.cpp 3 DEFS LIN_NP=3 EMP_AG_GARBLE_AUTH=WRK)
@@ -113,8 +113,8 @@ foreach(_t agmpc_chain agmpc_reactive agmpc_compose agmpc_wire_reuse agmpc_artif
     add_np_variant(${_t}_wrk ${_t}.cpp 3 DEFS EMP_AG_GARBLE_AUTH=WRK)
 endforeach()
 foreach(_t agmpc_chain agmpc_reactive)
-    add_np_variant(${_t}_direct ${_t}.cpp 3 DEFS EMP_AG_GARBLE_DELIVERY=DIRECT)
-    add_np_variant(${_t}_wrk_direct ${_t}.cpp 3 DEFS EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT)
+    add_np_variant(${_t}_direct ${_t}.cpp 3 ARGS delivery=direct)
+    add_np_variant(${_t}_wrk_direct ${_t}.cpp 3 DEFS EMP_AG_GARBLE_AUTH=WRK ARGS delivery=direct)
 endforeach()
 
 # Cut-and-choose triples (backend/triple/cut_and_choose_triples.h). The generator alone,
@@ -267,7 +267,7 @@ foreach(_np 2 3 4)
             add_np_variant(${_name} agmpc_computation.cpp ${_np} DEFS ${_defs} ARGS ${_args})
             if(NOT _np EQUAL 2)
                 add_np_variant(${_name}_direct agmpc_computation.cpp ${_np}
-                               DEFS ${_defs} EMP_AG_GARBLE_DELIVERY=DIRECT ARGS ${_args})
+                               DEFS ${_defs} ARGS delivery=direct ${_args})
             endif()
         endforeach()
     endforeach()
@@ -315,7 +315,7 @@ foreach(_np 2 3 4)
                    DEFS BOUND_NP=${_np} EMP_AG_GARBLE_AUTH=WRK BOUND_EXPERT)
 endforeach()
 add_np_variant(agmpc_computation_bound_wrk_direct_np3 agmpc_computation_bound.cpp 3
-               DEFS BOUND_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT BOUND_EXPERT)
+               DEFS BOUND_NP=3 EMP_AG_GARBLE_AUTH=WRK BOUND_EXPERT ARGS delivery=direct)
 add_np_variant(agmpc_computation_bound_leaky_np3 agmpc_computation_bound.cpp 3
                DEFS BOUND_NP=3 BOUND_LEAKY)
 add_np_variant(agmpc_computation_bound_leaky_wrk_np2 agmpc_computation_bound.cpp 2

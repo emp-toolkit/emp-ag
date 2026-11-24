@@ -4,8 +4,8 @@
 // How the garblers' rows reach P1, both ends: the garbler's drain (ship_garbling,
 // which sends what GarblePass fills, chunk by chunk) and P1's reader
 // (recv_garbling_window, used by the streaming evaluator and by prepared runs). The
-// delivery option of the GarbleConfig (backend/garble/garble_config.h) lives only here; the
-// row layouts are in garble/passes/wire_format.h.
+// delivery option (ProtocolOptions::delivery, backend/garble/garble_config.h) is read only
+// here, once per call; the row layouts are in garble/passes/wire_format.h.
 //
 // Per AND gate a garbler produces its half-gate rows G, three rows S toward every
 // other garbler, and then by Auth: KRRW, P2's bit b; WRK, three rows T toward P1. The
@@ -54,7 +54,7 @@ inline size_t p1_row_bytes(int n, int bits) {
 //           b goes to P1 directly.
 template <int nP, class Cfg>
 void ship_garbling(NetIOMP<nP> *io, int party, chunk_pipe<GarbleChunk> &pipe,
-                   int num_ands, int cap, int bits) {
+                   int num_ands, int cap, int bits, Delivery delivery) {
   constexpr bool wrk = Cfg::auth == Auth::WRK;
   std::vector<unsigned char> tpk(p1_row_bytes<Cfg>(cap, bits));   // this garbler's packed T
   auto pack_t = [&](GarbleChunk *c) {
@@ -68,7 +68,7 @@ void ship_garbling(NetIOMP<nP> *io, int party, chunk_pipe<GarbleChunk> &pipe,
     pack_p1_rows(tpk.data(), c->T.data(), (int64_t)3 * c->n, bits);
   };
   GarbleChunk *c;
-  if constexpr (nP == 2 || Cfg::delivery == Delivery::DIRECT) {
+  if (nP == 2 || delivery == Delivery::DIRECT) {
     // The garbler sends P1 its own rows: G, then its S rows toward every other garbler in
     // id order (none at nP = 2), then b (KRRW, P2 only) or T (WRK).
     while ((c = pipe.consumer_slot()) != nullptr) {
@@ -250,7 +250,7 @@ void size_eval_chunk(EvalChunk<nP> &rows, int n) {
 // garbler's own rows, summed here into the same rows the ring delivers.
 template <int nP, class Cfg>
 void recv_garbling_window(NetIOMP<nP> *io, EvalChunk<nP> &rows, size_t base, int n,
-                          int bits) {
+                          int bits, Delivery delivery) {
   constexpr bool wrk = Cfg::auth == Auth::WRK;
   const size_t tb = p1_row_bytes<Cfg>(n, bits);
   // Per-thread scratch, reused across windows: the packed T rows (summed, under DIRECT)
@@ -262,7 +262,7 @@ void recv_garbling_window(NetIOMP<nP> *io, EvalChunk<nP> &rows, size_t base, int
     io->recv_data(2, rows.G.data() + 2 * base, (size_t)2 * n * sizeof(block));
     if constexpr (wrk) io->recv_data(2, tpk.data(), tb);
     else io->recv_bool(2, (bool *)(rows.b.data() + base), n);
-  } else if constexpr (Cfg::delivery == Delivery::DIRECT) {
+  } else if (delivery == Delivery::DIRECT) {
     constexpr int nd = nP - 1;
     block *agg = rows.Agg.data() + (size_t)3 * nd * base;
     std::fill(agg, agg + (size_t)3 * nd * n, zero_block);
