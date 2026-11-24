@@ -72,6 +72,7 @@
 //   uniform_index (common/uniform_index.h), the window fold and row packing
 //       (common/laand_window.h), F_eq (common/feq.h), add_public_one (ashare/share.h).
 //
+#include "emp-ag/backend/ashare/open_check.h"   // OpenCheckKind
 #include "emp-ag/backend/ashare/source.h"       // AShareSource
 #include "emp-ag/backend/ashare/share.h"        // AShareBundleVec
 #include "emp-ag/backend/common/netmp.h"
@@ -97,6 +98,9 @@ struct AndPrepContext {
   int ssp = 40;
   block session_id = zero_block;
   AShareSource<nP> *abit = nullptr;  // the session's aShares (fresh per draw)
+  // The open checker the session's options choose, which a protocol that checks its
+  // openings runs: the session binds the choice into its id.
+  OpenCheckKind open_check = kBuildOpenCheck;
 };
 
 // Where the walk writes AND gate i's input masks, alpha (the gate's first input) and beta

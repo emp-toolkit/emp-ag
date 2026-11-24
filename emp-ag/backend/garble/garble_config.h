@@ -30,7 +30,8 @@
 // any non-default choice into its session id (bind_garble_config below), so a mismatch
 // fails setup.
 //
-#include "emp-ag/backend/ashare/cot.h"   // Cot
+#include "emp-ag/backend/ashare/cot.h"          // Cot
+#include "emp-ag/backend/ashare/open_check.h"   // OpenCheckKind, EMP_AG_SHARE_TAG_BYTES
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/crypto/ro.h"
 #include <cstdint>
@@ -47,6 +48,37 @@ enum class Delivery : uint8_t { RING, DIRECT };
 #ifndef EMP_AG_GARBLE_DELIVERY
 #define EMP_AG_GARBLE_DELIVERY RING
 #endif
+
+// The build's default AND-gate protocol: the leaky ANDs, or cut-and-choose triples
+// generated <batch> at a time under -DEMP_AG_CUT_AND_CHOOSE_BATCH=<batch>.
+#ifdef EMP_AG_CUT_AND_CHOOSE_BATCH
+inline constexpr int64_t kBuildCutAndChooseBatch = EMP_AG_CUT_AND_CHOOSE_BATCH;
+#else
+inline constexpr int64_t kBuildCutAndChooseBatch = 0;
+#endif
+
+// The options a session runs with, chosen at run time. Every party must choose them alike:
+// a session binds each one that is not the default into its session id
+// (bind_build_options, garble/protocol.h), so parties that chose differently fail setup.
+// The build macros set the defaults.
+struct ProtocolOptions {
+  // The open checker of the AND gates' protocol (ashare/open_check.h).
+  OpenCheckKind open_check = kBuildOpenCheck;
+  // The width, in bytes, of share evaluation's tags (triple/share_eval.h): 10 to 16.
+  int share_tag_bytes = EMP_AG_SHARE_TAG_BYTES;
+  // The AND gates' protocol of a session given none: the leaky ANDs (0), or cut-and-choose
+  // triples generated this many at a time (triple/cut_and_choose_triples.h).
+  int64_t cut_and_choose_batch = kBuildCutAndChooseBatch;
+};
+
+inline void validate_protocol_options(const ProtocolOptions &o) {
+  expecting(o.open_check == OpenCheckKind::Default || o.open_check == OpenCheckKind::Pairwise ||
+                o.open_check == OpenCheckKind::Symmetric,
+            "ProtocolOptions: an unknown open checker");
+  expecting(o.share_tag_bytes >= 10 && o.share_tag_bytes <= 16,
+            "ProtocolOptions: share_tag_bytes must be 10 to 16");
+  expecting(o.cut_and_choose_batch >= 0, "ProtocolOptions: a negative cut-and-choose batch");
+}
 
 template <Auth A = Auth::EMP_AG_GARBLE_AUTH, Delivery D = Delivery::EMP_AG_GARBLE_DELIVERY,
           Cot C = Cot::EMP_AG_COT, FerretLpn L = FerretLpn::B12>

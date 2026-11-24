@@ -50,9 +50,10 @@
 // MAC toward it. That the bits a party sent different receivers agree comes from the
 // aShare consistency check: a party holds the same share toward every peer.
 //
-// DefaultOpenCheck is the pairwise checker at nP == 2 and the symmetric one above.
-// EMP_AG_OPEN_CHECK_PAIRWISE or EMP_AG_OPEN_CHECK_SYMMETRIC forces one at every nP;
-// all parties must use the same checker.
+// A session runs the checker its options choose (OpenCheckKind below): by default the
+// pairwise checker at nP == 2 and the symmetric one above, or either one at every nP.
+// EMP_AG_OPEN_CHECK_PAIRWISE or EMP_AG_OPEN_CHECK_SYMMETRIC makes one of them the build's
+// default. All parties must use the same checker.
 //
 #include "emp-ag/backend/common/feq.h"         // fs_coin_pair_group, symmetric F_eq
 #include "emp-ag/backend/common/protocols.h"   // sampleRandom, check_shared_zero_p2p
@@ -422,18 +423,30 @@ private:
   std::mutex mu_;
 };
 
+// Which checker runs: Default is the pairwise one at nP == 2 and the symmetric one above.
+enum class OpenCheckKind : uint8_t { Default, Pairwise, Symmetric };
+
 #if defined(EMP_AG_OPEN_CHECK_PAIRWISE) && defined(EMP_AG_OPEN_CHECK_SYMMETRIC)
 #error "EMP_AG_OPEN_CHECK_PAIRWISE and EMP_AG_OPEN_CHECK_SYMMETRIC are exclusive"
 #endif
+// The build's default choice.
 #if defined(EMP_AG_OPEN_CHECK_PAIRWISE)
-template <int nP> using DefaultOpenCheck = PairwiseOpenCheck<nP>;
+inline constexpr OpenCheckKind kBuildOpenCheck = OpenCheckKind::Pairwise;
 #elif defined(EMP_AG_OPEN_CHECK_SYMMETRIC)
-template <int nP> using DefaultOpenCheck = SymmetricOpenCheck<nP>;
+inline constexpr OpenCheckKind kBuildOpenCheck = OpenCheckKind::Symmetric;
 #else
-template <int nP>
-using DefaultOpenCheck =
-    std::conditional_t<nP == 2, PairwiseOpenCheck<nP>, SymmetricOpenCheck<nP>>;
+inline constexpr OpenCheckKind kBuildOpenCheck = OpenCheckKind::Default;
 #endif
+
+// Whether `kind` is the pairwise checker at nP parties.
+constexpr bool open_check_pairwise(OpenCheckKind kind, int nP) {
+  return kind == OpenCheckKind::Default ? nP == 2 : kind == OpenCheckKind::Pairwise;
+}
+
+// The checker of the build's default choice, as a type.
+template <int nP>
+using DefaultOpenCheck = std::conditional_t<open_check_pairwise(kBuildOpenCheck, nP),
+                                            PairwiseOpenCheck<nP>, SymmetricOpenCheck<nP>>;
 
 EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_ASHARE_OPEN_CHECK_H__

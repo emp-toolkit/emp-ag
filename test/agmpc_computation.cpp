@@ -9,7 +9,7 @@
 // before any traffic.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
-#include "test_args.h"
+#include "test_options.h"
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -211,10 +211,11 @@ int main(int argc, char **argv) {
   if (party > nP) return 0;
   // ssp=<s>; ssp_skew=<k>: party 2 runs at s + k (a misuse case); the rest are misuse cases.
   const TestArgs args(argc, argv,
-                      {"ssp", "ssp_skew", "busy", "bad_owner", "full_reuse", "composed_full_unit"});
+                      {"ssp", "ssp_skew", "busy", "bad_owner", "full_reuse", "composed_full_unit",
+                       TEST_OPTION_ARGS});
   const int ssp = (int)args.num("ssp", 40) + (party == 2 ? (int)args.num("ssp_skew", 0) : 0);
   ThreadPool pool(ag::default_pool_size(nP));
-  AgSession sess(party, peer_port(), nullptr, &pool, ssp);
+  AgSession sess(party, peer_port(), nullptr, &pool, test_options(args), ssp);
   static_assert(ComputationSession<AgSession>);
   static_assert(!std::is_copy_constructible_v<AgSession::job_t> &&
                 std::is_move_constructible_v<AgSession::job_t>);

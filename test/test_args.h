@@ -27,6 +27,15 @@ class TestArgs {
 
   bool has(const char *name) const { return find_(name) != nullptr; }
 
+  // The value of name=value as text, or def when the argument is absent.
+  std::string str(const char *name, const std::string &def) const {
+    const std::string *a = find_(name);
+    if (a == nullptr) return def;
+    const size_t eq = a->find('=');
+    emp::expecting(eq != std::string::npos, [&] { return "test: " + *a + " needs a value"; });
+    return a->substr(eq + 1);
+  }
+
   // The value of name=value, or def when the argument is absent.
   long long num(const char *name, long long def) const {
     const std::string *a = find_(name);

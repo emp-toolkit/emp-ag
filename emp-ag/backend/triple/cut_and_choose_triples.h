@@ -676,7 +676,9 @@ private:
 // The factory for CutAndChoosePrep with batches of `batch`, and `batches` of them declared
 // up front (0: the per-batch schedule), which AGMPCSession's constructor takes. Its id
 // carries the batch and a declared count, since the triples served depend on them. A call
-// run(n) takes n triples from the bank, so its draws are the bank's.
+// run(n) takes n triples from the bank, so its draws are the bank's. It runs the open
+// checker the session's options choose (AndPrepContext::open_check), which the session
+// binds into its id.
 template <int nP>
 AndPrepFactory<nP> cut_and_choose_prep(int64_t batch, int64_t batches = 0) {
   expecting(batch >= 1, "cut-and-choose: batch must be positive");
@@ -685,7 +687,9 @@ AndPrepFactory<nP> cut_and_choose_prep(int64_t batch, int64_t batches = 0) {
   if (batches > 0) id += ":" + std::to_string(batches);
   return {std::move(id),
           [batch, batches](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
-            return std::make_unique<CutAndChoosePrep<nP>>(c, batch, batches);
+            if (open_check_pairwise(c.open_check, nP))
+              return std::make_unique<CutAndChoosePrep<nP, PairwiseOpenCheck<nP>>>(c, batch, batches);
+            return std::make_unique<CutAndChoosePrep<nP, SymmetricOpenCheck<nP>>>(c, batch, batches);
           },
           [batch, batches](int64_t n, int ssp) {
             return CutAndChooseTriples<nP>::draws(n, ssp, batch, batches);

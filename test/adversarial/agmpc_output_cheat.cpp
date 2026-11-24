@@ -18,7 +18,7 @@
 //     opened bucket d-bit / Beaver x and sends it to everyone, keeping it itself, so every
 //     party computes from the same wrong value; the open check must abort in preprocessing
 //     (abort message contains "open check"). Built with the default open checker and,
-//     via EMP_AG_OPEN_CHECK_PAIRWISE / _SYMMETRIC, with the other one.
+//     via open_check=pairwise / symmetric (test_options.h), with the other one.
 //   flip_bw (nP>=3) -- party 2 sends party 3 a different aShare consistency
 //     value bw than everyone else, with the tag on the right one. Party 3's check of the
 //     tag aborts in preprocessing, under either open checker ("cheat aShare").
@@ -26,7 +26,7 @@
 //     party 2 inside the 128-COT bootstrap prefix (backend/common/netmp.h's TamperNetIO). Party 2's
 //     check of the prefix must abort during setup, before the reverse direction's base OTs
 //     are derived from it ("SoftSpoken subspace VOLE check failed").
-//   cnc_* (with EMP_AG_CUT_AND_CHOOSE_BATCH) -- the cut-and-choose triple
+//   cnc_* (with cnc=<batch>) -- the cut-and-choose triple
 //     generator: a wrong product correction (cnc_flip_product), z ^ r opening (cnc_flip_zr) or
 //     sacrifice difference (cnc_flip_open), sent to everyone; a z ^ r opening (cnc_split_zr) or, as
 //     a king, an opened value (cnc_king_split) sent to party 3 alone. Each must abort while the
@@ -42,7 +42,7 @@
 // nonzero return (and no "cheat" line), which fails the regex.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
-#include "../test_args.h"
+#include "../test_options.h"
 #include <optional>
 #include <vector>
 using namespace std;
@@ -57,9 +57,10 @@ static_assert(ag::kTestHooks, "a fault-injection test needs a hooks build (EMP_A
 int main(int argc, char **argv) {
   int party = parse_party(argv, nP);
   if (party > nP) return 0;
-  const TestArgs args(argc, argv, {"ssp", "depth2"});
+  const TestArgs args(argc, argv, {"ssp", "depth2", TEST_OPTION_ARGS});
   ThreadPool pool(ag::default_pool_size(nP));
-  AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool, (int)args.num("ssp", 40));
+  AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool, test_options(args),
+                        (int)args.num("ssp", 40));
   using Ctx = typename AGMPCSession<nP>::ctx_t;
   using Bit = Bit_T<Ctx>;
 

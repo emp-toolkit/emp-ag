@@ -88,9 +88,9 @@ add_np_variant(agmpc_golden_np3 agmpc_golden_snapshot.cpp 3  DEFS GOLDEN_NP=3)
 add_np_variant(agmpc_golden_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4)
 # The same matrix under the open checker that is not the default for the party count
 # (ashare/open_check.h: pairwise at nP=2, symmetric above).
-add_np_variant(agmpc_golden_symmetric_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2 EMP_AG_OPEN_CHECK_SYMMETRIC)
-add_np_variant(agmpc_golden_pairwise_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_OPEN_CHECK_PAIRWISE)
-add_np_variant(agmpc_golden_pairwise_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 EMP_AG_OPEN_CHECK_PAIRWISE)
+add_np_variant(agmpc_golden_symmetric_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2 ARGS open_check=symmetric)
+add_np_variant(agmpc_golden_pairwise_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 ARGS open_check=pairwise)
+add_np_variant(agmpc_golden_pairwise_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 ARGS open_check=pairwise)
 
 # Garbling options (backend/garble/garble_config.h): the golden matrix and prepared runs under each
 # option that is not the default.
@@ -132,16 +132,15 @@ add_np_variant(agmpc_cut_and_choose_np4 agmpc_cut_and_choose.cpp 4 DEFS CNC_NP=4
 add_np_variant(agmpc_cut_and_choose_over_declared_np2 agmpc_cut_and_choose.cpp 2
                DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS ARGS over_declared PASS_RE "more batches than declared")
 add_np_variant(agmpc_cut_and_choose_symmetric_np2 agmpc_cut_and_choose.cpp 2
-               DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS EMP_AG_OPEN_CHECK_SYMMETRIC)
+               DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS ARGS open_check=symmetric)
 add_np_variant(agmpc_cut_and_choose_pairwise_np3 agmpc_cut_and_choose.cpp 3
-               DEFS CNC_NP=3 EMP_AG_DEBUG_CHECKS EMP_AG_OPEN_CHECK_PAIRWISE)
+               DEFS CNC_NP=3 EMP_AG_DEBUG_CHECKS ARGS open_check=pairwise)
 add_np_variant(agmpc_golden_cnc_np2 agmpc_golden_snapshot.cpp 2
-               DEFS GOLDEN_NP=2 EMP_AG_CUT_AND_CHOOSE_BATCH=${AG_TEST_CNC_BATCH})
+               DEFS GOLDEN_NP=2 ARGS cnc=${AG_TEST_CNC_BATCH})
 add_np_variant(agmpc_golden_cnc_np3 agmpc_golden_snapshot.cpp 3
-               DEFS GOLDEN_NP=3 EMP_AG_CUT_AND_CHOOSE_BATCH=${AG_TEST_CNC_BATCH})
+               DEFS GOLDEN_NP=3 ARGS cnc=${AG_TEST_CNC_BATCH})
 add_np_variant(agmpc_golden_cnc_pairwise_np3 agmpc_golden_snapshot.cpp 3
-               DEFS GOLDEN_NP=3 EMP_AG_CUT_AND_CHOOSE_BATCH=${AG_TEST_CNC_BATCH}
-                    EMP_AG_OPEN_CHECK_PAIRWISE)
+               DEFS GOLDEN_NP=3 ARGS cnc=${AG_TEST_CNC_BATCH} open_check=pairwise)
 set_tests_properties(agmpc_golden_cnc_np2 agmpc_golden_cnc_np3 agmpc_golden_cnc_pairwise_np3
                      PROPERTIES LABELS debug_heavy)
 # At nP = 4 the four parties share the macOS runners' three cores, and these become the
@@ -251,8 +250,7 @@ foreach(_agmpc2 agmpc_context_api agmpc_direct_chunks agmpc_program_replay agmpc
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 endforeach()
 # The session id of a build that chose a non-default open checker is bound to it.
-add_np_variant(agmpc_session_id_open_check agmpc_session_id.cpp 2
-               DEFS EMP_AG_OPEN_CHECK_SYMMETRIC BUILD_OPTIONS_BOUND)
+add_np_variant(agmpc_session_id_open_check agmpc_session_id.cpp 2 ARGS open_check=symmetric)
 
 # Circuit mode (Computation): the knob matrix, Auth x Delivery x triple source x nP
 # (the two Delivery options coincide at nP = 2), plus a non-default ssp, and the
@@ -262,13 +260,14 @@ foreach(_np 2 3 4)
         foreach(_src leaky cnc)
             string(TOLOWER "agmpc_computation_${_auth}_${_src}_np${_np}" _name)
             set(_defs COMP_NP=${_np} EMP_AG_GARBLE_AUTH=${_auth})
+            set(_args "")
             if(_src STREQUAL "cnc")
-                list(APPEND _defs EMP_AG_CUT_AND_CHOOSE_BATCH=${AG_TEST_CNC_BATCH})
+                set(_args cnc=${AG_TEST_CNC_BATCH})
             endif()
-            add_np_variant(${_name} agmpc_computation.cpp ${_np} DEFS ${_defs})
+            add_np_variant(${_name} agmpc_computation.cpp ${_np} DEFS ${_defs} ARGS ${_args})
             if(NOT _np EQUAL 2)
                 add_np_variant(${_name}_direct agmpc_computation.cpp ${_np}
-                               DEFS ${_defs} EMP_AG_GARBLE_DELIVERY=DIRECT)
+                               DEFS ${_defs} EMP_AG_GARBLE_DELIVERY=DIRECT ARGS ${_args})
             endif()
         endforeach()
     endforeach()
@@ -294,7 +293,7 @@ foreach(_np 2 3 4)
     add_np_variant(agmpc_share_eval_np${_np} agmpc_share_eval.cpp ${_np} DEFS SHARE_NP=${_np})
 endforeach()
 add_np_variant(agmpc_share_eval_tag80_np3 agmpc_share_eval.cpp 3
-               DEFS SHARE_NP=3 EMP_AG_SHARE_TAG_BYTES=10)
+               DEFS SHARE_NP=3 ARGS tag_bytes=10)
 add_np_variant(agmpc_share_eval_no_bank_np2 agmpc_share_eval.cpp 2 DEFS SHARE_NP=2 ARGS no_bank
                PASS_RE "keeps no triple bank")
 # Openings the caller checks itself (share_opening, absorb_expected_macs), at nP = 2 and 3; a

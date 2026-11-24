@@ -122,8 +122,8 @@ setup.
 
 The products of the AND gates' masks behind each chunk come, by default, from
 half-gate leaky ANDs bucketed per chunk (`backend/triple/leaky_and_prep.h`).
-Passing `ag::cut_and_choose_prep<nP>(batch)` as the session's last constructor
-argument, or compiling with `-DEMP_AG_CUT_AND_CHOOSE_BATCH=<batch>`, computes them
+Passing `ag::cut_and_choose_prep<nP>(batch)` as the session's `and_prep` constructor
+argument, or setting `cut_and_choose_batch` in its options (below), computes them
 instead from a bank of cut-and-choose triples
 (`backend/triple/cut_and_choose_triples.h`), generated `batch` at a time and
 checked before use. This sends fewer bytes per triple when COTs are cheap
@@ -135,6 +135,16 @@ same way (`backend/triple/and_prep.h` states what it must guarantee, and how its
 factory lists its draws for a session's COT plan). Every party
 must make the same choice; a session binds every protocol but the leaky ANDs into
 its session id, so a mismatch fails setup.
+
+A session's run-time options are an `ag::ProtocolOptions`
+(`backend/garble/garble_config.h`), which its constructors take after the worker pool
+(after the party, with a caller-owned mesh): the open checker of the AND gates' protocol
+(`open_check`; by default pairwise at two parties and symmetric above), share mode's tag
+width (`share_tag_bytes`), and the AND gates' protocol of a session given none
+(`cut_and_choose_batch`: 0, the default, for the leaky ANDs). `-DEMP_AG_OPEN_CHECK_PAIRWISE`
+or `_SYMMETRIC`, `-DEMP_AG_SHARE_TAG_BYTES` and `-DEMP_AG_CUT_AND_CHOOSE_BATCH` set their
+defaults for a whole build. Every party must choose alike; a session binds each
+non-default option into its session id, so a mismatch fails setup.
 
 The garbling options are compile-time: `AGMPCSession<nP, ag::GarbleConfig<A, D, C, L>>`
 (`backend/garble/garble_config.h`). Every party must use the same options; a session binds
@@ -382,7 +392,7 @@ are formed. The triples come from the session's protocol for the AND gates, whic
 must keep a bank: `ag::cut_and_choose_prep<nP>(batch[, batches])`, whose bank the
 garbling's own AND gates draw from too. A session on the leaky ANDs refuses
 `share_evaluate`. A reveal flushes the COT check and settles the share
-consistency check before it opens anything. `-DEMP_AG_SHARE_TAG_BYTES=<10..16>`
+consistency check before it opens anything. The option `share_tag_bytes` (10 to 16)
 truncates share mode's tags (16 bytes by default; a forged tag passes with
 probability `2^-(8 bytes)`), and binds the session id. For a session's COT plan,
 `planned_cots_of_draws(draws)` takes the lengths of its pool draws: one per

@@ -307,12 +307,15 @@ private:
 };
 
 // The factory for LeakyAndPrep (AGMPCSession's constructor takes one): the default, with
-// kLeakyAndPrepId.
+// kLeakyAndPrepId. It runs the open checker the session's options choose
+// (AndPrepContext::open_check), which the session binds into its id.
 template <int nP>
 AndPrepFactory<nP> leaky_and_prep() {
   return {std::string(kLeakyAndPrepId),
           [](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
-            return std::make_unique<LeakyAndPrep<nP>>(c);
+            if (open_check_pairwise(c.open_check, nP))
+              return std::make_unique<LeakyAndPrep<nP, PairwiseOpenCheck<nP>>>(c);
+            return std::make_unique<LeakyAndPrep<nP, SymmetricOpenCheck<nP>>>(c);
           },
           [](int64_t n, int ssp) { return LeakyAndPrep<nP>::draws(n, ssp); }};
 }
