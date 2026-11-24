@@ -11,7 +11,8 @@
 //     compute_deferred() draws, an empty one among them, folded at one coin;
 //   - cots_per_stream() counts every COT drawn: the length, check2's hiding shares at
 //     nP > 2, and check1's tail on the first call;
-//   - many draws of awkward sizes, enough for a SilentFerret stream to cross two rounds;
+//   - many draws of awkward sizes, enough for a SilentFerret stream to cross two rounds
+//     (one in a Debug build, where every COT costs far more);
 //   - check2's tags pass, and its views are agreed on their own and inside another open
 //     check;
 //   - with SilentFerret prepaid at nP = 2, drawing moves no bytes.
@@ -34,18 +35,22 @@ static int party;
 
 // The awkward sizes compute() runs at, the draw() and draw_soa() sizes, and the long
 // sequence: enough COTs for a ferret_b9 SilentFerret stream (2229 · 512 user COTs a
-// round) to cross two rounds.
+// round) to cross two rounds, or one in a Debug build.
 static const int kSizes[] = {1, 128, 4095, 4096, 4097, 37200};
 // Draws whose check2 waits for one fold, an empty one among them.
 static const int kDeferredSizes[] = {1000, 0, 777, 4097};
 constexpr int kDrawSize = 5000, kDrawSoaSize = 7000, kSettleSize = 4096;
-constexpr int kLongSize = 100003, kLongDraws = 24;
+#ifdef NDEBUG
+constexpr int kLongSize = 100003, kLongDraws = 24, kRoundsCrossed = 2;
+#else
+constexpr int kLongSize = 100003, kLongDraws = 12, kRoundsCrossed = 1;
+#endif
 
 using FerretMint = SilentFerretMint<nP, emp::tuning::ferret_b9>;
 constexpr PrimalLPNParameter kB9 = emp::tuning::ferret_b9;
 constexpr int64_t kRoundCots = (kB9.t - kB9.refill_trees) << kB9.tree_depth;   // 2229 · 512
-static_assert((int64_t)kLongSize * kLongDraws > 2 * kRoundCots,
-              "ashare_test: the long sequence must cross two SilentFerret rounds");
+static_assert((int64_t)kLongSize * kLongDraws > kRoundsCrossed * kRoundCots,
+              "ashare_test: the long sequence must cross the SilentFerret rounds it claims");
 
 // This party's shares of one draw: mac[j][k] is its MAC on its bit k under peer j's key,
 // key[j][k] its key on j's bit k.

@@ -8,7 +8,8 @@
 //      the inputs' masks are the only draw;
 //   4. at nP == 2, on SoftSpoken streams: the leaky ANDs, and 32 more COTs that party 1
 //      sends party 2 through draw_cots(job, ...), planned on those two streams only;
-//   5. the leaky ANDs on SilentFerret streams with the B13 LPN set;
+//   5. the leaky ANDs on SilentFerret streams with the B13 LPN set, in Release builds
+//      only: B13 prepays a whole round on every stream, too slow for a Debug suite;
 //   6. share mode on cut-and-choose triples in batches of 16: five input bits from every
 //      party, three random shares, and 40 AND gates in two evaluations (three batches),
 //      planned from the draws' lengths (planned_cots_of_draws);
@@ -243,9 +244,11 @@ int main(int argc, char **argv) {
                                         ag::Delivery::EMP_AG_GARBLE_DELIVERY, ag::Cot::SoftSpoken>;
     ok = run_case<SoftSpoken>(io, pool, party, "draw_cots(job)", 40, ag::leaky_and_prep<nP>(), 32) && ok;
   }
+#ifdef NDEBUG
   using Ferret13 = ag::GarbleConfig<ag::Auth::EMP_AG_GARBLE_AUTH, ag::Delivery::EMP_AG_GARBLE_DELIVERY,
                                     ag::Cot::SilentFerret, ag::FerretLpn::B13>;
   ok = run_case<Ferret13>(io, pool, party, "SilentFerret b13", 40, ag::leaky_and_prep<nP>()) && ok;
+#endif
   ok = run_share_case<Build>(io, pool, party) && ok;
   ok = run_bound_case<Build>(io, pool, party) && ok;
   return ok ? 0 : 1;
