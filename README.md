@@ -148,8 +148,8 @@ any non-default choice into its session id, so a mismatch fails setup.
 | | `Auth::WRK` | Every garbler also sends party 1 three rows per AND gate, truncated to `ssp + 2` bits, and party 1 checks each gate while it evaluates. More bytes per gate, and no check after evaluation; the garblers then receive the outputs' masked values from party 1, authenticated by their labels. The check is statistical: a forged row passes with probability `2^-ssp`, and a failed attempt aborts the run. |
 | `D` (`nP >= 3`) | `Delivery::RING` (default) | The garblers sum their rows along a chain, so party 1 receives three rows per garbler. |
 | | `Delivery::DIRECT` | Each garbler sends its own rows to party 1, which sums them: no chain of hops, but every garbler's rows on party 1's link. |
-| `C` | `Cot::SoftSpoken` (default) | Each party runs one SoftSpoken extension per peer and direction: 16 bits per COT at `k = 8`, with each stream's consistency check deferred to before the next reveal. |
-| | `Cot::SilentFerret` | One SilentFerret instance per peer and direction, all of them prepaid at setup and folded together with one public LPN matrix: about 0.4 bits per COT, and drawing moves no bytes. |
+| `C` | `Cot::SoftSpoken` (default) | Each party runs one SoftSpoken extension per peer and direction: 16 bits per COT at `k = 8`, with each stream's consistency check deferred to before the next reveal. At `nP >= 3` every receiver draws its own choice bits, so each share also takes one correction bit per peer, which gives the party one bit toward all its peers. |
+| | `Cot::SilentFerret` | One SilentFerret instance per peer and direction, all of them prepaid at setup and folded together with one public LPN matrix: about 0.4 bits per COT, and drawing moves no bytes. At `nP >= 3` a party's receivers share their choice bits (emp-ot's `Ferret::set_choice_seed`), so a share takes no correction bit. |
 | `L` (`Cot::SilentFerret`) | `FerretLpn::B12` (default) | emp-ot's `ferret_b12` LPN parameters. |
 | | `FerretLpn::B13` | emp-ot's `ferret_b13`: longer rounds, about 0.2 bits per COT, and LPN tables twice the size. |
 

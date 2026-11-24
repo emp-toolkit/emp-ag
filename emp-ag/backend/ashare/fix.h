@@ -4,8 +4,10 @@
 // The Fix exchange (nP > 2), which gives a party the same share bit toward every peer.
 // Each receiver stream draws its own random choices r_j, so the party samples x^me and
 // sends each peer d_j = x^me ⊕ r_j, one bit per COT. These are its two halves on one
-// stream's slice; a mint runs them on that stream's channel, after its draw. Both mints
-// also take a sender stream's Δ through test_split_delta, a test-only hook.
+// stream's slice; a mint runs them on that stream's channel, after its draw. A mint whose
+// receivers share their choices runs them only toward per-peer targets, to give the
+// check1 tail bits of its own per peer. Both mints also take a sender stream's Δ through
+// test_split_delta, a test-only hook.
 //
 #include "emp-tool/emp-tool.h"
 #include <cstdint>

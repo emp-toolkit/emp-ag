@@ -10,10 +10,16 @@
 //                        set up every stream, with Δ_me = delta_bits on the sender streams
 //   delta()              Δ_me as the sender streams hold it
 //   bootstrap_cots()     the COTs each stream drew during setup
+//   kSharedChoices       whether every receiver stream gives the same choice bit at each
+//                        position (then a share bit is bit 0 of any of its MACs)
 //   draw(MAC, KEY, ext_len, nfix, xme, dxor)
 //                        ext_len raw COTs from every stream into MAC[j][0, ext_len) and
 //                        KEY[j][0, ext_len), then the Fix exchange (fix.h) on [0, nfix)
 //                        with x^me = xme and dxor = Δ_me ⊕ e0; nfix > 0 only at nP > 2
+//                        and without shared choices
+//   split_tail(MAC, KEY, off, n, dxor)
+//                        with shared choices only: choices of its own toward every peer
+//                        on [off, off + n), one bit per COT per peer
 //   maybe_flush_check()  the streams' deferred consistency checks, before a reveal
 // and closes its streams when destroyed.
 //
@@ -52,6 +58,9 @@ using OTExt = emp::OTExtension;
 template <int nP>
 class SoftSpokenMint {
  public:
+	// Every receiver stream draws its own choices; the Fix exchange aligns them.
+	static constexpr bool kSharedChoices = false;
+
 	// Planned sender/receiver counts include the 128-COT bootstrap prefix and are
 	// forwarded to OTExtension::begin(n_ots); see AShareGen.
 	// `cot` supplies the streams in place of SoftSpoken over a public-key base OT
