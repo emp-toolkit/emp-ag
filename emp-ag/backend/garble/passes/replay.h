@@ -17,10 +17,11 @@
 //
 // so it is protocol-agnostic, and the id -> slot lowering is single-copy: a unit
 // input wire (w < I) aliases the wired composition slot (in_slot[w]); any other
-// unit wire maps to the instance's disjoint block (base + w), so every instance's
-// And outputs land in distinct slots (multi-pass coexistence). Trust-mode replay of
-// a whole WireReuse::Linear program is the I == 0, base == 0 special case (the
-// program's own packed wire ids ARE the slots).
+// unit wire maps to the instance's disjoint block (base + w, in uint32_t arithmetic,
+// so a block that starts at slot s for the unit's first non-input id has
+// base = s - I modulo 2^32), so every instance's And outputs land in distinct slots
+// (multi-pass coexistence). Trust-mode replay of a whole WireReuse::Linear program is
+// the I == 0, base == 0 special case (the program's own packed wire ids ARE the slots).
 //
 #include "emp-tool/ir/context/compose.h"   // ComposePlan
 #include "emp-tool/ir/program.h"           // BooleanProgram, Gate, Op
@@ -80,17 +81,17 @@ inline void replay_lowered(const LoweredUnit &lu, Pass &pass, uint32_t base,
 }
 
 // A composition laid out for replay: each distinct unit lowered once; a slot for every
-// glue gate in emission order; for each unit call a block of its unit's num_wires slots
-// (base), with the call's inputs read from the slots that produce them. Every call's
-// And outputs land in distinct slots, so a walk replays the events in order with the
-// slot-explicit pass interface and no materialized program. Each unit must be
-// WireReuse::Linear or dense (its ids are its slots): a WireReuse::Full unit recycles
-// ids, and its block would clobber live AND state.
+// glue gate in emission order; for each unit call a block with a slot per unit wire
+// that is not an input (base), the call's inputs being read from the slots that
+// produce them. Every call's And outputs land in distinct slots, so a walk replays the
+// events in order with the slot-explicit pass interface and no materialized program.
+// Each unit must be WireReuse::Linear or dense (its ids are its slots): a
+// WireReuse::Full unit recycles ids, and its block would clobber live AND state.
 struct ComposedLayout {
   std::shared_ptr<const ComposePlan> plan;
   std::unordered_map<const circuit::BooleanProgram *, LoweredUnit> lowered;
   std::vector<uint32_t> slot;                    // composition wire -> slot
-  std::vector<uint32_t> base;                    // per call: its slot block
+  std::vector<uint32_t> base;                    // per call: its block's start - I (mod 2^32)
   std::vector<std::vector<uint32_t>> in_slots;   // per call: its inputs' slots
   std::vector<uint32_t> out_ids;                 // the plan's outputs' slots
   uint32_t num_wires = 0;
@@ -132,13 +133,14 @@ inline ComposedLayout build_composed_layout(std::shared_ptr<const ComposePlan> p
       std::vector<uint32_t> &is = L.in_slots[(size_t)ev.instance];
       is.resize(I);
       for (uint32_t j = 0; j < I; ++j) is[j] = L.slot[inst.in_ids[j]];
-      const uint32_t bi = (uint32_t)next;
-      L.base[(size_t)ev.instance] = bi;
-      next += U.num_wires;
+      // The block holds the unit's wires I .. num_wires-1; its inputs are the caller's.
+      const uint32_t base = (uint32_t)(next - I);
+      L.base[(size_t)ev.instance] = base;
+      next += U.num_wires - I;
       expecting(next <= UINT32_MAX, "build_composed_layout: the composition's slots overflow uint32_t");
       for (size_t k = 0; k < U.outputs.size(); ++k) {
         const uint32_t w = U.outputs[k];
-        L.slot[inst.out_ids[k]] = (w < I) ? is[w] : bi + w;
+        L.slot[inst.out_ids[k]] = (w < I) ? is[w] : base + w;
       }
       L.num_ands += unit_ands.find(&U)->second;
     }
