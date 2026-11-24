@@ -24,8 +24,9 @@
 //
 #include <algorithm>
 #include <cmath>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // log2 of the bound above, 2^{-B} ell^{1-B}, given log2(ell).
 inline double bucket_log2_leakage(int B, double log2_ell) {
@@ -41,5 +42,5 @@ inline int bucket_size(int ell, int ssp) {
   return B;
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_TRIPLE_BUCKETING_H__

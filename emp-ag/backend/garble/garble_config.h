@@ -34,8 +34,9 @@
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/crypto/ro.h"
 #include <cstdint>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 enum class Auth : uint8_t { KRRW, WRK };
 enum class Delivery : uint8_t { RING, DIRECT };
@@ -71,5 +72,5 @@ inline block bind_garble_config(block session_id) {
   return ro.squeeze_block();
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_GARBLE_CONFIG_H__

@@ -16,8 +16,9 @@
 #include "emp-ag/backend/common/runtime.h"              // chunk_pipe
 #include "emp-ag/backend/garble/passes/garble_transport.h"  // ship_garbling
 #include <thread>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // Dispatch a runtime party id in [1, nP] to a compile-time template argument: invokes
 // f.operator()<P>() for the P equal to `party`. Lets GarblePass be instantiated for the
@@ -213,5 +214,5 @@ void AGMPCProtocol<nP, Cfg>::garble_and_ship(ComputeCtx &ctx, Source &source) {
   drain.join();
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_PASSES_GARBLE_H__

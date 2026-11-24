@@ -15,6 +15,7 @@
 // the MITCCRH garbling hash are deliberately NOT routed through this alias.
 //
 #include "emp-tool/runtime/crypto/hash.h"
+#include "emp-ag/backend/common/test_hooks.h"
 
 // Fallback when emp-tool does not define EMP_FS_HASH_DEFAULT: the global
 // hash default.
@@ -22,9 +23,9 @@
 #define EMP_FS_HASH_DEFAULT EMP_HASH_DEFAULT
 #endif
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 using FsHash = emp::HashT<EMP_FS_HASH_DEFAULT>;
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_COMMON_FS_HASH_H__

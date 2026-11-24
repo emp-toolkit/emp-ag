@@ -24,8 +24,9 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 template <int nP> struct EvalChunk;
 
@@ -355,7 +356,7 @@ private:
   // sequences the step methods declared above in protocol order.
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 // Tail-included step-body phase files (each self-includes this header; the class
 // is complete above, so their out-of-line member definitions resolve). Order is
 // free — no phase file references another's symbols at parse time.

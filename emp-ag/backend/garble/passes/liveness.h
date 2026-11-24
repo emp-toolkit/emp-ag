@@ -5,8 +5,9 @@
 #include <cstdint>
 #include <utility>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // Live liveness/layout: derive the slot-reuse layout from a re-executed circuit body,
 // with NO materialized BooleanProgram. It is a BooleanContext replayed TWICE over the
@@ -98,6 +99,6 @@ struct AGMPCLivenessPass {
   }
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 
 #endif  // EMP_AG_BACKEND_GARBLE_PASSES_LIVENESS_H__

@@ -11,8 +11,9 @@
 #include "emp-tool/runtime/core/utils.h"   // expecting
 #include <cstring>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // One-round all-to-all authenticated open. targets[t] = wires to open to party t. Every party
 // sends each non-empty target t != self ONE message [share bits][MAC digest under t's key]; each
@@ -32,15 +33,14 @@ std::vector<unsigned char> open_to_targets(
     txd[t].resize(FsHash::DIGEST_SIZE);
     BlockVec macs(m);
     int slot = peer_slot(party, t);
+    int bit_slot = 0;   // the MAC whose bit 0 is the share sent: this party's own
+    if constexpr (kTestHooks) {
+      // TEST-ONLY (hook two_world): party 2 sends each target the bit it holds toward that
+      // target (with split_choice those differ), so every target's MAC check passes.
+      if (hooks().two_world && party == 2) bit_slot = slot;
+    }
     for (int j = 0; j < m; ++j) {
-#ifdef EMP_AG_TEST_TWO_WORLD
-      // TEST-ONLY (never in production): party 2 sends each target the bit it holds
-      // toward that target (with EMP_AG_TEST_SPLIT_CHOICE those differ), so every
-      // target's MAC check passes.
-      tx[t][j] = (unsigned char)getLSB(base[targets[t][j]].mac(party == 2 ? slot : 0));
-#else
-      tx[t][j] = (unsigned char)getLSB(base[targets[t][j]].mac(0));
-#endif
+      tx[t][j] = (unsigned char)getLSB(base[targets[t][j]].mac(bit_slot));
       macs[j] = base[targets[t][j]].mac(slot);
     }
     FsHash::hash_once(txd[t].data(), macs.data(), (size_t)m * sizeof(block));
@@ -99,5 +99,5 @@ std::vector<unsigned char> open_to_targets(
   return lam;
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_ASHARE_OPEN_H__

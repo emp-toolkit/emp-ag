@@ -54,12 +54,13 @@
 #include <cstring>
 #include <memory>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
 #ifndef EMP_AG_FERRET_THREADS
 #define EMP_AG_FERRET_THREADS 2
 #endif
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 template <int nP, const PrimalLPNParameter &kLpn = emp::tuning::ferret_b12>
 class SilentFerretMint {
@@ -198,10 +199,8 @@ class SilentFerretMint {
 				done = ext_len;
 			}
 		}
-#ifdef EMP_AG_TEST_SPLIT_CHOICE
-		test_split_choice_(MAC, KEY, ext_len, dxor);
-#endif
-#if defined(EMP_AG_TEST_SPLIT_CHOICE) && defined(EMP_AG_TEST_SPLIT_FIRST_DRAW)
+#ifdef EMP_AG_TEST_HOOKS
+		if (hooks().split_choice) test_split_choice_(MAC, KEY, ext_len, dxor);
 		++test_draws_;
 #endif
 	}
@@ -239,7 +238,7 @@ class SilentFerretMint {
 	int64_t tail_off_ = 0, tail_n_ = 0;              // its unused part
 	std::vector<uint8_t> fix_out_[nP + 1], fix_in_[nP + 1];
 	std::vector<uint8_t> tail_x_[nP + 1];            // split_tail's targets, per peer
-#if defined(EMP_AG_TEST_SPLIT_CHOICE) && defined(EMP_AG_TEST_SPLIT_FIRST_DRAW)
+#ifdef EMP_AG_TEST_HOOKS
 	int test_draws_ = 0;   // TEST-ONLY: draws so far
 #endif
 
@@ -344,16 +343,14 @@ class SilentFerretMint {
 		joinNclean(res);
 	}
 
-#ifdef EMP_AG_TEST_SPLIT_CHOICE
-	// TEST-ONLY (never in production): party 2 holds the complement of its bits toward
-	// party 3, with valid MACs, as if party 3 had taken a correction d = 1 from it: party 2
-	// flips bit 0 of its MACs from party 3, and party 3 adds Δ ⊕ e0 to its keys on party
-	// 2's bits. Nothing is sent. With EMP_AG_TEST_SPLIT_FIRST_DRAW, the first draw only.
-	void test_split_choice_(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int n, block dxor) {
-		bool split = true;
-#ifdef EMP_AG_TEST_SPLIT_FIRST_DRAW
-		split = test_draws_ == 0;
-#endif
+#ifdef EMP_AG_TEST_HOOKS
+	// TEST-ONLY (hook split_choice): party 2 holds the complement of its bits toward party
+	// 3, with valid MACs, as if party 3 had taken a correction d = 1 from it: party 2 flips
+	// bit 0 of its MACs from party 3, and party 3 adds Δ ⊕ e0 to its keys on party 2's
+	// bits. Nothing is sent. With split_first_draw, the first draw only.
+	void test_split_choice_([[maybe_unused]] BlockVec MAC[nP + 1], [[maybe_unused]] BlockVec KEY[nP + 1],
+	                        [[maybe_unused]] int n, [[maybe_unused]] block dxor) {
+		[[maybe_unused]] const bool split = !hooks().split_first_draw || test_draws_ == 0;
 		if constexpr (nP >= 3) {
 			if (!split) return;
 			if (party_ == 2)
@@ -365,5 +362,5 @@ class SilentFerretMint {
 #endif
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_ASHARE_SILENT_FERRET_MINT_H__

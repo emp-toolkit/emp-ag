@@ -7,8 +7,9 @@
 #include "emp-ag/backend/common/runtime.h"   // parallel_for, joinNclean
 #include "emp-ag/backend/common/netmp.h"
 #include "emp-tool/emp-tool.h"
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 using std::future;
 using std::vector;
@@ -59,5 +60,5 @@ void fzero_xor(NetIOMP<nP> *io, PRG *prg, ThreadPool *pool, int party,
   });
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_COMMON_FZERO_H__

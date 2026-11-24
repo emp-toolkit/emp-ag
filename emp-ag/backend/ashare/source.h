@@ -9,8 +9,9 @@
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/core/block_vector.h"
 #include <cstdint>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // The digest of check2's openings not yet agreed (every party's hash value, as this party
 // received it), which every party must share; `any` is false when no check2 ran since the
@@ -53,5 +54,5 @@ class AShareSource {
 	virtual void draw_cots(int peer, bool as_sender, block *out, int64_t n) = 0;
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_ASHARE_SOURCE_H__

@@ -15,8 +15,9 @@
 #include "emp-ag/backend/garble/spdz.h"          // collapse_cgamma_from_records
 #include "emp-ag/backend/common/runtime.h"              // chunk_pipe
 #include "emp-ag/backend/garble/passes/garble_transport.h"  // recv_garbling_window
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // Streaming evaluator (P1) for ALL nP: fuses garbled-row reception and evaluation
 // so the eval pass consumes each window as the next arrives, overlapping eval-compute
@@ -319,5 +320,5 @@ void AGMPCProtocol<nP, Cfg>::evaluate_prepared(
   ag::run_pass(pass, source);
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_PASSES_EVALUATE_H__

@@ -5,6 +5,7 @@
 // a leaky AND's a, the operand its selective failure leaks) would consume fewer COTs and
 // incorrectly let that run complete.
 #include "emp-ag/emp-ag.h"
+#include "test_args.h"
 #include "emp-tool/emp-tool.h"
 
 #include <cstdint>
@@ -13,15 +14,6 @@
 
 using namespace emp;
 namespace cf = emp::frontend;
-
-#ifndef INDEPENDENT_TRIPLES_PREPARED
-#define INDEPENDENT_TRIPLES_PREPARED 0
-#endif
-#ifndef INDEPENDENT_TRIPLES_SHORT
-#define INDEPENDENT_TRIPLES_SHORT 0
-#endif
-
-static_assert(!INDEPENDENT_TRIPLES_SHORT || INDEPENDENT_TRIPLES_PREPARED);
 
 int main(int argc, char **argv) {
   constexpr int nP = 2;
@@ -33,6 +25,11 @@ int main(int argc, char **argv) {
   constexpr std::uint32_t expected = a_clear & b_clear;
   const int party = parse_party(argv, nP);
   if (party > nP) return 0;
+  // prepared: run through prepare(); short (with prepared): plan one COT less than the run
+  // needs, which the COT stream must refuse.
+  const TestArgs args(argc, argv, {"prepared", "short"});
+  const bool prepared_run = args.has("prepared"), short_budget = args.has("short");
+  expecting(!short_budget || prepared_run, "independent triples: short needs prepared");
 
   auto circuit = cf::compile<rec::UInt<width>, rec::UInt<width>>(
       [](auto a, auto b) { return a & b; });
@@ -47,7 +44,7 @@ int main(int argc, char **argv) {
   const int B = ag::bucket_size(width, ssp);
   const std::int64_t expected_cots = 128 + input_pads + width * 3LL * B;
 
-  const std::int64_t planned_cots = expected_cots - INDEPENDENT_TRIPLES_SHORT;
+  const std::int64_t planned_cots = expected_cots - (short_budget ? 1 : 0);
   ThreadPool pool(2);
   bool ok = false;
   {
@@ -56,32 +53,32 @@ int main(int argc, char **argv) {
                           planned_cots, planned_cots);
     using U32 = UInt_T<typename AGMPCSession<nP>::ctx_t, width>;
 
-#if INDEPENDENT_TRIPLES_PREPARED
-    auto prepared = sess.prepare(circuit);
-    auto a = sess.input<U32>(1, party == 1 ? a_clear : 0);
-    auto b = sess.input<U32>(2, party == 2 ? b_clear : 0);
-    auto out = sess.run(std::move(prepared), a, b);
-#else
-    auto a = sess.input<U32>(1, party == 1 ? a_clear : 0);
-    auto b = sess.input<U32>(2, party == 2 ? b_clear : 0);
-    auto out = a & b;
-#endif
+    auto out = [&]() -> U32 {
+      if (prepared_run) {
+        auto prepared = sess.prepare(circuit);
+        auto a = sess.input<U32>(1, party == 1 ? a_clear : 0);
+        auto b = sess.input<U32>(2, party == 2 ? b_clear : 0);
+        return sess.run(std::move(prepared), a, b);
+      }
+      auto a = sess.input<U32>(1, party == 1 ? a_clear : 0);
+      auto b = sess.input<U32>(2, party == 2 ? b_clear : 0);
+      return a & b;
+    }();
     const auto opened = sess.reveal(out, PUBLIC);
     ok = opened.has_value() && static_cast<std::uint32_t>(*opened) == expected &&
          sess.num_and() == width;
     sess.checkpoint();
   }
 
-#if INDEPENDENT_TRIPLES_SHORT
-  // Do not print the expected abort text here: CTest requires the actual COT
-  // stream to reject the insufficient budget, rather than this fallback.
-  std::fprintf(stderr,
-               "independent triples: underprovisioned prepared run completed\n");
-  return 1;
-#else
+  if (short_budget) {
+    // Do not print the expected abort text here: CTest requires the actual COT
+    // stream to reject the insufficient budget, rather than this fallback.
+    std::fprintf(stderr,
+                 "independent triples: underprovisioned prepared run completed\n");
+    return 1;
+  }
   std::printf("agmpc_independent_triples[%s,party=%d]: %s\n",
-              INDEPENDENT_TRIPLES_PREPARED ? "prepared" : "direct", party,
+              prepared_run ? "prepared" : "direct", party,
               ok ? "GOOD" : "BAD");
   return ok ? 0 : 1;
-#endif
 }

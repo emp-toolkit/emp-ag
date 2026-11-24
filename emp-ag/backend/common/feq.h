@@ -10,8 +10,9 @@
 #include "emp-ag/backend/common/fs_hash.h"  // FsHash (FS/check digests)
 #include "emp-tool/runtime/crypto/ro.h"   // RO (fs_coin random-oracle hash)
 #include "emp-tool/emp-tool.h"
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // Pure random-oracle helper: H(domain ‖ digest_a ‖ digest_b) over two channel-transcript
 // digests. No transport, no protocol state. BYTE-IDENTITY CONTRACT: digest_a is absorbed
@@ -132,5 +133,5 @@ inline void feq_finish_symmetric_2pc(
             fail_msg);
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_COMMON_FEQ_H__

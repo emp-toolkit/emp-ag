@@ -13,8 +13,9 @@
 #include "emp-tool/runtime/crypto/ro.h"
 #include <cstdint>
 #include <string_view>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 inline block output_label_key(const block &session_id, std::string_view domain, uint64_t pos,
                               uint64_t garbler, const block &label) {
@@ -26,5 +27,5 @@ inline block output_label_key(const block &session_id, std::string_view domain, 
       .squeeze_block();
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_OUTPUT_KEY_H__

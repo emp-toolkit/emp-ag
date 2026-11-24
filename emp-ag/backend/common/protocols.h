@@ -15,8 +15,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // Commitment shared by the preprocessing commit/open checks. Binding the
 // session, purpose, and committer prevents a rushing corrupt party from copying
@@ -363,5 +364,5 @@ void check_MAC(NetIOMP<nP> *io, BlockVec MAC[nP + 1],
   check_MAC<nP>(io, MAC, KEY, r, Delta, length, party);
 }
 #endif  // EMP_AG_DEBUG_CHECKS
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif // EMP_AG_BACKEND_COMMON_PROTOCOLS_H__

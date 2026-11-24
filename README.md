@@ -179,7 +179,10 @@ ctest --test-dir build --output-on-failure
   typed-frontend circuits, strategy gates, and session tests, each checked
   against a cleartext oracle. Fault injection lives in `test/adversarial/`:
   each test corrupts one protocol message and asserts every honest party
-  aborts.
+  aborts. The corruption comes from a test hook
+  (`emp-ag/backend/common/test_hooks.h`) that only the tests are built with;
+  `-DEMP_AG_TEST_HOOKS=OFF` builds them without hooks, as production code is
+  built, and leaves out the tests that need them.
 - **`bench/`** — throughput benchmarks; opt-in (`-DEMP_AG_BUILD_BENCHES=ON`),
   not run by ctest. `bench_100m` is a serial sha256 chain (default 3-party);
   `bench_aes` is a data-parallel AES-128 batch (default 2-party) — the wide

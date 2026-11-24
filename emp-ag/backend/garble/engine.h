@@ -43,8 +43,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // AND-gate count over a canonical program. int64_t: gate counts are not capped by the
 // uint32_t wire-id space (Linear reuse recycles ids), so an int counter could wrap.
@@ -562,15 +563,15 @@ class AGMPCEngine {
       const std::vector<std::vector<int>> &open_to) {
     mpc->abit->maybe_flush_cot_check();
     mpc->abit->settle_check2();
-#ifdef EMP_AG_TEST_FLIP_OUTPUT_SHARE
-    // TEST-ONLY (never in production): the last party flips its share of the
-    // first output position, keeping its MACs. Every recipient must abort.
-    if (mpc->party == nP && !bundles.empty()) {
-      AShareBundleVec<nP> bad = bundles;
-      bad[0].mac(0) = bad[0].mac(0) ^ makeBlock(0, 1);
-      return mpc->open_to_targets(bad.data(), open_to);
+    if constexpr (kTestHooks) {
+      // TEST-ONLY (hook flip_output_share): the last party flips its share of the first
+      // output position, keeping its MACs. Every recipient must abort.
+      if (hooks().flip_output_share && mpc->party == nP && !bundles.empty()) {
+        AShareBundleVec<nP> bad = bundles;
+        bad[0].mac(0) = bad[0].mac(0) ^ makeBlock(0, 1);
+        return mpc->open_to_targets(bad.data(), open_to);
+      }
     }
-#endif
     return mpc->open_to_targets(bundles.data(), open_to);
   }
 
@@ -763,5 +764,5 @@ class AGMPCEngine {
   }
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_ENGINE_H__

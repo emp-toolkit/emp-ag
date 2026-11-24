@@ -5,10 +5,11 @@
 // values are checked against share_reveal. The last round opens while a Computation job is
 // outstanding, between prepare_computation and run_computation, as an application does
 // between its offline and online phases. The test's own messages share the session's mesh,
-// in turn with the session. SHARE_OPEN_FLIP: party 2 flips the first bit it sends party 1,
+// in turn with the session. flip (test_args.h): party 2 flips the first bit it sends party 1,
 // which party 1's digest check must catch.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
+#include "test_args.h"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -40,6 +41,7 @@ int main(int argc, char **argv) {
   ThreadPool pool(ag::default_pool_size(nP));
   AgSession sess(&io, &pool, party);
   int fails = 0;
+  const bool flip = TestArgs(argc, argv, {"flip"}).has("flip");
 
   for (int t = 0; t < 3; ++t) {
     std::mt19937_64 rng(700 + (uint64_t)t);
@@ -84,9 +86,7 @@ int main(int argc, char **argv) {
       char dg[emp::Hash::DIGEST_SIZE];
       h.digest(dg);
       std::vector<unsigned char> sent = op.bits;
-#ifdef SHARE_OPEN_FLIP
-      if (party == 2 && j == 1) sent[0] ^= 1;
-#endif
+      if (flip && party == 2 && j == 1) sent[0] ^= 1;
       io.send_data(j, sent.data(), n);
       io.send_data(j, dg, sizeof(dg));
       io.flush(j);

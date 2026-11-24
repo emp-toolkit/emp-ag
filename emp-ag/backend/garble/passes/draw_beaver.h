@@ -7,8 +7,9 @@
 //
 #include "emp-ag/backend/garble/protocol.h"
 #include "emp-ag/backend/garble/spdz.h"   // spdz_mac_share (the P1 record sweeps)
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // Draw+seed fused into ONE circuit walk: seed each AND-output mask from the
 // authenticated-share pool + free-XOR/NOT/const propagation, and write every AND gate's
@@ -233,5 +234,5 @@ void AGMPCProtocol<nP, Cfg>::draw_and_seed(ComputeCtx &ctx, Source &source) {
 #endif
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_PASSES_DRAW_BEAVER_H__

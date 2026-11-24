@@ -5,9 +5,11 @@
 // ClearSession's circuit mode over the same artifact (for a composed one, its
 // flattening). test/CMakeLists.txt builds it for both Auth options, both Delivery
 // options, both triple sources and nP = 2, 3, 4; the COT backend is the build's. The
-// COMP_* switches select the misuse cases that must stop before any traffic.
+// arguments (test_args.h) select a non-default ssp and the misuse cases that must stop
+// before any traffic.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
+#include "test_args.h"
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -22,12 +24,6 @@ namespace cf = emp::frontend;
 
 #ifndef COMP_NP
 #define COMP_NP 2
-#endif
-#ifndef COMP_SSP
-#define COMP_SSP 40
-#endif
-#ifndef COMP_SSP_SKEW   // misuse case: party 2 runs at COMP_SSP + COMP_SSP_SKEW
-#define COMP_SSP_SKEW 0
 #endif
 constexpr int nP = COMP_NP;
 using AgSession = AGMPCSession<nP>;
@@ -213,14 +209,17 @@ static void run_and_check(AgSession &sess, const Composed &c,
 int main(int argc, char **argv) {
   const int party = parse_party(argv, nP);
   if (party > nP) return 0;
+  // ssp=<s>; ssp_skew=<k>: party 2 runs at s + k (a misuse case); the rest are misuse cases.
+  const TestArgs args(argc, argv,
+                      {"ssp", "ssp_skew", "busy", "bad_owner", "full_reuse", "composed_full_unit"});
+  const int ssp = (int)args.num("ssp", 40) + (party == 2 ? (int)args.num("ssp_skew", 0) : 0);
   ThreadPool pool(ag::default_pool_size(nP));
-  AgSession sess(party, peer_port(), nullptr, &pool, COMP_SSP + (party == 2 ? COMP_SSP_SKEW : 0));
+  AgSession sess(party, peer_port(), nullptr, &pool, ssp);
   static_assert(ComputationSession<AgSession>);
   static_assert(!std::is_copy_constructible_v<AgSession::job_t> &&
                 std::is_move_constructible_v<AgSession::job_t>);
 
-#if defined(COMP_BUSY)
-  {
+  if (args.has("busy")) {
     std::mt19937_64 rng(1);
     auto job = sess.prepare_computation(
         std::make_shared<const ComputationArtifact>(random_computation(rng, true)));
@@ -228,16 +227,14 @@ int main(int argc, char **argv) {
     (void)sess.input<U8>(1, 3);   // must stop: a Computation job is outstanding
     return 1;
   }
-#elif defined(COMP_BAD_OWNER)
-  {
+  if (args.has("bad_owner")) {
     std::mt19937_64 rng(2);
     ComputationArtifact a = random_computation(rng, true);
     a.io.inputs[0].owner = nP + 1;
     (void)sess.prepare_computation(std::make_shared<const ComputationArtifact>(a));
     return 1;
   }
-#elif defined(COMP_FULL_REUSE)
-  {
+  if (args.has("full_reuse")) {
     std::mt19937_64 rng(3);
     ComputationArtifact a = random_computation(rng, true);
     auto p = std::make_shared<BooleanProgram>(*a.program);
@@ -246,8 +243,7 @@ int main(int argc, char **argv) {
     (void)sess.prepare_computation(std::make_shared<const ComputationArtifact>(a));
     return 1;
   }
-#elif defined(COMP_COMPOSED_FULL_UNIT)
-  {
+  if (args.has("composed_full_unit")) {
     std::mt19937_64 rng(7);
     const Composed c = random_composed_computation(rng, 2);
     auto plan = std::make_shared<ComposePlan>(*c.plan);
@@ -257,7 +253,6 @@ int main(int argc, char **argv) {
     (void)sess.prepare_computation(plan, c.io);   // must stop: a WireReuse::Full unit
     return 1;
   }
-#else
   // Random computations with AND gates: every kind of slot and recipient.
   for (int t = 0; t < 6; ++t) {
     std::mt19937_64 rng(1000 + (uint64_t)t);
@@ -383,7 +378,6 @@ int main(int argc, char **argv) {
     const ComputationArtifact c = random_computation(rng, true);
     run_and_check(sess, c, random_inputs(rng, c.io), "a computation after direct mode");
   }
-#endif
 
   if (fails) {
     std::printf("P%d: FAIL (%d)\n", party, fails);

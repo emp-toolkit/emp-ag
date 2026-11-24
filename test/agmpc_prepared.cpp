@@ -3,6 +3,7 @@
 // input_batch staging, and a normal checkpoint fallback.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
+#include "test_args.h"
 #include <cstdint>
 #include <cstdio>
 #include <type_traits>
@@ -33,15 +34,13 @@ int main(int argc, char **argv) {
   AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool);
   using U8 = UInt_T<typename AGMPCSession<nP>::ctx_t, 8>;
   using Bit = Bit_T<typename AGMPCSession<nP>::ctx_t>;
-#ifdef PREP_ADOPT_ABOVE_TWO
-  {
+  if (TestArgs(argc, argv, {"adopt_above_two"}).has("adopt_above_two")) {
     // Above two parties an adopted bundle could differ toward each peer: refused.
     const bool source_clear = party == nP;
     auto source = sess.protocol().process_input(&source_clear, 1, nP);
     (void)sess.adopt_authenticated_input<Bit>(source.wire_bundle.data());
     return 1;
   }
-#endif
   using Batch = decltype(sess.input_batch());
   using BackendMaterial = typename AGMPCSession<nP>::Engine::Material;
   static_assert(!std::is_copy_constructible_v<Batch> &&

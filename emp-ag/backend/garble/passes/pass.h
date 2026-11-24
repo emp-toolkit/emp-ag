@@ -13,8 +13,9 @@
 #include "emp-tool/runtime/core/error.h"
 #include <cstdint>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 template <class Pass, class Source>
 inline std::vector<uint32_t> run_pass(Pass &pass, Source &source) {
@@ -60,5 +61,5 @@ struct SlotGateMixin {
   void const_at(uint32_t o, bool v)               { self_().wid = o; (void)self_().public_bit(v); }
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_PASSES_PASS_H__

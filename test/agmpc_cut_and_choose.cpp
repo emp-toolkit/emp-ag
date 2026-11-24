@@ -4,9 +4,10 @@
 // white-box, EMP_AG_DEBUG_CHECKS) and correct (a * b == c on the opened shares), and that
 // the bank and the batch count behave as specified. A second bank declares 2^20 batches and
 // runs two, both at the declared target (2^-ssp / 2^20 each), which needs larger buckets
-// than the per-batch schedule's first batches; with CNC_OVER_DECLARED a bank that declares
+// than the per-batch schedule's first batches; with the over_declared argument a bank that declares
 // one batch refuses a second. One source; the party count via CNC_NP.
 #include "emp-ag/backend/triple/cut_and_choose_triples.h"
+#include "test_args.h"
 #include <cstdio>
 #include <vector>
 using namespace emp;
@@ -71,11 +72,11 @@ int main(int argc, char **argv) {
   ok = ok && cnc.batches() == 4;
 
   // Declared batches, each bank on a session id of its own.
-#ifdef CNC_OVER_DECLARED
-  CutAndChooseTriples<nP> one(&io, &pool, party, abit, sid ^ makeBlock(0, 1), 40, kBatch, nullptr, 1);
-  one.take(kBatch + 1, mac, key);   // the second batch
-  return 1;
-#endif
+  if (TestArgs(argc, argv, {"over_declared"}).has("over_declared")) {
+    CutAndChooseTriples<nP> one(&io, &pool, party, abit, sid ^ makeBlock(0, 1), 40, kBatch, nullptr, 1);
+    one.take(kBatch + 1, mac, key);   // the second batch
+    return 1;
+  }
   constexpr int64_t kDeclared = int64_t(1) << 20;
   const CutAndChooseParams second = cut_and_choose_params(kBatch, cut_and_choose_batch_target(40, 2));
   const CutAndChooseParams declared =

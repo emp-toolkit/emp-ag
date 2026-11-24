@@ -13,8 +13,9 @@
 // tables twice the size. SoftSpoken streams ignore it.
 //
 #include <cstdint>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 enum class Cot : uint8_t { SoftSpoken, SilentFerret };
 enum class FerretLpn : uint8_t { B12, B13 };
@@ -23,5 +24,5 @@ enum class FerretLpn : uint8_t { B12, B13 };
 #define EMP_AG_COT SoftSpoken
 #endif
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_ASHARE_COT_H__

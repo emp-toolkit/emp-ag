@@ -29,8 +29,9 @@
 #include "emp-ag/backend/common/feq.h"        // fs_coin_pair, symmetric F_eq
 #include "emp-ag/backend/common/protocols.h"  // sampleRandom, check_shared_zero
 #include "emp-ag/backend/garble/spdz.h"       // gf_pow, kRlcLanes, rlc_fold_mu, collapse_cgamma_from_records
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // ---- c_gamma SPDZ-collapse witness kernels: spdz_mac_share / collapse_cgamma_witness
 // live in garble/spdz.h (the garble/eval walks PRODUCE the witness material while the
@@ -147,11 +148,11 @@ void AGMPCProtocol<nP, Cfg>::open_and_masks(ComputeCtx &ctx, [[maybe_unused]] So
   std::vector<unsigned char> &Lambda_AND = ctx.Lambda_AND;
   if ((int)Lambda_AND.size() < num_ands) Lambda_AND.resize(num_ands);
   if (party == 1) {
-#ifdef EMP_AG_TEST_FLIP_LAMBDA
-    // TEST-ONLY (never compiled into production): a malicious P1 corrupts one broadcast
-    // AND-output Lambda. The symmetric MACCheck must then abort at EVERY honest party.
-    Lambda_AND[0] ^= 1;
-#endif
+    if constexpr (kTestHooks) {
+      // TEST-ONLY (hook flip_lambda): a malicious P1 corrupts one broadcast AND-output
+      // Lambda. The symmetric MACCheck must then abort at EVERY honest party.
+      if (hooks().flip_lambda) Lambda_AND[0] ^= 1;
+    }
     std::vector<future<void>> rs;
     for (int p2 = 2; p2 <= nP; ++p2) {
       int party2 = p2;
@@ -239,5 +240,5 @@ void AGMPCProtocol<nP, Cfg>::output_check(ComputeCtx &ctx, Source &source) {
   }
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_PASSES_MASK_WITNESS_H__

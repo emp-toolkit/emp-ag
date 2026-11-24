@@ -12,22 +12,45 @@ function(_apply_strict_memaccess _tgt)
     endif()
 endfunction()
 
-# add_np_variant(<name> <source> <nP> [DEFS <d>...] [PASS_RE <regex>])
-# One parametrized-party test: build test_<name> from <source> with DEFS as PRIVATE compile
-# definitions, run it as an <nP>-party job via the runN launcher at the repo root, and (if
-# PASS_RE is given) gate on that abort-message regex. Used by the golden/linear matrices in
-# test/ and the fault-injection variants in test/adversarial/.
+# add_np_variant(<name> <source> <nP> [DEFS <d>...] [HOOKS <h>...] [ARGS <a>...]
+#                [PASS_RE <regex>])
+# One parametrized-party test <name>: run <source>'s executable as an <nP>-party job via the
+# runN launcher at the repo root and, if PASS_RE is given, gate on that regex (an abort
+# message, for a test that must abort).
+#   DEFS   the executable's PRIVATE compile definitions. Every variant with the same source
+#          and DEFS shares one executable, test_<name of the first such variant>.
+#   HOOKS  the test hooks (emp-ag/backend/common/test_hooks.h) the run turns on, through the
+#          EMP_AG_TEST_HOOKS environment variable. Without a hooks build
+#          (EMP_AG_TEST_HOOKS=OFF) a variant with hooks is not added.
+#   ARGS   arguments every party gets after its party id.
+# Used by the matrices in test/ and the fault-injection variants in test/adversarial/.
 function(add_np_variant _name _src _np)
-    cmake_parse_arguments(NV "" "PASS_RE" "DEFS" ${ARGN})
-    add_executable(test_${_name} ${_src})
-    target_link_libraries(test_${_name} PRIVATE emp-ag::emp-ag)
-    if(NV_DEFS)
-        target_compile_definitions(test_${_name} PRIVATE ${NV_DEFS})
+    cmake_parse_arguments(NV "" "PASS_RE" "DEFS;HOOKS;ARGS" ${ARGN})
+    if(NV_HOOKS AND NOT EMP_AG_TEST_HOOKS)
+        return()
     endif()
-    _apply_strict_memaccess(test_${_name})
+    get_filename_component(_path "${_src}" ABSOLUTE)
+    set(_defs ${NV_DEFS})
+    list(SORT _defs)
+    string(SHA1 _key "${_path}|${_defs}")
+    get_property(_exe GLOBAL PROPERTY "AG_NP_VARIANT_EXE_${_key}")
+    if(NOT _exe)
+        set(_exe test_${_name})
+        add_executable(${_exe} ${_src})
+        target_link_libraries(${_exe} PRIVATE emp-ag::emp-ag)
+        if(NV_DEFS)
+            target_compile_definitions(${_exe} PRIVATE ${NV_DEFS})
+        endif()
+        _apply_strict_memaccess(${_exe})
+        set_property(GLOBAL PROPERTY "AG_NP_VARIANT_EXE_${_key}" ${_exe})
+    endif()
     add_test(NAME ${_name}
-             COMMAND ${PROJECT_SOURCE_DIR}/runN ${_np} $<TARGET_FILE:test_${_name}>
+             COMMAND ${PROJECT_SOURCE_DIR}/runN ${_np} $<TARGET_FILE:${_exe}> ${NV_ARGS}
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    if(NV_HOOKS)
+        string(REPLACE ";" "," _hooks "${NV_HOOKS}")
+        set_tests_properties(${_name} PROPERTIES ENVIRONMENT "EMP_AG_TEST_HOOKS=${_hooks}")
+    endif()
     if(NV_PASS_RE)
         set_tests_properties(${_name} PROPERTIES PASS_REGULAR_EXPRESSION "${NV_PASS_RE}")
     endif()

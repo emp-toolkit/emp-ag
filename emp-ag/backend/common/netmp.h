@@ -17,13 +17,14 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp {
+EMP_AG_PUBLIC_NAMESPACE_BEGIN
 
-#ifdef EMP_AG_TEST_TAMPER_PREFIX
-// TEST-ONLY (never in production): a mesh channel that flips one bit of the first
-// message it sends after arm(). The bootstrap-prefix test arms it to corrupt a COT
-// correction on the wire.
+#ifdef EMP_AG_TEST_HOOKS
+// TEST-ONLY (hooks builds only): a mesh channel that flips one bit of the first message
+// it sends after arm(). The tamper_prefix hook arms one to corrupt a COT correction on
+// the wire; unarmed, it sends what NetIO sends.
 class TamperNetIO : public NetIO {
  public:
   using NetIO::NetIO;
@@ -389,5 +390,5 @@ private:
   std::vector<std::unique_ptr<NetIOMP<nP>>> meshes_;
 };
 
-}  // namespace emp
+EMP_AG_PUBLIC_NAMESPACE_END
 #endif // EMP_AG_BACKEND_COMMON_NETMP_H__

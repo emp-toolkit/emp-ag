@@ -8,6 +8,7 @@
 // and with an 80-bit tag; the SHARE_* switches select the misuse and cheating cases.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
+#include "test_args.h"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -102,15 +103,15 @@ int main(int argc, char **argv) {
   const int party = parse_party(argv, nP);
   if (party > nP) return 0;
   ThreadPool pool(ag::default_pool_size(nP));
-#ifdef SHARE_NO_BANK
-  AgSession sess(party, peer_port(), nullptr, &pool);   // the leaky ANDs keep no bank
-  {
-    std::mt19937_64 rng(1);
-    const BooleanProgram p = random_circuit(rng, 4, 20, 2);
-    (void)sess.share_evaluate(p, sess.share_random(4));
-    return 1;
+  if (TestArgs(argc, argv, {"no_bank"}).has("no_bank")) {
+    AgSession sess(party, peer_port(), nullptr, &pool);   // the leaky ANDs keep no bank
+    {
+      std::mt19937_64 rng(1);
+      const BooleanProgram p = random_circuit(rng, 4, 20, 2);
+      (void)sess.share_evaluate(p, sess.share_random(4));
+      return 1;
+    }
   }
-#else
   AgSession sess(party, peer_port(), nullptr, &pool, 40, -1, std::nullopt, BaseOtKind::CSW, -1, -1,
                ag::cut_and_choose_prep<nP>(1024));
 
@@ -161,7 +162,6 @@ int main(int argc, char **argv) {
     check(xv.has_value() && *xv == std::vector<uint8_t>(out.size(), 0), "local XOR", party);
     check(yv.has_value() && *yv == want_y, "XOR with public bits", party);
   }
-#endif
 
   if (fails) {
     std::printf("P%d: FAIL (%d)\n", party, fails);

@@ -23,8 +23,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // The rotations of B rows of ell triples.
 struct Buckets {
@@ -135,5 +136,5 @@ void merge_combine(const std::vector<TripleRow<nP>> &rows, const Buckets &bk,
       [d, ell](int m, int64_t j) { return d[(size_t)(m - 1) * ell + j]; }, party, pool);
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_TRIPLE_MERGE_H__
