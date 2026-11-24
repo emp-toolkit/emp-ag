@@ -28,7 +28,8 @@
 //   a time; check_result() is one flight of one block per directed pair. A party's tag
 //   depends only on its own MACs, so it is final before its bits go out and can ride the
 //   flight of the last bits it covers (kTagRidesBits): check_result(peer_tags) then
-//   compares with no flight of its own.
+//   compares with no flight of its own. A tag may be sent truncated to tag_bytes (at
+//   least 10, i.e. 80 bits): a forged one then passes with probability 2^-(8 tag_bytes).
 //
 // SymmetricOpenCheck: each party turns every opened bit into its share of zero,
 //   r_i = mu_i(x) ^ v * Delta_i, where mu_i is its SPDZ collapse of the bit's BDOZ
@@ -61,9 +62,16 @@
 #include <algorithm>
 #include <climits>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <type_traits>
 #include <vector>
+
+// The width, in bytes, of share evaluation's tags (triple/share_eval.h): 16 by default.
+// Any other width changes the wire, so it binds the session id (garble/protocol.h).
+#ifndef EMP_AG_SHARE_TAG_BYTES
+#define EMP_AG_SHARE_TAG_BYTES 16
+#endif
 
 namespace emp::ag {
 
@@ -79,12 +87,17 @@ public:
 
   // `purpose` is the domain of the tag key, as it is of SymmetricOpenCheck's coin: two
   // instances on one session id need different ones, since positions restart at 0 in
-  // each. fail_msg is the abort message of a tag mismatch.
+  // each. fail_msg is the abort message of a tag mismatch. tag_bytes is the width a tag
+  // goes out at, in [10, 16].
   PairwiseOpenCheck(NetIOMP<nP> *io, ThreadPool *pool, int party, block Delta,
                     block session_id, PRG * /*prg*/, NetIOMPGroup<nP> * /*grp*/,
                     const char *purpose = "emp-ag:open-check",
-                    const char *fail_msg = "open check: MAC tag mismatch")
-      : io_(io), pool_(pool), party_(party), Delta_(Delta), fail_msg_(fail_msg) {
+                    const char *fail_msg = "open check: MAC tag mismatch",
+                    int tag_bytes = (int)sizeof(block))
+      : io_(io), pool_(pool), party_(party), Delta_(Delta), fail_msg_(fail_msg),
+        tag_bytes_(tag_bytes) {
+    expecting(tag_bytes >= 10 && tag_bytes <= (int)sizeof(block),
+              "open check: a tag is 10 to 16 bytes");
     AES_set_encrypt_key(RO(purpose, session_id).squeeze_block(), &aes_);
     for (int p = 0; p <= nP; ++p) sent_[p] = expected_[p] = zero_block;
   }
@@ -174,6 +187,8 @@ public:
   // final once every one of them has its sent() merged, so it can go out with the last
   // of their bits.
   block tag(int peer) const { return sent_[peer]; }
+  // The bytes of a tag that go on the wire: the first tag_bytes() of tag().
+  int tag_bytes() const { return tag_bytes_; }
 
   // Exchange one tag per directed pair and compare each peer's with the one this
   // party expects from it.
@@ -182,12 +197,13 @@ public:
     block got[nP + 1];
     vector<future<void>> res;
     for (int peer = 1; peer <= nP; ++peer) if (peer != party_) {
+      got[peer] = zero_block;
       res.push_back(pool_->enqueue([this, peer]() {
-        io_->send_data(peer, &sent_[peer], sizeof(block));
+        io_->send_data(peer, &sent_[peer], (size_t)tag_bytes_);
         io_->flush(peer);
       }));
       res.push_back(pool_->enqueue([this, &got, peer]() {
-        io_->recv_data(peer, &got[peer], sizeof(block));
+        io_->recv_data(peer, &got[peer], (size_t)tag_bytes_);
       }));
     }
     joinNclean(res);
@@ -204,7 +220,7 @@ private:
   void compare_(const block got[nP + 1]) {
     bool good = true;
     for (int peer = 1; peer <= nP; ++peer) if (peer != party_)
-      good = good && cmpBlock(&got[peer], &expected_[peer], 1);
+      good = good && memcmp(&got[peer], &expected_[peer], (size_t)tag_bytes_) == 0;
     for (int p = 0; p <= nP; ++p) sent_[p] = expected_[p] = zero_block;
     pending_ = false;
     expecting(good, fail_msg_);
@@ -215,6 +231,7 @@ private:
   int party_;
   block Delta_;
   const char *fail_msg_;
+  int tag_bytes_;
   AES_KEY aes_;
   uint64_t pos_ = 0;       // position of the next value; never reused
   bool pending_ = false;   // something recorded since the last check_result()

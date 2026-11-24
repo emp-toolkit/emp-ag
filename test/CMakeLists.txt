@@ -191,8 +191,8 @@ add_np_variant(agmpc_computation_authenticated_draw agmpc_computation_authentica
 add_np_variant(agmpc_computation_authenticated_check agmpc_computation_authenticated.cpp 2
                DEFS AUTH_CASE=4 PASS_RE "check through AGMPCSession::check_cots")
 # A session's COT plan (AGMPCSession::planned_cots) is exactly what its streams draw: the
-# leaky ANDs, cut-and-choose over several batches, no AND gates, job draws at nP = 2, and
-# the B13 LPN set on SilentFerret streams.
+# leaky ANDs, cut-and-choose over several batches, no AND gates, job draws at nP = 2, the
+# B13 LPN set on SilentFerret streams, and share mode planned from its draws.
 add_np_variant(agmpc_planned_cots_np2 agmpc_planned_cots.cpp 2 DEFS PLANNED_NP=2)
 add_np_variant(agmpc_planned_cots_np3 agmpc_planned_cots.cpp 3 DEFS PLANNED_NP=3)
 add_np_variant(agmpc_independent_triples_direct_np2 agmpc_independent_triples.cpp 2)
@@ -282,6 +282,16 @@ add_np_variant(agmpc_computation_ssp_skew_np2 agmpc_computation.cpp 2 DEFS COMP_
 add_np_variant(agmpc_computation_composed_full_np2 agmpc_computation.cpp 2
                DEFS COMP_NP=2 COMP_COMPOSED_FULL_UNIT
                PASS_RE "WireReuse::Full composition unit not supported")
+
+# Share mode (authenticated GMW) against the circuits evaluated in the clear, at nP = 2, 3, 4
+# and with 80-bit tags; a session whose AND-gate protocol keeps no triple bank refuses it.
+foreach(_np 2 3 4)
+    add_np_variant(agmpc_share_eval_np${_np} agmpc_share_eval.cpp ${_np} DEFS SHARE_NP=${_np})
+endforeach()
+add_np_variant(agmpc_share_eval_tag80_np3 agmpc_share_eval.cpp 3
+               DEFS SHARE_NP=3 EMP_AG_SHARE_TAG_BYTES=10)
+add_np_variant(agmpc_share_eval_no_bank_np2 agmpc_share_eval.cpp 2 DEFS SHARE_NP=2 SHARE_NO_BANK
+               PASS_RE "keeps no triple bank")
 
 # Fault-injection / adversarial tests: compile the production-guarded EMP_AG_TEST_FLIP_*
 # hooks and assert the protocol aborts.

@@ -84,7 +84,7 @@
 namespace emp::ag {
 
 template <int nP, class OpenCheck = DefaultOpenCheck<nP>>
-class CutAndChooseTriples {
+class CutAndChooseTriples : public TripleBank<nP> {
 public:
   // Opens through kings (else all to all).
   static constexpr bool kKings = nP > 2 && !OpenCheck::kPerPeerOperands;
@@ -108,7 +108,7 @@ public:
 
   // Write n triples into mac[peer] and key[peer], resized to 3n: a at [0, n), b at [n, 2n),
   // c at [2n, 3n), this party's share in bit 0 of its MACs, as AShareGen's aShares.
-  void take(int64_t n, BlockVec mac[nP + 1], BlockVec key[nP + 1]) {
+  void take(int64_t n, BlockVec mac[nP + 1], BlockVec key[nP + 1]) override {
     expecting(n >= 0, "cut-and-choose: negative count");
     for (int p = 1; p <= nP; ++p) if (p != party_) {
       mac[p].resize((size_t)(3 * n));
@@ -659,6 +659,8 @@ public:
 
   // The bank's parameters and totals (CutAndChooseTriples).
   const CutAndChooseTriples<nP, OpenCheck> &bank() const { return bank_; }
+  // The bank itself, for the session's other users of triples.
+  TripleBank<nP> *triples() override { return &bank_; }
 
 private:
   LaneMesh<nP> mesh_;

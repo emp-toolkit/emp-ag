@@ -133,16 +133,24 @@ public:
         if constexpr (!kBIsBeta) ch->send_bool(peer, (const bool *)(y[party_].data() + lo), hi - lo);
         if constexpr (OpenCheck::kTagRidesBits)
           if (ch == mesh_.io) {
-            const block tag = check.tag(peer);
-            ch->send_data(peer, &tag, sizeof(block));
+            block tag = check.tag(peer);
+#ifdef EMP_AG_TEST_FLIP_TAG
+            // TEST-ONLY (never in production): party 2 flips the last byte of the tag it
+            // sends to P1, which P1 must catch at any tag width.
+            if (party_ == 2 && peer == 1) ((unsigned char *)&tag)[check.tag_bytes() - 1] ^= 1;
+#endif
+            ch->send_data(peer, &tag, (size_t)check.tag_bytes());
           }
         ch->flush(peer);
       },
-      [this, &x, &y](NetIOMP<nP> *ch, int peer, int lo, int hi) {
+      [this, &x, &y, &check](NetIOMP<nP> *ch, int peer, int lo, int hi) {
         ch->recv_bool(peer, (bool *)(x[peer].data() + lo), hi - lo);
         if constexpr (!kBIsBeta) ch->recv_bool(peer, (bool *)(y[peer].data() + lo), hi - lo);
         if constexpr (OpenCheck::kTagRidesBits)
-          if (ch == mesh_.io) ch->recv_data(peer, &peer_tag_[peer], sizeof(block));
+          if (ch == mesh_.io) {
+            peer_tag_[peer] = zero_block;
+            ch->recv_data(peer, &peer_tag_[peer], (size_t)check.tag_bytes());
+          }
       });
   }
 

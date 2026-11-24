@@ -61,6 +61,10 @@
 //       checks is fixed (guarantee 6 above); a transcript hash is not enough.
 //   merge_combine (triple/merge.h)  Folds buckets into row 0 given each member's row and
 //       index and its opened difference.
+//   TripleBank (below)              Random triples served in order; the cut-and-choose
+//       bank is one (triple/cut_and_choose_triples.h), and a protocol that keeps one
+//       exposes it (AndPrep::triples()), so the session's other users of triples, such as
+//       share evaluation (triple/share_eval.h), draw from the same bank.
 //   Beaver (triple/beaver.h)        begin(), open() (x, and y, in one flight; with
 //       PairwiseOpenCheck the tags ride it), finish().
 //   PairwiseOpenCheck / SymmetricOpenCheck (ashare/open_check.h)   The MAC checks of
@@ -106,6 +110,18 @@ struct AndInputs {
   block *alpha_mu = nullptr, *beta_mu = nullptr;
 };
 
+// Authenticated random AND triples (a, b, c = a AND b) under the session's global keys,
+// each served once and in order: take(n, mac, key) writes n of them into mac[p] and
+// key[p] for every peer p, resized to 3n: a at [0, n), b at [n, 2n), c at [2n, 3n), this
+// party's share in bit 0 of its MACs (share.h). Every party calls take() at the same
+// points with the same n. A bank checks its triples before it serves them.
+template <int nP>
+class TripleBank {
+public:
+  virtual ~TripleBank() = default;
+  virtual void take(int64_t n, BlockVec mac[nP + 1], BlockVec key[nP + 1]) = 0;
+};
+
 template <int nP>
 class AndPrep {
 public:
@@ -117,6 +133,8 @@ public:
   // out[i] = lambda_alpha_i * lambda_beta_i for the n gates written into inputs(n).
   // Returns the call's coin; a caller derives from it under a domain of its own.
   virtual block run(int64_t n, AShareBundleVec<nP> &out) = 0;
+  // The protocol's bank of random triples, if it keeps one; run() takes from it too.
+  virtual TripleBank<nP> *triples() { return nullptr; }
 };
 
 // How a session builds its protocol for the AND gates, after setup. `id` names the
