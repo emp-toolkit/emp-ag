@@ -274,6 +274,8 @@ add_np_variant(agmpc_computation_bad_owner_np2 agmpc_computation.cpp 2 DEFS COMP
                PASS_RE "an input owner is above the party count")
 add_np_variant(agmpc_computation_full_reuse_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 COMP_FULL_REUSE
                PASS_RE "WireReuse::Full is not supported")
+add_np_variant(agmpc_computation_ssp_skew_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 COMP_SSP_SKEW=20
+               PASS_RE "check failed")
 add_np_variant(agmpc_computation_composed_full_np2 agmpc_computation.cpp 2
                DEFS COMP_NP=2 COMP_COMPOSED_FULL_UNIT
                PASS_RE "WireReuse::Full composition unit not supported")

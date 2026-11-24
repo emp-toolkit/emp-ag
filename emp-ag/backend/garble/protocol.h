@@ -81,6 +81,14 @@ inline block bind_build_options(block session_id) {
       .squeeze_block();
 }
 
+// The statistical security parameter shapes the buckets, the row windows and the checks,
+// so parties that disagree on it would desync. As with the build options, the default (40)
+// leaves the session id as it is and any other value binds it, so they fail setup instead.
+inline block bind_ssp(block session_id, int ssp) {
+  if (ssp == 40) return session_id;
+  return RO("emp-ag:ssp", session_id).absorb((uint64_t)ssp).squeeze_block();
+}
+
 template <int nP, class Cfg = GarbleConfig<>>
 class AGMPCProtocol {
   static_assert(nP >= 2, "AGMPC requires at least 2 parties");
@@ -143,11 +151,12 @@ public:
     // so none of them picks it.
     session_id = session_id_ ? *session_id_ : sampleRandom<nP>(io_, &prg, pool_, party_);
     // Parties that disagree on the garbling options then disagree on the id, and setup
-    // fails; likewise on the build options that change the wire, on the AND gates'
+    // fails; likewise on the build options that change the wire, on ssp, on the AND gates'
     // protocol, every one of which but the leaky ANDs binds its id, and on supplied COT
     // streams.
     session_id = bind_garble_config<nP, Cfg>(session_id);
     session_id = bind_build_options<nP, Cfg>(session_id);
+    session_id = bind_ssp(session_id, ssp);
     const AndPrepFactory<nP> prep = make_and_prep.make ? make_and_prep : default_and_prep<nP>();
     session_id = bind_and_prep(session_id, prep.id);
     session_id = bind_cot_extension(session_id, cot.id);
