@@ -147,6 +147,8 @@ add_np_variant(agmpc_linear_np3 agmpc_linear.cpp 3  DEFS LIN_NP=3)
 # path; nP=3 covers stored aggregate rows plus input-Lambda EchoBC.
 add_np_variant(agmpc_prepared_np2 agmpc_prepared.cpp 2 DEFS PREP_NP=2)
 add_np_variant(agmpc_prepared_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3)
+add_np_variant(agmpc_prepared_adopt_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3 PREP_ADOPT_ABOVE_TWO
+               PASS_RE "authenticated inputs need two parties")
 # A long offline phase as the session's first work: every receiver of a party must
 # already be aligned when the draws run past the first COT chunk (see the source).
 add_np_variant(agmpc_long_offline_np3 agmpc_long_offline.cpp 3 DEFS LONG_NP=3)

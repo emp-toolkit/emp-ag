@@ -768,9 +768,13 @@ public:
   // If a prepared execution is active, source garbling labels are unnecessary:
   // soldering uses only the authenticated mask. They are generated lazily only
   // if a later ordinary circuit actually consumes this value.
+  // Two parties only: above two, nothing would check that a supplied bundle shares the
+  // same bit toward every peer, which the session's own shares get from check2.
   // See backend/garble/input_auth.h::adopt_authenticated_input.
   template <class V>
   V adopt_authenticated_input(const AShareBundle<nP>* bundles) {
+    expecting(nP == 2,
+              "AGMPCSession::adopt_authenticated_input: authenticated inputs need two parties");
     require_no_computation_job_("AGMPCSession::adopt_authenticated_input");
     std::vector<uint32_t> ids = this->ctx_.reserve_ids(V::width());
     if (job_ != JobKind::Prepared) {
