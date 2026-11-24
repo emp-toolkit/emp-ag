@@ -37,9 +37,8 @@ inline void unpack_p1_rows(block *rows, const unsigned char *src, int64_t n, int
 }
 
 // Bytes of one window's T rows on the wire (0 under KRRW).
-template <class Cfg>
-inline size_t p1_row_bytes(int n, int bits) {
-  return Cfg::auth == Auth::WRK ? (size_t)laand_row_wire_bytes((int64_t)3 * n, bits) : 0;
+inline size_t p1_row_bytes(bool wrk, int n, int bits) {
+  return wrk ? (size_t)laand_row_wire_bytes((int64_t)3 * n, bits) : 0;
 }
 
 // Garbler drain: ship every chunk the garble pass publishes on `pipe`, in order, until it
@@ -52,11 +51,11 @@ inline size_t p1_row_bytes(int n, int bits) {
 //           which sends P1 three rows per destination garbler (and, under WRK, the
 //           summed T rows), so P1 receives O(n) rows per gate instead of O(n^2); P2's
 //           b goes to P1 directly.
-template <int nP, class Cfg>
+template <int nP>
 void ship_garbling(NetIOMP<nP> *io, int party, chunk_pipe<GarbleChunk> &pipe,
-                   int num_ands, int cap, int bits, Delivery delivery) {
-  constexpr bool wrk = Cfg::auth == Auth::WRK;
-  std::vector<unsigned char> tpk(p1_row_bytes<Cfg>(cap, bits));   // this garbler's packed T
+                   int num_ands, int cap, int bits, Auth auth, Delivery delivery) {
+  const bool wrk = auth == Auth::WRK;
+  std::vector<unsigned char> tpk(p1_row_bytes(wrk, cap, bits));   // this garbler's packed T
   auto pack_t = [&](GarbleChunk *c) {
     if constexpr (kTestHooks) {
       // TEST-ONLY (hook flip_p1_row): a garbler (test_flip_party) flips a bit of its
@@ -91,9 +90,9 @@ void ship_garbling(NetIOMP<nP> *io, int party, chunk_pipe<GarbleChunk> &pipe,
       io->send_data(1, c->G.data(), 2 * cn * sizeof(block));
       for (int d = 2; d <= nP; ++d)
         if (d != party) io->send_data(1, c->S[d].data(), 3 * cn * sizeof(block));
-      if constexpr (wrk) {
+      if (wrk) {
         pack_t(c);
-        io->send_data(1, tpk.data(), p1_row_bytes<Cfg>(c->n, bits));
+        io->send_data(1, tpk.data(), p1_row_bytes(wrk, c->n, bits));
       } else if (party == 2) {
         if constexpr (kTestHooks) {
           // TEST-ONLY (hook flip_b): a malicious 2-party garbler flips one transmitted
@@ -121,10 +120,10 @@ void ship_garbling(NetIOMP<nP> *io, int party, chunk_pipe<GarbleChunk> &pipe,
     // One window's running sum: 3 nd cn blocks, then (WRK) its packed T bytes in the
     // blocks after them.
     auto window_bytes = [&](int cn) {
-      return (size_t)3 * nd * cn * sizeof(block) + p1_row_bytes<Cfg>(cn, bits);
+      return (size_t)3 * nd * cn * sizeof(block) + p1_row_bytes(wrk, cn, bits);
     };
     const size_t cap_blocks =
-        (size_t)3 * nd * cap + (p1_row_bytes<Cfg>(cap, bits) + sizeof(block) - 1) / sizeof(block);
+        (size_t)3 * nd * cap + (p1_row_bytes(wrk, cap, bits) + sizeof(block) - 1) / sizeof(block);
     // Upstream double-buffer (middle/tail): a dedicated thread pulls window w+1's
     // running aggregate while this drain folds + sends window w, so the node's two
     // ring links run full-duplex and each hop costs max(recv, send) rather than
@@ -194,10 +193,10 @@ void ship_garbling(NetIOMP<nP> *io, int party, chunk_pipe<GarbleChunk> &pipe,
             dst[2] = head ? c->S[i][3 * loc + 2] : dst[2] ^ c->S[i][3 * loc + 2];
           }
         }
-      if constexpr (wrk) {                         // the packed T rows, summed the same way
+      if (wrk) {                         // the packed T rows, summed the same way
         pack_t(c);
         unsigned char *t = (unsigned char *)(agg.data() + sz);
-        const size_t tb = p1_row_bytes<Cfg>(cn, bits);
+        const size_t tb = p1_row_bytes(wrk, cn, bits);
         if (head) std::memcpy(t, tpk.data(), tb);
         else for (size_t i = 0; i < tb; ++i) t[i] ^= tpk[i];
       }
@@ -236,11 +235,11 @@ void ship_garbling(NetIOMP<nP> *io, int party, chunk_pipe<GarbleChunk> &pipe,
 }
 
 // Size an EvalChunk to hold n ANDs of garbled rows.
-template <int nP, class Cfg>
-void size_eval_chunk(EvalChunk<nP> &rows, int n) {
+template <int nP>
+void size_eval_chunk(EvalChunk<nP> &rows, int n, Auth auth) {
   if constexpr (nP == 2) rows.G.resize((size_t)2 * n);
   else rows.Agg.resize((size_t)3 * (nP - 1) * n);
-  if constexpr (Cfg::auth == Auth::WRK) rows.T.resize((size_t)3 * n);
+  if (auth == Auth::WRK) rows.T.resize((size_t)3 * n);
   else rows.b.resize((size_t)n);
 }
 
@@ -248,11 +247,11 @@ void size_eval_chunk(EvalChunk<nP> &rows, int n) {
 // ship_garbling. nP == 2: garbler 2's G rows, then its b or T. nP >= 3, RING: the
 // running sum from the ring's tail (garbler nP), then b from P2 (KRRW). DIRECT: every
 // garbler's own rows, summed here into the same rows the ring delivers.
-template <int nP, class Cfg>
+template <int nP>
 void recv_garbling_window(NetIOMP<nP> *io, EvalChunk<nP> &rows, size_t base, int n,
-                          int bits, Delivery delivery) {
-  constexpr bool wrk = Cfg::auth == Auth::WRK;
-  const size_t tb = p1_row_bytes<Cfg>(n, bits);
+                          int bits, Auth auth, Delivery delivery) {
+  const bool wrk = auth == Auth::WRK;
+  const size_t tb = p1_row_bytes(wrk, n, bits);
   // Per-thread scratch, reused across windows: the packed T rows (summed, under DIRECT)
   // and DIRECT's per-garbler receive buffers.
   static thread_local std::vector<unsigned char> tpk, tin;
@@ -260,7 +259,7 @@ void recv_garbling_window(NetIOMP<nP> *io, EvalChunk<nP> &rows, size_t base, int
   tpk.assign(tb, 0);
   if constexpr (nP == 2) {
     io->recv_data(2, rows.G.data() + 2 * base, (size_t)2 * n * sizeof(block));
-    if constexpr (wrk) io->recv_data(2, tpk.data(), tb);
+    if (wrk) io->recv_data(2, tpk.data(), tb);
     else io->recv_bool(2, (bool *)(rows.b.data() + base), n);
   } else if (delivery == Delivery::DIRECT) {
     constexpr int nd = nP - 1;
@@ -284,7 +283,7 @@ void recv_garbling_window(NetIOMP<nP> *io, EvalChunk<nP> &rows, size_t base, int
           dst[2] = dst[2] ^ buf[3 * loc + 2];
         }
       }
-      if constexpr (wrk) {                                         // s's T rows
+      if (wrk) {                                         // s's T rows
         io->recv_data(s, tin.data(), tb);
         for (size_t i = 0; i < tb; ++i) tpk[i] ^= tin[i];
       } else if (s == 2) {
@@ -294,10 +293,10 @@ void recv_garbling_window(NetIOMP<nP> *io, EvalChunk<nP> &rows, size_t base, int
   } else {
     io->recv_data(nP, rows.Agg.data() + (size_t)3 * (nP - 1) * base,
                   (size_t)3 * (nP - 1) * n * sizeof(block));
-    if constexpr (wrk) io->recv_data(nP, tpk.data(), tb);
+    if (wrk) io->recv_data(nP, tpk.data(), tb);
     else io->recv_bool(2, (bool *)(rows.b.data() + base), n);
   }
-  if constexpr (wrk) unpack_p1_rows(rows.T.data() + 3 * base, tpk.data(), (int64_t)3 * n, bits);
+  if (wrk) unpack_p1_rows(rows.T.data() + 3 * base, tpk.data(), (int64_t)3 * n, bits);
 }
 
 EMP_AG_NAMESPACE_END

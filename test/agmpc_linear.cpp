@@ -7,6 +7,7 @@
 // equivocation on this same pure-linear shape lives in ../adversarial/agmpc_input_equiv.cpp.)
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
+#include "test_options.h"
 #include <optional>
 using namespace std;
 using namespace emp;
@@ -20,7 +21,7 @@ int main(int argc, char **argv) {
   int party = parse_party(argv, nP);
   if (party > nP) return 0;
   ThreadPool pool(ag::default_pool_size(nP));
-  AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool);
+  AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool, test_options(TestArgs(argc, argv, {TEST_OPTION_ARGS})));
   using U32 = UInt_T<typename AGMPCSession<nP>::ctx_t, 32>;
 
   const uint32_t XA = 0xa5c3f00du, XB = 0x1234abcdu;

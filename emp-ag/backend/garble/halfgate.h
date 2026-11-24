@@ -86,8 +86,8 @@ inline block tgamma_witness_garbler(bool La, bool Lb, const B &in0, const B &in1
 // destinations (5 parties under KRRW, 4 under WRK, whose P1 is one more), where one key
 // covers 4 gates at D = 1, 2 at D = 2 and one gate at D = 3 and 4.
 // The destinations an AND gate hashes for: the garblers 2..nP, then P1 under WRK.
-template <int nP, class Cfg>
-inline constexpr int kHalfGateDests = nP - 1 + (Cfg::auth == Auth::WRK ? 1 : 0);
+template <int nP, Auth A>
+inline constexpr int kHalfGateDests = nP - 1 + (A == Auth::WRK ? 1 : 0);
 template <int D> inline constexpr int kHalfGateLanes = 2 * D;
 template <int nP> inline constexpr int kHalfGateReuseShift = 3;
 template <int nP> using HalfGateHash = MITCCRH<kHalfGateReuseShift<nP>>;

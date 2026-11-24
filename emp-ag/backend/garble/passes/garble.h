@@ -2,7 +2,7 @@
 #define EMP_AG_BACKEND_GARBLE_PASSES_GARBLE_H__
 //
 // The garble-sender phase (Pi for i >= 2): the per-party
-// GarblePass<nP, Party, Cfg> and the AGMPCProtocol<nP, Cfg> method body that drives it
+// GarblePass<nP, Party, Cfg, A> and the AGMPCProtocol<nP, Cfg> method body that drives it
 // (garble_and_ship); how the rows reach P1 is garble/passes/garble_transport.h. The
 // on-wire byte-order contract this pass produces is defined in
 // garble/passes/wire_format.h (kGarbleChunk / garble_window_cap / agg_row_index /
@@ -20,25 +20,27 @@
 
 EMP_AG_NAMESPACE_BEGIN
 
-// Dispatch a runtime party id in [1, nP] to a compile-time template argument: invokes
+// Dispatch a runtime garbler id in [2, nP] to a compile-time template argument: invokes
 // f.operator()<P>() for the P equal to `party`. Lets GarblePass be instantiated for the
-// running party without a hand-written switch. (Sole user: garble_and_ship, below.)
+// running garbler without a hand-written switch; P1 does not garble, so no pass is built
+// for it. (Sole user: garble_and_ship, below.)
 template <int nP, class F>
-inline void dispatch_party(int party, F &&f) {
+inline void dispatch_garbler(int party, F &&f) {
   [&]<int... I>(std::integer_sequence<int, I...>) {
-    (void)((party == I + 1 ? (f.template operator()<I + 1>(), true) : false) || ...);
-  }(std::make_integer_sequence<int, nP>{});
+    (void)((party == I + 2 ? (f.template operator()<I + 2>(), true) : false) || ...);
+  }(std::make_integer_sequence<int, nP - 1>{});
 }
 
 // Garbler walk (sender Pi, i>=2): re-propagate the share + garbler-label fabric and,
 // per AND, write the half-gate ciphertexts into the current chunk (G / S / b); the
 // drain thread ships each chunk while the walk fills the next.
 // Templated on the garbler's own party id so the per-AND self/cross split
-// (d == Party) and the designated-bit role (Party == 2) fold at compile time;
-// dispatched from garble_and_ship on the runtime party. This is the only pass
-// with `party` in its per-gate hot loop.
-template <int nP, int Party, class Cfg>
-struct GarblePass : SlotGateMixin<GarblePass<nP, Party, Cfg>> {
+// (d == Party) and the designated-bit role (Party == 2) fold at compile time, and on
+// the session's Auth A, which sets what each AND gate writes; both are dispatched from
+// garble_and_ship, once per call. This is the only pass with `party` in its per-gate
+// hot loop.
+template <int nP, int Party, class Cfg, Auth A>
+struct GarblePass : SlotGateMixin<GarblePass<nP, Party, Cfg, A>> {
   using Wire = uint32_t;
   AGMPCProtocol<nP, Cfg> *P;
   ComputeCtx<nP> &ctx;
@@ -105,7 +107,7 @@ struct GarblePass : SlotGateMixin<GarblePass<nP, Party, Cfg>> {
     int in0 = (int)i0, in1 = (int)i1, out = (int)id;
     block ml_a0 = ctx.LABEL(in0), ml_a1 = ml_a0 ^ P->Delta;
     block ml_b0 = ctx.LABEL(in1), ml_b1 = ml_b0 ^ P->Delta;
-    constexpr int D = kHalfGateDests<nP, Cfg>;   // the garblers, then P1 under WRK
+    constexpr int D = kHalfGateDests<nP, A>;   // the garblers, then P1 under WRK
     block buf[D * 4];
     for (int k = 0; k < D; ++k) {
       buf[4 * k]     = ml_a0;
@@ -134,7 +136,7 @@ struct GarblePass : SlotGateMixin<GarblePass<nP, Party, Cfg>> {
       }
     }
     // WRK: the same three rows toward P1, under P1's key: P1 authenticates Lambda with them.
-    if constexpr (Cfg::auth == Auth::WRK)
+    if constexpr (A == Auth::WRK)
       ag::cross_rows(buf + 4 * (nP - 1), wb_in0, wb_in1, sb, wb_out, peer_slot(Party, 1),
                      &cur->T[3 * loc]);
     // Self half-gate row via the shared halfgate kernel. The
@@ -146,7 +148,7 @@ struct GarblePass : SlotGateMixin<GarblePass<nP, Party, Cfg>> {
     ctx.LABEL(out) = ml_g0;
     cur->G[2 * loc]     = G0;
     cur->G[2 * loc + 1] = G1;
-    if constexpr (Cfg::auth == Auth::KRRW) {
+    if constexpr (A == Auth::KRRW) {
       if (Party == 2) cur->b[loc] = (unsigned char)(LSB1(ml_g0));
       // c_gamma witness records for the output check, taken while the four bundles
       // are already loaded. The check's per-AND witness is linear in the opened
@@ -184,7 +186,8 @@ void AGMPCProtocol<nP, Cfg>::garble_and_ship(ComputeCtx &ctx, Source &source) {
   const int num_ands = ctx.num_ands;
   // Witness records the output check streams instead of re-walking the WIRE fabric
   // (grow-only, reused across chunks; filled per AND by GarblePass). KRRW only.
-  if (Cfg::auth == Auth::KRRW && (int)ctx.cgamma_s0.size() < num_ands) {
+  expecting(party >= 2, "garble_and_ship: P1 does not garble");
+  if (opts.auth == Auth::KRRW && (int)ctx.cgamma_s0.size() < num_ands) {
     ctx.cgamma_s0.resize(num_ands);
     ctx.cgamma_s1.resize(num_ands);
     ctx.cgamma_s2.resize(num_ands);
@@ -198,18 +201,21 @@ void AGMPCProtocol<nP, Cfg>::garble_and_ship(ComputeCtx &ctx, Source &source) {
     c.S.assign(nP + 1, BlockVec());
     for (int j = 2; j <= nP; ++j)
       if (j != party) c.S[j].resize(3 * cap);
-    if constexpr (Cfg::auth == Auth::WRK) c.T.resize(3 * cap);
+    if (opts.auth == Auth::WRK) c.T.resize(3 * cap);
     else if (party == 2) c.b.resize(cap);
   });
 
   std::thread drain([&]() {
-    ship_garbling<nP, Cfg>(io, party, pipe, num_ands, cap, laand_window_bits(ssp), opts.delivery);
+    ship_garbling<nP>(io, party, pipe, num_ands, cap, laand_window_bits(ssp), opts.auth,
+                      opts.delivery);
   });
 
-  dispatch_party<nP>(party, [&]<int Party>() {
-    GarblePass<nP, Party, Cfg> pass(this, ctx, pipe, cap);
-    ag::run_pass(pass, source);
-    pass.finish();
+  dispatch_auth(opts.auth, [&]<Auth A>() {
+    dispatch_garbler<nP>(party, [&]<int Party>() {
+      GarblePass<nP, Party, Cfg, A> pass(this, ctx, pipe, cap);
+      ag::run_pass(pass, source);
+      pass.finish();
+    });
   });
   drain.join();
 }

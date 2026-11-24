@@ -110,41 +110,41 @@ add_np_variant(agmpc_cheat_direct_np4 agmpc_output_cheat.cpp 4
 # of the output masks P1 hands it or, with the depth2 argument, P1's own check of the next gate.
 # flip_delivered_lambda: P1 hands garbler 2 a flipped output mask.
 add_np_variant(agmpc_cheat_wrk_p1row_np2 agmpc_output_cheat.cpp 2
-               DEFS CHEAT_NP=2 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_p1_row PASS_RE "WRK: a garbled gate failed")
+               DEFS CHEAT_NP=2 ARGS auth=wrk HOOKS flip_p1_row PASS_RE "WRK: a garbled gate failed")
 add_np_variant(agmpc_cheat_wrk_p1row_np3 agmpc_output_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_p1_row PASS_RE "WRK: a garbled gate failed")
+               DEFS CHEAT_NP=3 ARGS auth=wrk HOOKS flip_p1_row PASS_RE "WRK: a garbled gate failed")
 add_np_variant(agmpc_cheat_wrk_p1row_direct_np3 agmpc_output_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK ARGS delivery=direct HOOKS flip_p1_row
+               DEFS CHEAT_NP=3 ARGS auth=wrk delivery=direct HOOKS flip_p1_row
                PASS_RE "WRK: a garbled gate failed")
 add_np_variant(agmpc_cheat_wrk_p1row_party2_np3 agmpc_output_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_p1_row flip_party=2
+               DEFS CHEAT_NP=3 ARGS auth=wrk HOOKS flip_p1_row flip_party=2
                PASS_RE "WRK: a garbled gate failed")
 add_np_variant(agmpc_cheat_wrk_p1row_party2_direct_np3 agmpc_output_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK ARGS delivery=direct HOOKS flip_p1_row flip_party=2
+               DEFS CHEAT_NP=3 ARGS auth=wrk delivery=direct HOOKS flip_p1_row flip_party=2
  PASS_RE "WRK: a garbled gate failed")
 add_np_variant(agmpc_cheat_wrk_g_np2 agmpc_output_cheat.cpp 2
-               DEFS CHEAT_NP=2 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_g PASS_RE "WRK: P1's output masks")
+               DEFS CHEAT_NP=2 ARGS auth=wrk HOOKS flip_g PASS_RE "WRK: P1's output masks")
 add_np_variant(agmpc_cheat_wrk_g_depth2_np2 agmpc_output_cheat.cpp 2
-               DEFS CHEAT_NP=2 EMP_AG_GARBLE_AUTH=WRK ARGS depth2 HOOKS flip_g
+               DEFS CHEAT_NP=2 ARGS auth=wrk depth2 HOOKS flip_g
                PASS_RE "WRK: a garbled gate failed")
 add_np_variant(agmpc_cheat_wrk_agg_np3 agmpc_output_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_agg PASS_RE "WRK: P1's output masks")
+               DEFS CHEAT_NP=3 ARGS auth=wrk HOOKS flip_agg PASS_RE "WRK: P1's output masks")
 add_np_variant(agmpc_cheat_wrk_agg_depth2_np3 agmpc_output_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK ARGS depth2 HOOKS flip_agg
+               DEFS CHEAT_NP=3 ARGS auth=wrk depth2 HOOKS flip_agg
                PASS_RE "WRK: a garbled gate failed")
 add_np_variant(agmpc_cheat_wrk_agg_mid_np4 agmpc_output_cheat.cpp 4
-               DEFS CHEAT_NP=4 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_agg_mid PASS_RE "WRK: P1's output masks")
+               DEFS CHEAT_NP=4 ARGS auth=wrk HOOKS flip_agg_mid PASS_RE "WRK: P1's output masks")
 add_np_variant(agmpc_cheat_wrk_direct_np3 agmpc_output_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK ARGS delivery=direct HOOKS flip_direct
+               DEFS CHEAT_NP=3 ARGS auth=wrk delivery=direct HOOKS flip_direct
                PASS_RE "WRK: P1's output masks")
 add_np_variant(agmpc_cheat_wrk_lambda_np2 agmpc_output_cheat.cpp 2
-               DEFS CHEAT_NP=2 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_delivered_lambda
+               DEFS CHEAT_NP=2 ARGS auth=wrk HOOKS flip_delivered_lambda
                PASS_RE "WRK: P1's output masks")
 add_np_variant(agmpc_cheat_wrk_lambda_np3 agmpc_output_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_delivered_lambda
+               DEFS CHEAT_NP=3 ARGS auth=wrk HOOKS flip_delivered_lambda
                PASS_RE "WRK: P1's output masks")
 add_np_variant(agmpc_prepared_cheat_wrk_p1row_np3 agmpc_prepared_cheat.cpp 3
-               DEFS CHEAT_NP=3 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_p1_row PASS_RE "WRK: a garbled gate failed")
+               DEFS CHEAT_NP=3 ARGS auth=wrk HOOKS flip_p1_row PASS_RE "WRK: a garbled gate failed")
 
 # The same integrity boundaries after an offline/online split: the row fault is
 # delivered and stored during prepare(), then detected only after online binding;
@@ -213,16 +213,16 @@ foreach(_np 2 3)
     add_np_variant(agmpc_computation_flip_share_np${_np} ../agmpc_computation.cpp ${_np}
                    DEFS COMP_NP=${_np} HOOKS flip_output_share PASS_RE "share-MAC hash mismatch")
     add_np_variant(agmpc_computation_flip_share_wrk_np${_np} ../agmpc_computation.cpp ${_np}
-                   DEFS COMP_NP=${_np} EMP_AG_GARBLE_AUTH=WRK HOOKS flip_output_share
+                   DEFS COMP_NP=${_np} ARGS auth=wrk HOOKS flip_output_share
                    PASS_RE "share-MAC hash mismatch")
     add_np_variant(agmpc_computation_flip_handoff_np${_np} ../agmpc_computation.cpp ${_np}
-                   DEFS COMP_NP=${_np} EMP_AG_GARBLE_AUTH=WRK HOOKS flip_delivered_lambda
+                   DEFS COMP_NP=${_np} ARGS auth=wrk HOOKS flip_delivered_lambda
                    PASS_RE "WRK: P1's output masks do not match its labels")
 endforeach()
 add_np_variant(agmpc_computation_equiv_np3 ../agmpc_computation.cpp 3
                DEFS COMP_NP=3 HOOKS flip_input_lambda PASS_RE "input Lambda equivocation")
 add_np_variant(agmpc_computation_equiv_wrk_np3 ../agmpc_computation.cpp 3
-               DEFS COMP_NP=3 EMP_AG_GARBLE_AUTH=WRK HOOKS flip_input_lambda
+               DEFS COMP_NP=3 ARGS auth=wrk HOOKS flip_input_lambda
                PASS_RE "input Lambda equivocation")
 
 # Share mode (../agmpc_share_eval.cpp). flip_xy: party 2 flips its share of a layer's first
@@ -243,7 +243,7 @@ add_np_variant(agmpc_share_eval_flip_tag80_np3 ../agmpc_share_eval.cpp 3
 # in that call, before the run.
 foreach(_np 2 3)
     add_np_variant(agmpc_computation_bound_expert_flip_np${_np} ../agmpc_computation_bound.cpp ${_np}
-                   DEFS BOUND_NP=${_np} EMP_AG_GARBLE_AUTH=WRK BOUND_EXPERT BOUND_EXPERT_ONLY HOOKS flip_output_share
+                   DEFS BOUND_NP=${_np} ARGS auth=wrk expert expert_only HOOKS flip_output_share
                    PASS_RE "share-MAC hash mismatch")
     set_tests_properties(agmpc_computation_bound_expert_flip_np${_np}
                          PROPERTIES FAIL_REGULAR_EXPRESSION "P1 reached the run")

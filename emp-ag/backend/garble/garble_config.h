@@ -64,6 +64,8 @@ inline constexpr int64_t kBuildCutAndChooseBatch = 0;
 // (bind_build_options, garble/protocol.h), so parties that chose differently fail setup.
 // The build macros set the defaults.
 struct ProtocolOptions {
+  // How P1's masked values are authenticated (Auth above).
+  Auth auth = Auth::EMP_AG_GARBLE_AUTH;
   // How the garblers' rows reach P1 at nP >= 3 (Delivery above).
   Delivery delivery = Delivery::EMP_AG_GARBLE_DELIVERY;
   // The open checker of the AND gates' protocol (ashare/open_check.h).
@@ -76,6 +78,7 @@ struct ProtocolOptions {
 };
 
 inline void validate_protocol_options(const ProtocolOptions &o) {
+  expecting(o.auth == Auth::KRRW || o.auth == Auth::WRK, "ProtocolOptions: an unknown Auth");
   expecting(o.delivery == Delivery::RING || o.delivery == Delivery::DIRECT,
             "ProtocolOptions: an unknown delivery");
   expecting(o.open_check == OpenCheckKind::Default || o.open_check == OpenCheckKind::Pairwise ||
@@ -101,8 +104,17 @@ struct GarbleConfig {
 template <class Cfg>
 inline ProtocolOptions default_options() {
   ProtocolOptions o;
+  o.auth = Cfg::auth;
   o.delivery = Cfg::delivery;
   return o;
+}
+
+// Calls f.operator()<A>() for the A equal to `auth`: code that depends on Auth per AND
+// gate takes it as a template argument, chosen once per call.
+template <class F>
+inline decltype(auto) dispatch_auth(Auth auth, F &&f) {
+  if (auth == Auth::WRK) return f.template operator()<Auth::WRK>();
+  return f.template operator()<Auth::KRRW>();
 }
 
 // The session id a party runs under: the given one for the default, KRRW with the ring

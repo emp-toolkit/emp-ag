@@ -7,6 +7,7 @@
 #include "emp-tool/emp-tool.h"
 #include "emp-tool/ir/builtins.h"
 #include "emp-ag/emp-ag.h"
+#include "test_options.h"
 #include "clear_oracle.h"
 #include <array>
 using namespace std;
@@ -44,7 +45,7 @@ int main(int argc, char **argv) {
   if (party > nP) return 0;
 
   ThreadPool pool(ag::default_pool_size(nP));
-  AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool);
+  AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool, test_options(TestArgs(argc, argv, {TEST_OPTION_ARGS})));
 
   bool ok = artifact_case<256, 128>(sess, party, "aes128", 7, 3, 5);
   ok &= artifact_case<256, 256>(sess, party, "sha256_256", 3, 1, 4);

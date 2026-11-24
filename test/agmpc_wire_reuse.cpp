@@ -15,6 +15,7 @@
 #include "emp-tool/ir/transform.h"
 #include "emp-tool/circuits/frontend/rec.h"
 #include "emp-ag/emp-ag.h"
+#include "test_options.h"
 #include "clear_oracle.h"
 #include <array>
 #include <cstdio>
@@ -34,7 +35,7 @@ int main(int argc, char **argv) {
   if (party > nP) return 0;
 
   ThreadPool pool(ag::default_pool_size(nP));
-  AGMPCSession<nP> sess(party, port, nullptr, &pool);
+  AGMPCSession<nP> sess(party, port, nullptr, &pool, test_options(TestArgs(argc, argv, {TEST_OPTION_ARGS})));
   using Ctx = AGMPCSession<nP>::ctx_t;
   using UInt32 = UInt_T<Ctx, 32>;
   using BV128 = BitVec_T<Ctx, 128>;
