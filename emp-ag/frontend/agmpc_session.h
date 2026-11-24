@@ -231,9 +231,12 @@ public:
   // at setup, and a stream that runs past it prepays another batch of that size.
   // `and_prep` builds the protocol that gives the AND gates' products
   // (triple/and_prep.h: leaky_and_prep(), cut_and_choose_prep(batch), or an
-  // application's own); empty selects the build default (default_and_prep). Every party
-  // must make the same choice: a session binds every protocol but the leaky ANDs into
-  // its session id, so a mismatch fails setup. `cot` supplies the COT streams
+  // application's own); empty selects the one `options` name (default_and_prep). Every
+  // party must make the same choice: a session binds every protocol but the leaky ANDs
+  // into its session id, so a mismatch fails setup. `options` (ag::ProtocolOptions,
+  // backend/garble/garble_config.h) are the choices made at run time; the constructors
+  // without them take the build's defaults. Every party must choose them alike too: the
+  // session binds each non-default one into its session id. `cot` supplies the COT streams
   // (ashare/cot_extension_factory.h states what they must guarantee); empty keeps
   // emp-ag's own. Supplied streams need the SoftSpoken mint and run on one lane, so with
   // them lanes = -1 selects one lane; the session binds their id into its session id.
@@ -251,6 +254,16 @@ public:
               int64_t planned_receiver_cots = -1,
               const ag::AndPrepFactory<nP>& and_prep = {},
               const ag::CotExtensionFactory& cot = {})
+      : AGMPCSession(party, port, ip, pool, ag::ProtocolOptions{}, ssp, lanes, session_id,
+                     base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep, cot) {}
+  AGMPCSession(int party, int port, const char* const* ip, ThreadPool* pool,
+              const ag::ProtocolOptions& options, int ssp = 40, int lanes = -1,
+              std::optional<block> session_id = std::nullopt,
+              BaseOtKind base_ot_kind = BaseOtKind::CSW,
+              int64_t planned_sender_cots = -1,
+              int64_t planned_receiver_cots = -1,
+              const ag::AndPrepFactory<nP>& and_prep = {},
+              const ag::CotExtensionFactory& cot = {})
       : L_(checked_owned_lanes_(party, port, pool, ssp,
                                 cot.supplied() && lanes < 0 ? 1 : lanes)),
         owned_io_(L_ > 1 ? nullptr
@@ -260,7 +273,8 @@ public:
         io_view_(L_ > 1 ? &owned_grp_->mesh(0) : owned_io_.get()),
         group_view_(owned_grp_.get()),
         proto_(io_view_, pool, party, ssp, group_view_, session_id,
-               base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep, cot),
+               base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep, cot,
+               options),
         engine_{&proto_} {
     io().flush();
   }
@@ -278,10 +292,22 @@ public:
               int64_t planned_receiver_cots = -1,
               const ag::AndPrepFactory<nP>& and_prep = {},
               const ag::CotExtensionFactory& cot = {})
+      : AGMPCSession(io, pool, party, ag::ProtocolOptions{}, ssp, grp, session_id,
+                     base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep, cot) {}
+  AGMPCSession(NetIOMP<nP>* io, ThreadPool* pool, int party,
+              const ag::ProtocolOptions& options, int ssp = 40,
+              NetIOMPGroup<nP>* grp = nullptr,
+              std::optional<block> session_id = std::nullopt,
+              BaseOtKind base_ot_kind = BaseOtKind::CSW,
+              int64_t planned_sender_cots = -1,
+              int64_t planned_receiver_cots = -1,
+              const ag::AndPrepFactory<nP>& and_prep = {},
+              const ag::CotExtensionFactory& cot = {})
       : L_(checked_borrowed_lanes_(io, pool, party, ssp, grp)),
         io_view_(io), group_view_(grp),
         proto_(io_view_, pool, party, ssp, group_view_, session_id,
-               base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep, cot),
+               base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep, cot,
+               options),
         engine_{&proto_} {}
   AGMPCSession(const AGMPCSession&) = delete;
   AGMPCSession& operator=(const AGMPCSession&) = delete;
@@ -409,7 +435,7 @@ public:
   //
   // The COTs each COT stream draws in a session whose work is one Computation of `art`,
   // prepare_computation then run_computation, at statistical security `ssp` with the AND
-  // gates' protocol `and_prep` (empty: the build default): the mint's bootstrap prefix,
+  // gates' protocol `and_prep` (empty: the one `options` name): the mint's bootstrap prefix,
   // one share per input wire, one per AND gate, and the protocol's own draws
   // (AndPrepFactory::draws), each draw with check2's hiding shares at nP > 2 and the
   // first with check1's tail. Every stream draws the same count. Pass it as the
@@ -418,7 +444,8 @@ public:
   // prepare_computation binds to shared values, whose wires draw no mask.
   static int64_t planned_cots(const circuit::ComputationArtifact &art, int ssp = 40,
                               const ag::AndPrepFactory<nP> &and_prep = {},
-                              const std::vector<bool> &bound = {}) {
+                              const std::vector<bool> &bound = {},
+                              const ag::ProtocolOptions &options = {}) {
     validate_computation_(art);
     int64_t masked = (int64_t)art.program->num_inputs;
     if (!bound.empty()) {
@@ -427,15 +454,17 @@ public:
       for (size_t s = 0; s < bound.size(); ++s)
         if (bound[s]) masked -= (int64_t)art.io.inputs[s].width;
     }
-    return planned_cots(masked, ag::agmpc_count_ands(*art.program), ssp, and_prep);
+    return planned_cots(masked, ag::agmpc_count_ands(*art.program), ssp, and_prep, options);
   }
   // The same, from the counts of the Computation's input wires that draw a mask and of
   // its AND gates.
   static int64_t planned_cots(int64_t num_inputs, int64_t num_ands, int ssp,
-                              const ag::AndPrepFactory<nP> &and_prep) {
+                              const ag::AndPrepFactory<nP> &and_prep,
+                              const ag::ProtocolOptions &options = {}) {
     expecting(num_inputs >= 0 && num_ands >= 0, "AGMPCSession::planned_cots: a negative count");
     ag::validate_and_prep_factory(and_prep);
-    const ag::AndPrepFactory<nP> prep = and_prep.make ? and_prep : ag::default_and_prep<nP>();
+    ag::validate_protocol_options(options);
+    const ag::AndPrepFactory<nP> prep = and_prep.make ? and_prep : ag::default_and_prep<nP>(options);
     expecting(static_cast<bool>(prep.draws),
               "AGMPCSession::planned_cots: the AND-gate protocol does not state its draws");
     std::vector<int64_t> draws;
@@ -1049,7 +1078,7 @@ public:
                 "(use ag::cut_and_choose_prep)");
       share_eval_ = std::make_unique<ag::ShareEval<nP>>(
           io_view_, group_view_, proto_.pool, proto_.party, proto_.Delta, proto_.session_id,
-          *proto_.abit, *bank, EMP_AG_SHARE_TAG_BYTES);
+          *proto_.abit, *bank, proto_.opts.share_tag_bytes);
     }
     SharedWires r;
     r.sess_ = serial_;

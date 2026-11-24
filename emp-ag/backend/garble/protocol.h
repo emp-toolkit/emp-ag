@@ -55,29 +55,26 @@ template <int nP, class Cfg = GarbleConfig<>> class AGMPCEngine;
 // AndPrep (triple/and_prep.h): the leaky ANDs make them per call, the cut-and-choose
 // protocol from a bank of triples checked a batch at a time.
 
-// The build's protocol for the AND gates: leaky ANDs (triple/leaky_and_prep.h), or
-// cut-and-choose triples (triple/cut_and_choose_triples.h) generated <batch> at a time
-// under -DEMP_AG_CUT_AND_CHOOSE_BATCH=<batch>.
+// The protocol for the AND gates of a session given none: the leaky ANDs
+// (triple/leaky_and_prep.h), or cut-and-choose triples (triple/cut_and_choose_triples.h)
+// generated o.cut_and_choose_batch at a time.
 template <int nP>
-AndPrepFactory<nP> default_and_prep() {
-#ifdef EMP_AG_CUT_AND_CHOOSE_BATCH
-  return cut_and_choose_prep<nP>((int64_t)(EMP_AG_CUT_AND_CHOOSE_BATCH));
-#else
+AndPrepFactory<nP> default_and_prep(const ProtocolOptions &o = ProtocolOptions{}) {
+  if (o.cut_and_choose_batch > 0) return cut_and_choose_prep<nP>(o.cut_and_choose_batch);
   return leaky_and_prep<nP>();
-#endif
 }
 
-// The build options that change the wire without a type of their own: the open checker
-// (EMP_AG_OPEN_CHECK_*, ashare/open_check.h), SoftSpoken's k (EMP_AG_SOFTSPOKEN_K) and the
-// width of share evaluation's tags (EMP_AG_SHARE_TAG_BYTES). As with the garbling options,
-// the defaults leave the session id as it is, and any other choice binds it, so parties
-// built differently fail setup.
+// The options that change the wire without a type of their own: the open checker
+// (ashare/open_check.h), SoftSpoken's k (EMP_AG_SOFTSPOKEN_K) and the width of share
+// evaluation's tags. As with the garbling options, the defaults leave the session id as it
+// is, and any other choice binds it, so parties that chose differently fail setup.
+static_assert(EMP_AG_SHARE_TAG_BYTES >= 10 && EMP_AG_SHARE_TAG_BYTES <= 16,
+              "EMP_AG_SHARE_TAG_BYTES must be 10 to 16");
 template <int nP, class Cfg>
-inline block bind_build_options(block session_id) {
-  constexpr bool pairwise = std::is_same_v<DefaultOpenCheck<nP>, PairwiseOpenCheck<nP>>;
+inline block bind_build_options(block session_id, const ProtocolOptions &o = ProtocolOptions{}) {
+  const bool pairwise = open_check_pairwise(o.open_check, nP);
   constexpr int k = Cfg::cot == Cot::SoftSpoken ? EMP_AG_SOFTSPOKEN_K : 0;
-  constexpr int share_tag = EMP_AG_SHARE_TAG_BYTES;
-  static_assert(share_tag >= 10 && share_tag <= 16, "EMP_AG_SHARE_TAG_BYTES must be 10 to 16");
+  const int share_tag = o.share_tag_bytes;
   if (pairwise == (nP == 2) && (k == 0 || k == 8) && share_tag == 16) return session_id;
   RO ro("emp-ag:build-options", session_id);
   ro.absorb((uint64_t)(pairwise ? 1 : 2)).absorb((uint64_t)k);
@@ -107,6 +104,7 @@ public:
   NetIOMP<nP> *io;
   ThreadPool *pool;
   int party;
+  ProtocolOptions opts;   // the session's options (garble/garble_config.h)
   int ssp = 40;   // statistical security parameter (bucket sizes, the leaky-AND and WRK row windows)
   block session_id;
   block Delta;
@@ -140,10 +138,12 @@ public:
                 int64_t planned_sender_cots = -1,
                 int64_t planned_receiver_cots = -1,
                 const AndPrepFactory<nP> &make_and_prep = {},
-                const CotExtensionFactory &cot = {})
-      : io(io_), pool(pool_), party(party_) {
+                const CotExtensionFactory &cot = {},
+                const ProtocolOptions &options = ProtocolOptions{})
+      : io(io_), pool(pool_), party(party_), opts(options) {
     validate_cot_extension_factory(cot);
     validate_and_prep_factory(make_and_prep);
+    validate_protocol_options(options);
     ag::validate_protocol_runtime(pool_, party_, nP);
     ssp = ag::checked_statistical_security(ssp_);
     expecting(io_ != nullptr, "AGMPCProtocol: NetIOMP must not be null");
@@ -159,15 +159,15 @@ public:
     // protocol, every one of which but the leaky ANDs binds its id, and on supplied COT
     // streams.
     session_id = bind_garble_config<nP, Cfg>(session_id);
-    session_id = bind_build_options<nP, Cfg>(session_id);
+    session_id = bind_build_options<nP, Cfg>(session_id, opts);
     session_id = bind_ssp(session_id, ssp);
-    const AndPrepFactory<nP> prep = make_and_prep.make ? make_and_prep : default_and_prep<nP>();
+    const AndPrepFactory<nP> prep = make_and_prep.make ? make_and_prep : default_and_prep<nP>(opts);
     session_id = bind_and_prep(session_id, prep.id);
     session_id = bind_cot_extension(session_id, cot.id);
     // The share pool first (base OTs and COT setup), then the AND gates' protocol over it.
     abit = new ashare_t(io_, pool_, party_, grp, session_id, base_ot_kind,
                                  planned_sender_cots, planned_receiver_cots, cot);
-    const AndPrepContext<nP> pc{io_, grp, pool_, party_, ssp, session_id, abit};
+    const AndPrepContext<nP> pc{io_, grp, pool_, party_, ssp, session_id, abit, opts.open_check};
     and_prep = prep.make(pc);
     expecting(and_prep != nullptr, "AGMPCProtocol: the AND-gate protocol factory returned null");
     Delta = abit->delta();

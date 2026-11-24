@@ -6,11 +6,12 @@
 // SilentFerret's LPN set binds the id only when it is not the default, and only on
 // SilentFerret streams. The sessions share one mesh, as the golden-snapshot cases do.
 //
-// BUILD_OPTIONS_BOUND: this build chose a build option other than the default (CMake
-// builds a variant with EMP_AG_OPEN_CHECK_SYMMETRIC), so ag::bind_build_options must
-// change the id; otherwise it must keep it.
+// With an option other than the default (test_options.h; CMake runs a variant with
+// open_check=symmetric), ag::bind_build_options must change the id; otherwise it must
+// keep it.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
+#include "test_options.h"
 #include <cstdio>
 using namespace std;
 using namespace emp;
@@ -39,12 +40,14 @@ int main(int argc, char **argv) {
   int party = parse_party(argv, nP);
   int port = peer_port();
   if (party > nP) return 0;
+  const TestArgs args(argc, argv, {TEST_OPTION_ARGS});
+  const ag::ProtocolOptions opts = test_options(args);
 
   NetIOMP<nP> io(party, port);
   ThreadPool pool(ag::default_pool_size(nP));
   block ids[2];
   for (block &id : ids) {
-    AGMPCSession<nP> sess(&io, &pool, party);
+    AGMPCSession<nP> sess(&io, &pool, party, opts);
     id = agreed(io, party, sess.protocol().session_id);
   }
   const block zero = zero_block;
@@ -54,32 +57,32 @@ int main(int argc, char **argv) {
 
   const block given = makeBlock(0x73657373696f6eULL, 0x6964ULL);
   {
-    AGMPCSession<nP> sess(&io, &pool, party, 40, nullptr, given);
+    AGMPCSession<nP> sess(&io, &pool, party, opts, 40, nullptr, given);
     const block kept = sess.protocol().session_id;
     const block options = ag::bind_build_options<nP, ag::GarbleConfig<>>(
-        ag::bind_garble_config<nP, ag::GarbleConfig<>>(given));
-#ifdef BUILD_OPTIONS_BOUND
-    expecting(!cmpBlock(&options, &given, 1), "agmpc_session_id: a build option left the id as it was");
-#else
-    const block config_only = ag::bind_garble_config<nP, ag::GarbleConfig<>>(given);
-    expecting(cmpBlock(&options, &config_only, 1), "agmpc_session_id: the default build options changed the id");
-#endif
-    const block want = ag::bind_and_prep(options, ag::default_and_prep<nP>().id);
+        ag::bind_garble_config<nP, ag::GarbleConfig<>>(given), opts);
+    if (args.has("open_check")) {
+      expecting(!cmpBlock(&options, &given, 1), "agmpc_session_id: an option left the id as it was");
+    } else {
+      const block config_only = ag::bind_garble_config<nP, ag::GarbleConfig<>>(given);
+      expecting(cmpBlock(&options, &config_only, 1), "agmpc_session_id: the default options changed the id");
+    }
+    const block want = ag::bind_and_prep(options, ag::default_and_prep<nP>(opts).id);
     expecting(cmpBlock(&kept, &want, 1), "agmpc_session_id: a given id was replaced");
   }
   {
     // The leaky ANDs keep the id; cut-and-choose triples bind theirs. One session at a
     // time, as a process holds one chunk recorder.
     const block base = ag::bind_build_options<nP, ag::GarbleConfig<>>(
-        ag::bind_garble_config<nP, ag::GarbleConfig<>>(given));
+        ag::bind_garble_config<nP, ag::GarbleConfig<>>(given), opts);
     block kept, bound;
     {
-      AGMPCSession<nP> leaky(&io, &pool, party, 40, nullptr, given, BaseOtKind::CSW, -1, -1,
+      AGMPCSession<nP> leaky(&io, &pool, party, opts, 40, nullptr, given, BaseOtKind::CSW, -1, -1,
                              ag::leaky_and_prep<nP>());
       kept = leaky.protocol().session_id;
     }
     {
-      AGMPCSession<nP> cnc(&io, &pool, party, 40, nullptr, given, BaseOtKind::CSW, -1, -1,
+      AGMPCSession<nP> cnc(&io, &pool, party, opts, 40, nullptr, given, BaseOtKind::CSW, -1, -1,
                            ag::cut_and_choose_prep<nP>(1024));
       bound = cnc.protocol().session_id;
     }

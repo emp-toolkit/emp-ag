@@ -19,6 +19,7 @@
 #include "emp-tool/circuits/frontend/rec.h"
 #include "emp-tool/circuits/frontend/compose.h"
 #include "emp-ag/emp-ag.h"
+#include "test_options.h"
 #include "clear_oracle.h"
 #include <array>
 #include <cstdio>
@@ -57,6 +58,7 @@ static void print_hex(block b) {
 
 int main(int argc, char **argv) {
   int party = parse_party(argv, nP);
+  const ag::ProtocolOptions opts = test_options(TestArgs(argc, argv, {TEST_OPTION_ARGS}));
   int port = peer_port();
   if (party > nP) return 0;
 
@@ -71,7 +73,7 @@ int main(int argc, char **argv) {
   // `expect` is the value party 1 must see; `body` runs the protocol and returns
   // party-1's revealed optional as a uint64.
   auto run_case = [&](const char *name, uint64_t expect, auto body) {
-    AGMPCSession<nP> sess(&io, &pool, party);
+    AGMPCSession<nP> sess(&io, &pool, party, opts);
     int64_t before = io.count();
     std::optional<uint64_t> got = body(sess);
     uint64_t used = (uint64_t)(io.count() - before);
@@ -146,7 +148,7 @@ int main(int argc, char **argv) {
     for (int i = 0; i < NI; ++i) in_bits[i] = ((i * 7 + 3) % 5) == 0;
     auto oracle = agmpc_test::clear_eval(prog, vector<uint8_t>(in_bits.begin(), in_bits.end()));
 
-    AGMPCSession<nP> sess(&io, &pool, party);
+    AGMPCSession<nP> sess(&io, &pool, party, opts);
     int64_t before = io.count();
     auto in = sess.input<BitVec_T<Ctx, NI>>(2, party == 2 ? in_bits : std::array<bool, NI>{});
     auto out = sess.reveal(sess.run_artifact<BitVec_T<Ctx, NO>>(prog, in), 1);

@@ -52,10 +52,10 @@ add_np_variant(agmpc_cheat_d_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 HOOKS 
 add_np_variant(agmpc_cheat_d_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 HOOKS flip_d PASS_RE "open check")
 add_np_variant(agmpc_cheat_xy_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 HOOKS flip_xy PASS_RE "open check")
 add_np_variant(agmpc_cheat_xy_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 HOOKS flip_xy PASS_RE "open check")
-add_np_variant(agmpc_cheat_d_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_OPEN_CHECK_SYMMETRIC HOOKS flip_d PASS_RE "open check")
-add_np_variant(agmpc_cheat_xy_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 EMP_AG_OPEN_CHECK_SYMMETRIC HOOKS flip_xy PASS_RE "open check")
-add_np_variant(agmpc_cheat_d_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_OPEN_CHECK_PAIRWISE HOOKS flip_d PASS_RE "open check")
-add_np_variant(agmpc_cheat_xy_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_OPEN_CHECK_PAIRWISE HOOKS flip_xy PASS_RE "open check")
+add_np_variant(agmpc_cheat_d_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ARGS open_check=symmetric HOOKS flip_d PASS_RE "open check")
+add_np_variant(agmpc_cheat_xy_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ARGS open_check=symmetric HOOKS flip_xy PASS_RE "open check")
+add_np_variant(agmpc_cheat_d_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS open_check=pairwise HOOKS flip_d PASS_RE "open check")
+add_np_variant(agmpc_cheat_xy_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS open_check=pairwise HOOKS flip_xy PASS_RE "open check")
 # aShare consistency (check2, nP>=3): every verifier checks each party's tag on its hash
 # value at the fold, and the parties agree on the hash values later -- in the symmetric
 # open check's zero test, or on their own after the pairwise check and before a reveal.
@@ -72,7 +72,7 @@ add_np_variant(agmpc_cheat_xy_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_N
 # all its peers, reading them off check1's opened y's; the tail's bits of their own per
 # peer must still make check1 abort.
 add_np_variant(agmpc_cheat_bw_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 HOOKS flip_bw PASS_RE "cheat aShare")
-add_np_variant(agmpc_cheat_bw_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 EMP_AG_OPEN_CHECK_PAIRWISE HOOKS flip_bw PASS_RE "cheat aShare")
+add_np_variant(agmpc_cheat_bw_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS open_check=pairwise HOOKS flip_bw PASS_RE "cheat aShare")
 add_np_variant(agmpc_share_split_choice_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 HOOKS split_choice PASS_RE "cheat aShare")
 add_np_variant(agmpc_share_flip_bw_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 HOOKS flip_bw PASS_RE "cheat aShare")
 add_np_variant(agmpc_share_two_world_np3 agmpc_share_consistency.cpp 3 DEFS CONSISTENCY_NP=3 HOOKS split_choice two_world PASS_RE "cheat aShare: parties saw different consistency values")
@@ -169,7 +169,7 @@ add_np_variant(agmpc_prepared_cheat_b_np2_offline agmpc_prepared_cheat.cpp 2 DEF
 add_np_variant(agmpc_prepared_cheat_agg_np3_offline agmpc_prepared_cheat.cpp 3 DEFS CHEAT_NP=3
                HOOKS flip_agg ARGS prepare-only)
 
-# Cut-and-choose triples (EMP_AG_CUT_AND_CHOOSE_BATCH, backend/triple/cut_and_choose_triples.h).
+# Cut-and-choose triples (the cnc argument, backend/triple/cut_and_choose_triples.h).
 # cnc_flip_product: party 2 flips every product correction it sends party 1, so about half the
 # candidates are wrong. cnc_flip_zr: party 2 opens a wrong z ^ r for one candidate to everyone.
 # cnc_flip_open: party 2 opens a wrong share of one sacrifice difference to everyone. The open
@@ -178,31 +178,31 @@ add_np_variant(agmpc_prepared_cheat_agg_np3_offline agmpc_prepared_cheat.cpp 3 D
 # the candidates differently, which the aShare check's tags catch at the cut-and-choose
 # coin, before the agreement on the views runs. cnc_king_split (nP >= 3, kings): as a king, party 2 sends party 3 a different opened
 # value, which leaves party 3 a residual the symmetric check catches.
-set(_cnc EMP_AG_CUT_AND_CHOOSE_BATCH=1024)
-add_np_variant(agmpc_cheat_cnc_product_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ${_cnc} HOOKS cnc_flip_product PASS_RE "cut-and-choose")
-add_np_variant(agmpc_cheat_cnc_product_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} HOOKS cnc_flip_product PASS_RE "cut-and-choose")
-add_np_variant(agmpc_cheat_cnc_zr_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ${_cnc} HOOKS cnc_flip_zr PASS_RE "cut-and-choose")
-add_np_variant(agmpc_cheat_cnc_zr_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} HOOKS cnc_flip_zr PASS_RE "cut-and-choose")
-add_np_variant(agmpc_cheat_cnc_open_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ${_cnc} HOOKS cnc_flip_open PASS_RE "cut-and-choose")
-add_np_variant(agmpc_cheat_cnc_open_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} HOOKS cnc_flip_open PASS_RE "cut-and-choose")
-add_np_variant(agmpc_cheat_cnc_split_zr_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} HOOKS cnc_split_zr PASS_RE "cheat aShare: MAC tag mismatch")
-add_np_variant(agmpc_cheat_cnc_split_zr_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_OPEN_CHECK_PAIRWISE HOOKS cnc_split_zr PASS_RE "cheat aShare: MAC tag mismatch")
-add_np_variant(agmpc_cheat_cnc_king_split_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} HOOKS cnc_king_split PASS_RE "cut-and-choose: opened values")
-add_np_variant(agmpc_cheat_cnc_king_split_np4 agmpc_output_cheat.cpp 4 DEFS CHEAT_NP=4 ${_cnc} HOOKS cnc_king_split PASS_RE "cut-and-choose: opened values")
+set(_cnc cnc=1024)
+add_np_variant(agmpc_cheat_cnc_product_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ARGS ${_cnc} HOOKS cnc_flip_product PASS_RE "cut-and-choose")
+add_np_variant(agmpc_cheat_cnc_product_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS ${_cnc} HOOKS cnc_flip_product PASS_RE "cut-and-choose")
+add_np_variant(agmpc_cheat_cnc_zr_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ARGS ${_cnc} HOOKS cnc_flip_zr PASS_RE "cut-and-choose")
+add_np_variant(agmpc_cheat_cnc_zr_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS ${_cnc} HOOKS cnc_flip_zr PASS_RE "cut-and-choose")
+add_np_variant(agmpc_cheat_cnc_open_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ARGS ${_cnc} HOOKS cnc_flip_open PASS_RE "cut-and-choose")
+add_np_variant(agmpc_cheat_cnc_open_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS ${_cnc} HOOKS cnc_flip_open PASS_RE "cut-and-choose")
+add_np_variant(agmpc_cheat_cnc_split_zr_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS ${_cnc} HOOKS cnc_split_zr PASS_RE "cheat aShare: MAC tag mismatch")
+add_np_variant(agmpc_cheat_cnc_split_zr_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS ${_cnc} open_check=pairwise HOOKS cnc_split_zr PASS_RE "cheat aShare: MAC tag mismatch")
+add_np_variant(agmpc_cheat_cnc_king_split_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS ${_cnc} HOOKS cnc_king_split PASS_RE "cut-and-choose: opened values")
+add_np_variant(agmpc_cheat_cnc_king_split_np4 agmpc_output_cheat.cpp 4 DEFS CHEAT_NP=4 ARGS ${_cnc} HOOKS cnc_king_split PASS_RE "cut-and-choose: opened values")
 # cnc_flip_all_zr: party 2 opens every candidate's z ^ r wrong, so every candidate is wrong in
 # the same way, which every sacrifice passes: only the cut can abort, and always does.
 # cnc_flip_receiver: as party 1's receiver, party 2 combines every correction under the wrong
 # choice bit, an error it knows (the binding the hashed correlation gives). The forced
 # checkers: cnc_flip_open and cnc_flip_product under the other checker; cnc_flip_residual (pairwise,
 # nP > 2): party 2 sends everyone a wrong share of a sacrifice residual, caught by its MAC.
-add_np_variant(agmpc_cheat_cnc_all_zr_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ${_cnc} HOOKS cnc_flip_all_zr PASS_RE "a cut triple is incorrect")
-add_np_variant(agmpc_cheat_cnc_all_zr_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} HOOKS cnc_flip_all_zr PASS_RE "a cut triple is incorrect")
-add_np_variant(agmpc_cheat_cnc_receiver_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ${_cnc} HOOKS cnc_flip_receiver PASS_RE "cut-and-choose")
-add_np_variant(agmpc_cheat_cnc_receiver_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} HOOKS cnc_flip_receiver PASS_RE "cut-and-choose")
-add_np_variant(agmpc_cheat_cnc_open_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ${_cnc} EMP_AG_OPEN_CHECK_SYMMETRIC HOOKS cnc_flip_open PASS_RE "cut-and-choose: opened values")
-add_np_variant(agmpc_cheat_cnc_open_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_OPEN_CHECK_PAIRWISE HOOKS cnc_flip_open PASS_RE "cut-and-choose: MAC tag mismatch")
-add_np_variant(agmpc_cheat_cnc_product_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_OPEN_CHECK_PAIRWISE HOOKS cnc_flip_product PASS_RE "cut-and-choose")
-add_np_variant(agmpc_cheat_cnc_residual_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ${_cnc} EMP_AG_OPEN_CHECK_PAIRWISE HOOKS cnc_flip_residual PASS_RE "cut-and-choose: MAC tag mismatch")
+add_np_variant(agmpc_cheat_cnc_all_zr_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ARGS ${_cnc} HOOKS cnc_flip_all_zr PASS_RE "a cut triple is incorrect")
+add_np_variant(agmpc_cheat_cnc_all_zr_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS ${_cnc} HOOKS cnc_flip_all_zr PASS_RE "a cut triple is incorrect")
+add_np_variant(agmpc_cheat_cnc_receiver_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ARGS ${_cnc} HOOKS cnc_flip_receiver PASS_RE "cut-and-choose")
+add_np_variant(agmpc_cheat_cnc_receiver_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS ${_cnc} HOOKS cnc_flip_receiver PASS_RE "cut-and-choose")
+add_np_variant(agmpc_cheat_cnc_open_symmetric_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ARGS ${_cnc} open_check=symmetric HOOKS cnc_flip_open PASS_RE "cut-and-choose: opened values")
+add_np_variant(agmpc_cheat_cnc_open_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS ${_cnc} open_check=pairwise HOOKS cnc_flip_open PASS_RE "cut-and-choose: MAC tag mismatch")
+add_np_variant(agmpc_cheat_cnc_product_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS ${_cnc} open_check=pairwise HOOKS cnc_flip_product PASS_RE "cut-and-choose")
+add_np_variant(agmpc_cheat_cnc_residual_pairwise_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 ARGS ${_cnc} open_check=pairwise HOOKS cnc_flip_residual PASS_RE "cut-and-choose: MAC tag mismatch")
 
 # Circuit mode (Computation, ../agmpc_computation.cpp). flip_output_share: the last party
 # flips its share of the first output position, keeping its MACs; the recipient's MAC check
@@ -235,7 +235,7 @@ endforeach()
 add_np_variant(agmpc_share_eval_flip_tag_np3 ../agmpc_share_eval.cpp 3
                DEFS SHARE_NP=3 HOOKS flip_tag PASS_RE "share evaluation: MAC tag mismatch")
 add_np_variant(agmpc_share_eval_flip_tag80_np3 ../agmpc_share_eval.cpp 3
-               DEFS SHARE_NP=3 EMP_AG_SHARE_TAG_BYTES=10 HOOKS flip_tag
+               DEFS SHARE_NP=3 ARGS tag_bytes=10 HOOKS flip_tag
                PASS_RE "share evaluation: MAC tag mismatch")
 
 # The output masks opened ahead of the run (../agmpc_computation_bound.cpp, expert_open_output_masks):

@@ -5,9 +5,10 @@
 // the bank and the batch count behave as specified. A second bank declares 2^20 batches and
 // runs two, both at the declared target (2^-ssp / 2^20 each), which needs larger buckets
 // than the per-batch schedule's first batches; with the over_declared argument a bank that declares
-// one batch refuses a second. One source; the party count via CNC_NP.
+// one batch refuses a second. One source; the party count via CNC_NP, and the open
+// checker from the open_check argument (test_options.h).
 #include "emp-ag/backend/triple/cut_and_choose_triples.h"
-#include "test_args.h"
+#include "test_options.h"
 #include <cstdio>
 #include <vector>
 using namespace emp;
@@ -49,15 +50,11 @@ static bool check_triples(NetIOMP<nP> *io, AShareGen<nP> &abit, BlockVec mac[nP 
   return ok;
 }
 
-int main(int argc, char **argv) {
-  party = parse_party(argv, nP);
-  if (party > nP) return 0;
-  NetIOMP<nP> io(party, peer_port());
-  ThreadPool pool(ag::default_pool_size(nP));
-  AShareGen<nP> abit(&io, &pool, party);
-  PRG prg;
-  const block sid = sampleRandom<nP>(&io, &prg, &pool, party);
-  CutAndChooseTriples<nP> cnc(&io, &pool, party, abit, sid, 40, kBatch);
+// The banks under the open checker Check.
+template <class Check>
+static int run(NetIOMP<nP> &io, ThreadPool &pool, AShareGen<nP> &abit, block sid,
+               bool over_declared) {
+  CutAndChooseTriples<nP, Check> cnc(&io, &pool, party, abit, sid, 40, kBatch);
 
   BlockVec mac[nP + 1], key[nP + 1];
   bool ok = true;
@@ -72,8 +69,8 @@ int main(int argc, char **argv) {
   ok = ok && cnc.batches() == 4;
 
   // Declared batches, each bank on a session id of its own.
-  if (TestArgs(argc, argv, {"over_declared"}).has("over_declared")) {
-    CutAndChooseTriples<nP> one(&io, &pool, party, abit, sid ^ makeBlock(0, 1), 40, kBatch, nullptr, 1);
+  if (over_declared) {
+    CutAndChooseTriples<nP, Check> one(&io, &pool, party, abit, sid ^ makeBlock(0, 1), 40, kBatch, nullptr, 1);
     one.take(kBatch + 1, mac, key);   // the second batch
     return 1;
   }
@@ -81,15 +78,15 @@ int main(int argc, char **argv) {
   const CutAndChooseParams second = cut_and_choose_params(kBatch, cut_and_choose_batch_target(40, 2));
   const CutAndChooseParams declared =
       cut_and_choose_params(kBatch, cut_and_choose_declared_target(40, kDeclared));
-  CutAndChooseTriples<nP> many(&io, &pool, party, abit, sid ^ makeBlock(0, 2), 40, kBatch, nullptr,
-                               kDeclared);
+  CutAndChooseTriples<nP, Check> many(&io, &pool, party, abit, sid ^ makeBlock(0, 2), 40, kBatch,
+                                      nullptr, kDeclared);
   many.take(1500, mac, key);
   ok = check_triples(&io, abit, mac, key, 1500) && ok;
   const CutAndChooseParams &D = many.last_params();
   ok = ok && many.batches() == 2 && D.pop == declared.pop && D.B == declared.B &&
        D.T == declared.T && declared.B > second.B;
   const std::vector<int64_t> want = {3 * declared.pop, 3 * declared.pop};
-  ok = ok && CutAndChooseTriples<nP>::draws(1500, 40, kBatch, kDeclared) == want;
+  ok = ok && CutAndChooseTriples<nP, Check>::draws(1500, 40, kBatch, kDeclared) == want;
 
   if (party == 1) {
     const CutAndChooseParams &P = cnc.last_params();
@@ -99,4 +96,19 @@ int main(int argc, char **argv) {
                 3.0 * (double)cnc.candidates() / (double)cnc.outputs(), ok ? "GOOD!" : "BAD!");
   }
   return ok ? 0 : 1;
+}
+
+int main(int argc, char **argv) {
+  party = parse_party(argv, nP);
+  if (party > nP) return 0;
+  const TestArgs args(argc, argv, {"over_declared", TEST_OPTION_ARGS});
+  const ag::ProtocolOptions opts = test_options(args);
+  NetIOMP<nP> io(party, peer_port());
+  ThreadPool pool(ag::default_pool_size(nP));
+  AShareGen<nP> abit(&io, &pool, party);
+  PRG prg;
+  const block sid = sampleRandom<nP>(&io, &prg, &pool, party);
+  if (ag::open_check_pairwise(opts.open_check, nP))
+    return run<PairwiseOpenCheck<nP>>(io, pool, abit, sid, args.has("over_declared"));
+  return run<SymmetricOpenCheck<nP>>(io, pool, abit, sid, args.has("over_declared"));
 }

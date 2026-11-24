@@ -8,7 +8,7 @@
 // and with an 80-bit tag; the SHARE_* switches select the misuse and cheating cases.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
-#include "test_args.h"
+#include "test_options.h"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -103,8 +103,10 @@ int main(int argc, char **argv) {
   const int party = parse_party(argv, nP);
   if (party > nP) return 0;
   ThreadPool pool(ag::default_pool_size(nP));
-  if (TestArgs(argc, argv, {"no_bank"}).has("no_bank")) {
-    AgSession sess(party, peer_port(), nullptr, &pool);   // the leaky ANDs keep no bank
+  const TestArgs args(argc, argv, {"no_bank", TEST_OPTION_ARGS});
+  const ag::ProtocolOptions opts = test_options(args);
+  if (args.has("no_bank")) {
+    AgSession sess(party, peer_port(), nullptr, &pool, opts);   // the leaky ANDs keep no bank
     {
       std::mt19937_64 rng(1);
       const BooleanProgram p = random_circuit(rng, 4, 20, 2);
@@ -112,7 +114,7 @@ int main(int argc, char **argv) {
       return 1;
     }
   }
-  AgSession sess(party, peer_port(), nullptr, &pool, 40, -1, std::nullopt, BaseOtKind::CSW, -1, -1,
+  AgSession sess(party, peer_port(), nullptr, &pool, opts, 40, -1, std::nullopt, BaseOtKind::CSW, -1, -1,
                ag::cut_and_choose_prep<nP>(1024));
 
   for (int t = 0; t < 6; ++t) {
