@@ -40,11 +40,13 @@ using MintFor = std::conditional_t<
 // per peer and direction.
 // The COT post-processing pins bit0(Δ)=1, bit0(K)=0 and bit0(M)=choice, so each
 // draw gives M = K ⊕ choice · Δ. At nP=2 the single receiver's choice is x^me.
-// At nP>2 every receiver draws its own choices r_j and the Fix exchange aligns
+// At nP>2 the party's receivers must give it one bit toward every peer. With
+// SilentFerretMint they do already (shared choices, Mint::kSharedChoices). With
+// SoftSpokenMint every receiver draws its own choices r_j and the Fix exchange aligns
 // them: the party samples x^me and sends each peer d_j = x^me ⊕ r_j, one bit per
-// COT; the receiver sets M ^= d_j·e0 and the peer K ^= d_j·(Δ ⊕ e0). So bit0(K)=0,
-// bit0(M)=x^me and M = K ⊕ x^me · Δ hold at every peer slot, and the share x^me_k
-// is bit0(MAC[any non-self peer][k]).
+// COT; the receiver sets M ^= d_j·e0 and the peer K ^= d_j·(Δ ⊕ e0). Either way
+// bit0(K)=0, bit0(M)=x^me and M = K ⊕ x^me · Δ hold at every peer slot, and the
+// share x^me_k is bit0(MAC[any non-self peer][k]).
 //
 // Two small implementation choices:
 //
@@ -419,25 +421,36 @@ class AShareGen final : public AShareSource<nP> {
 			KEY[i].resize(ext_len);
 		}
 
-		// Fix exchange (nP>2). Every receiver draws its own choices, so the party
-		// samples x^me for the corrected positions [0, length) -- the outputs and
-		// check2's hiding shares -- and the mint sends each peer d = x^me ⊕ choice,
-		// one bit per COT, on that peer's channel. The receiver sets MAC ^= d·e0 and the peer KEY ^= d·(Δ ⊕ e0),
-		// so bit0(KEY) = 0, bit0(MAC) = x^me and MAC = KEY ⊕ x^me·Δ hold at every
-		// peer slot. The check1 tail [length, ext_len) keeps its pair-specific
-		// choices. A party whose corrections disagree across peers holds different
-		// bits toward them, which check2 catches. At nP=2 the receiver's choice is
-		// x^me and nothing is sent.
-		if constexpr (nP > 2) {
+		// Fix exchange (nP>2, a mint without shared choices). Every receiver draws its
+		// own choices, so the party samples x^me for the corrected positions [0, length)
+		// -- the outputs and check2's hiding shares -- and the mint sends each peer
+		// d = x^me ⊕ choice, one bit per COT, on that peer's channel. The receiver sets
+		// MAC ^= d·e0 and the peer KEY ^= d·(Δ ⊕ e0), so bit0(KEY) = 0, bit0(MAC) = x^me
+		// and MAC = KEY ⊕ x^me·Δ hold at every peer slot. The check1 tail
+		// [length, ext_len) keeps its pair-specific choices. A party whose corrections
+		// disagree across peers holds different bits toward them, which check2 catches.
+		// At nP=2 the receiver's choice is x^me and nothing is sent; with shared choices
+		// bit0(MAC) is already x^me at every peer slot, and a party whose bits differ
+		// across peers is caught by check2 the same way.
+		constexpr bool fix = (nP > 2) && !Mint::kSharedChoices;
+		if constexpr (fix) {
 			if (fix_x_.size() < (size_t)length) fix_x_.resize((size_t)length);
 			prg.random_bool(fix_x_.data(), length);
 		}
-		const int nfix = (nP > 2) ? length : 0;
+		const int nfix = fix ? length : 0;
 		const block dxor = Delta ^ bit0_mask;
 #ifdef AG_PROFILE
 		int64_t _cot0 = io->count();
 #endif
 		mint_->draw(MAC, KEY, ext_len, nfix, nfix > 0 ? fix_x_.data() : nullptr, dxor);
+		// With shared choices the check1 tail would carry the party's bit toward every
+		// peer at once. check1 opens y_j = ⊕_{p≠j} x^{p,j} for every column j, so a
+		// party that knows its own tail would learn every other party's from the y_j,
+		// and could then pass check1 with different global keys toward different peers.
+		// The tail therefore takes choices of its own toward every peer, 128 bits per
+		// peer, once per session.
+		if constexpr ((nP > 2) && Mint::kSharedChoices)
+			if (tail > 0) mint_->split_tail(MAC, KEY, length, tail, dxor);
 		cots_per_stream_ += ext_len;
 #ifdef AG_PROFILE
 		g_ag_cot_bytes += (uint64_t)(io->count() - _cot0);
@@ -700,6 +713,26 @@ class AShareGen final : public AShareSource<nP> {
 		gfmul(y_global[party - 1], Delta, &tD);
 		z[party] = tD;
 		for (int i = 1; i <= nP; ++i) if (i != party) z[party] ^= Kx[i];
+#if defined(EMP_AG_TEST_SPLIT_DELTA) && defined(EMP_AG_TEST_ADAPT_CHECK1)
+		// TEST-ONLY (never in production): party 2, whose global key toward party 3
+		// differs (test_split_delta flips its bit 7), answers as if every party's tail
+		// bits were one value toward all its peers. Then y_p ⊕ y_2 = x^p ⊕ x^2, so it reads
+		// every x^p off the y's and picks z^2_2 to cancel its column under the key each peer
+		// holds. With tail bits of their own per peer the reads are wrong and check1 aborts.
+		if constexpr (nP >= 3) {
+			if (party == 2) {
+				const block x2 = xv[1];
+				z[2] = zero_block;
+				for (int p = 1; p <= nP; ++p) if (p != 2) {
+					const block xp = y_global[p - 1] ^ y_global[1] ^ x2;
+					const block dp = (p == 3) ? (Delta ^ makeBlock(0, 0x80)) : Delta;
+					block t;
+					gfmul(xp, dp, &t);
+					z[2] ^= Kx[p] ^ t;
+				}
+			}
+		}
+#endif
 
 		struct DigestT { char d[FsHash::DIGEST_SIZE]; };
 		DigestT z_dgst[nP + 1];

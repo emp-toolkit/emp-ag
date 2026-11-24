@@ -25,6 +25,13 @@
 // The rows of A for user trees come from a seed derived from the session id, in the word
 // layout of emp-ot's Lpn (lpn_tree_words), so both ends of every stream fold with the same A.
 //
+// Shared choices (nP > 2): a party's receiver streams all draw their choice bits from one
+// secret seed, and every stream's own matrix (the refill trees') from one public seed, through
+// emp-ot's Ferret::set_choice_seed. In lockstep, every receiver stream then gives the same
+// choice bit at each position, so a share bit x^me is bit 0 of any of its MACs and no Fix
+// exchange is sent. Only the check1 tail needs choices of its own per peer, which split_tail
+// gives it (see AShareGen::process_phase1).
+//
 // Plans: one count for every stream (sender == receiver), counting the COTs the pool
 // draws, with no bootstrap prefix; the mint prepays one tree more, since it draws whole
 // trees.
@@ -59,6 +66,8 @@ class SilentFerretMint {
  public:
 	// Streams: 2s receives from the peer of slot s (MACs), 2s + 1 sends to it (keys).
 	static constexpr int K = 2 * (nP - 1);
+	// Every receiver stream gives the same choice bit at each position (see above).
+	static constexpr bool kSharedChoices = nP > 2;
 	// The table's row stride in blocks (joint_lpn.h).
 	static constexpr int kRow = lpn_row_blocks<K>;
 
@@ -83,6 +92,11 @@ class SilentFerretMint {
 				if (party == lo) { sid_send[hi] = up; sid_recv[hi] = down; }
 				else if (party == hi) { sid_send[lo] = down; sid_recv[lo] = up; }
 			}
+		// Shared choices: one secret choice seed for this party's receiver streams, and one
+		// public seed for every stream's own matrix.
+		block choice_seed = zero_block;
+		const block stream_lpn_seed = RO("emp-ag:ashare-stream-lpn", session_id).squeeze_block();
+		if constexpr (kSharedChoices) PRG().random_block(&choice_seed, 1);
 		// Each stream bootstraps from its own public-key base OT, on the same channels as
 		// SoftSpokenMint's lane 0.
 		for (int peer = 1; peer <= nP; ++peer) if (peer != party) {
@@ -101,6 +115,10 @@ class SilentFerretMint {
 				ALICE, ch_send, /*malicious=*/true, kLpn,
 				make_base_ot(base_ot_kind, ch_send), EMP_AG_FERRET_THREADS);
 			st_[2 * s + 1]->set_sid(sid_send[peer]);
+			if constexpr (kSharedChoices) {
+				st_[2 * s]->set_choice_seed(&choice_seed, stream_lpn_seed);
+				st_[2 * s + 1]->set_choice_seed(nullptr, stream_lpn_seed);
+			}
 			bool split_delta[128];
 			st_[2 * s + 1]->set_delta(test_split_delta(delta_bits, party, peer, split_delta));
 		}
@@ -139,8 +157,11 @@ class SilentFerretMint {
 		expecting(false, "AShareGen::draw_cots: one-direction draws need the SoftSpoken mint");
 	}
 
+	// The streams' choices are shared (or, at nP = 2, there is one receiver), so no Fix
+	// exchange runs: nfix is 0 and xme unused.
 	void draw(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int ext_len, int nfix,
-	          const uint8_t *xme, block dxor) {
+	          const uint8_t * /*xme*/, [[maybe_unused]] block dxor) {
+		expecting(nfix == 0, "SilentFerretMint: the streams' choices are shared; no Fix exchange");
 		block *out[K];
 		for (int s = 0; s < K; s += 2) {
 			out[s] = MAC[peer_[s]].data();
@@ -177,10 +198,26 @@ class SilentFerretMint {
 				done = ext_len;
 			}
 		}
-		if (nfix > 0) fix_(MAC, KEY, nfix, xme, dxor);
+#ifdef EMP_AG_TEST_SPLIT_CHOICE
+		test_split_choice_(MAC, KEY, ext_len, dxor);
+#endif
 #if defined(EMP_AG_TEST_SPLIT_CHOICE) && defined(EMP_AG_TEST_SPLIT_FIRST_DRAW)
 		++test_draws_;
 #endif
+	}
+
+	// Choices of its own toward every peer on [off, off + n), for the check1 tail: toward
+	// each peer the Fix exchange's halves (fix.h) with an independent random target, so the
+	// tail's bits differ across peers. One bit per COT per peer.
+	void split_tail(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int off, int n, block dxor) {
+		PRG prg;
+		const uint8_t *target[nP + 1] = {};
+		for (int i = 1; i <= nP; ++i) if (i != party_) {
+			if (tail_x_[i].size() < (size_t)n) tail_x_[i].resize((size_t)n);
+			prg.random_bool(tail_x_[i].data(), n);
+			target[i] = tail_x_[i].data();
+		}
+		fix_(MAC, KEY, off, n, target, dxor);
 	}
 
  private:
@@ -201,6 +238,7 @@ class SilentFerretMint {
 	BlockVec tail_[K];                               // the last tree, folded
 	int64_t tail_off_ = 0, tail_n_ = 0;              // its unused part
 	std::vector<uint8_t> fix_out_[nP + 1], fix_in_[nP + 1];
+	std::vector<uint8_t> tail_x_[nP + 1];            // split_tail's targets, per peer
 #if defined(EMP_AG_TEST_SPLIT_CHOICE) && defined(EMP_AG_TEST_SPLIT_FIRST_DRAW)
 	int test_draws_ = 0;   // TEST-ONLY: draws so far
 #endif
@@ -276,43 +314,55 @@ class SilentFerretMint {
 		});
 	}
 
-	// The Fix exchange on [0, nfix): each receiver stream's corrections go out on its
-	// channel, each sender stream takes its peer's on its own.
-	void fix_(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int nfix, const uint8_t *xme,
-	          block dxor) {
+	// The Fix exchange's halves on [off, off + n): each receiver stream's corrections toward
+	// `target[peer]` go out on its channel, each sender stream takes its peer's on its own.
+	void fix_(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int off, int n,
+	          const uint8_t *const target[nP + 1], block dxor) {
 		for (int i = 1; i <= nP; ++i) if (i != party_) {
-			if (fix_out_[i].size() < (size_t)nfix) fix_out_[i].resize((size_t)nfix);
-			if (fix_in_[i].size() < (size_t)nfix) fix_in_[i].resize((size_t)nfix);
+			if (fix_out_[i].size() < (size_t)n) fix_out_[i].resize((size_t)n);
+			if (fix_in_[i].size() < (size_t)n) fix_in_[i].resize((size_t)n);
 		}
 		vector<future<void>> res;
 		for (int peer : peer_order(party_, nP)) {
 			const int s = peer_slot(party_, peer);
 			NetIO *cs = chan_[2 * s + 1], *cr = chan_[2 * s];
-			block *KEYp = KEY[peer].data();
-			block *MACp = MAC[peer].data();
+			block *KEYp = KEY[peer].data() + off;
+			block *MACp = MAC[peer].data() + off;
 			uint8_t *din = fix_in_[peer].data();
 			uint8_t *dout = fix_out_[peer].data();
-			bool split = false;
-#ifdef EMP_AG_TEST_SPLIT_CHOICE
-			// TEST-ONLY (never in production): party 2 holds the complement of its bits
-			// toward party 3 (see SoftSpokenMint::draw).
-			split = (party_ == 2 && peer == 3);
-#ifdef EMP_AG_TEST_SPLIT_FIRST_DRAW
-			split = split && test_draws_ == 0;   // the first draw only (see SoftSpokenMint::draw)
-#endif
-#endif
-			res.push_back(pool_->enqueue([cs, KEYp, din, nfix, dxor]() {
-				cs->recv_bool(din, nfix);
-				fix_sender_half(KEYp, nfix, din, dxor);
+			const uint8_t *tp = target[peer];
+			res.push_back(pool_->enqueue([cs, KEYp, din, n, dxor]() {
+				cs->recv_bool(din, n);
+				fix_sender_half(KEYp, n, din, dxor);
 			}));
-			res.push_back(pool_->enqueue([cr, MACp, dout, xme, nfix, split]() {
-				fix_receiver_half(MACp, nfix, xme, dout, split);
-				cr->send_bool(dout, nfix);
+			res.push_back(pool_->enqueue([cr, MACp, dout, tp, n]() {
+				fix_receiver_half(MACp, n, tp, dout, /*flip=*/false);
+				cr->send_bool(dout, n);
 				cr->flush();
 			}));
 		}
 		joinNclean(res);
 	}
+
+#ifdef EMP_AG_TEST_SPLIT_CHOICE
+	// TEST-ONLY (never in production): party 2 holds the complement of its bits toward
+	// party 3, with valid MACs, as if party 3 had taken a correction d = 1 from it: party 2
+	// flips bit 0 of its MACs from party 3, and party 3 adds Δ ⊕ e0 to its keys on party
+	// 2's bits. Nothing is sent. With EMP_AG_TEST_SPLIT_FIRST_DRAW, the first draw only.
+	void test_split_choice_(BlockVec MAC[nP + 1], BlockVec KEY[nP + 1], int n, block dxor) {
+		bool split = true;
+#ifdef EMP_AG_TEST_SPLIT_FIRST_DRAW
+		split = test_draws_ == 0;
+#endif
+		if constexpr (nP >= 3) {
+			if (!split) return;
+			if (party_ == 2)
+				for (int k = 0; k < n; ++k) MAC[3][k] = MAC[3][k] ^ bit0_mask;
+			if (party_ == 3)
+				for (int k = 0; k < n; ++k) KEY[2][k] = KEY[2][k] ^ dxor;
+		}
+	}
+#endif
 };
 
 }  // namespace emp::ag
