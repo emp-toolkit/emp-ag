@@ -254,7 +254,7 @@ public:
               int64_t planned_receiver_cots = -1,
               const ag::AndPrepFactory<nP>& and_prep = {},
               const ag::CotExtensionFactory& cot = {})
-      : AGMPCSession(party, port, ip, pool, ag::ProtocolOptions{}, ssp, lanes, session_id,
+      : AGMPCSession(party, port, ip, pool, ag::default_options<Cfg>(), ssp, lanes, session_id,
                      base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep, cot) {}
   AGMPCSession(int party, int port, const char* const* ip, ThreadPool* pool,
               const ag::ProtocolOptions& options, int ssp = 40, int lanes = -1,
@@ -292,7 +292,7 @@ public:
               int64_t planned_receiver_cots = -1,
               const ag::AndPrepFactory<nP>& and_prep = {},
               const ag::CotExtensionFactory& cot = {})
-      : AGMPCSession(io, pool, party, ag::ProtocolOptions{}, ssp, grp, session_id,
+      : AGMPCSession(io, pool, party, ag::default_options<Cfg>(), ssp, grp, session_id,
                      base_ot_kind, planned_sender_cots, planned_receiver_cots, and_prep, cot) {}
   AGMPCSession(NetIOMP<nP>* io, ThreadPool* pool, int party,
               const ag::ProtocolOptions& options, int ssp = 40,
@@ -445,7 +445,7 @@ public:
   static int64_t planned_cots(const circuit::ComputationArtifact &art, int ssp = 40,
                               const ag::AndPrepFactory<nP> &and_prep = {},
                               const std::vector<bool> &bound = {},
-                              const ag::ProtocolOptions &options = {}) {
+                              const ag::ProtocolOptions &options = ag::default_options<Cfg>()) {
     validate_computation_(art);
     int64_t masked = (int64_t)art.program->num_inputs;
     if (!bound.empty()) {
@@ -460,7 +460,7 @@ public:
   // its AND gates.
   static int64_t planned_cots(int64_t num_inputs, int64_t num_ands, int ssp,
                               const ag::AndPrepFactory<nP> &and_prep,
-                              const ag::ProtocolOptions &options = {}) {
+                              const ag::ProtocolOptions &options = ag::default_options<Cfg>()) {
     expecting(num_inputs >= 0 && num_ands >= 0, "AGMPCSession::planned_cots: a negative count");
     ag::validate_and_prep_factory(and_prep);
     ag::validate_protocol_options(options);

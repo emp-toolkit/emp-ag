@@ -20,6 +20,7 @@
 // are refused before any traffic.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
+#include "test_options.h"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -134,6 +135,7 @@ static void run_and_check(AgSession &sess, int party, const char *name,
 
 int main(int argc, char **argv) {
   const int party = parse_party(argv, nP);
+  const ag::ProtocolOptions opts = test_options(TestArgs(argc, argv, {TEST_OPTION_ARGS}));
   if (party > nP) return 0;
   ThreadPool pool(ag::default_pool_size(nP));
 
@@ -153,11 +155,11 @@ int main(int argc, char **argv) {
     Wires v;
 #if BOUND_MISUSE == 3
     {
-      AgSession first(&io, &pool, party);
+      AgSession first(&io, &pool, party, opts);
       v = first.share_random(W);
     }
 #endif
-    AgSession sess(&io, &pool, party);
+    AgSession sess(&io, &pool, party, opts);
 #if BOUND_MISUSE == 1
     v = sess.share_random(W);
     const Wires narrow = v.slice(0, W - 1);
@@ -175,9 +177,9 @@ int main(int argc, char **argv) {
   }
 #else
 #ifdef BOUND_LEAKY
-  AgSession sess(party, peer_port(), nullptr, &pool);
+  AgSession sess(party, peer_port(), nullptr, &pool, opts);
 #else
-  AgSession sess(party, peer_port(), nullptr, &pool, 40, -1, std::nullopt, BaseOtKind::CSW, -1, -1,
+  AgSession sess(party, peer_port(), nullptr, &pool, opts, 40, -1, std::nullopt, BaseOtKind::CSW, -1, -1,
                  ag::cut_and_choose_prep<nP>(1024));
 #endif
   std::mt19937_64 rng(4242);

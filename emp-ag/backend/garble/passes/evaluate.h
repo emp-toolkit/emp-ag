@@ -53,6 +53,7 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP, Cfg>> {
   ThreadPool *pool;
   NetIOMP<nP> *io;
   int cap_;
+  Delivery delivery_;   // how the garblers' rows arrive (garble_transport.h)
   chunk_pipe<EvalChunk<nP>> pipe;
   std::future<void> recv_fut;
   EvalChunk<nP> *cur = nullptr;
@@ -71,14 +72,14 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP, Cfg>> {
 #endif
 
   StreamEvaluatePass(ComputeCtx<nP> &c, ThreadPool *pl, NetIOMP<nP> *netio,
-                     block Delta, int ssp, EvalChunk<nP> *stored = nullptr)
+                     block Delta, int ssp, Delivery delivery, EvalChunk<nP> *stored = nullptr)
       : ctx(c), Delta_(Delta), tg_rec_(c.ev_tg.data()), mu_rec_(c.ev_mu.data()),
         mu_(c.cgamma_mu.data()), lam_out_(c.Lambda_AND.data()),
         auth_rec_(c.ev_auth.data()), auth_bits_(c.ev_auth_bits.data()),
         bits_(laand_window_bits(ssp)), window_(laand_window_mask(ssp)),
         delta_w_(Delta & laand_window_mask(ssp)),
         wid((uint32_t)c.num_in), pool(pl), io(netio),
-        cap_(garble_window_cap<nP>(c.num_ands)),
+        cap_(garble_window_cap<nP>(c.num_ands)), delivery_(delivery),
         mr_((size_t)(nP + 1) * (nP + 1)),
         pipe(stored == nullptr ? 2 : 0,
              [this](EvalChunk<nP> &ch) { size_eval_chunk<nP, Cfg>(ch, cap_); }) {
@@ -112,7 +113,7 @@ struct StreamEvaluatePass : SlotGateMixin<StreamEvaluatePass<nP, Cfg>> {
         _t = agmpc_now_ns();
 #endif
         slot.n = std::min(cap_, na - base);
-        recv_garbling_window<nP, Cfg>(io, slot, 0, slot.n, bits_);
+        recv_garbling_window<nP, Cfg>(io, slot, 0, slot.n, bits_, delivery_);
 #ifdef AG_PROFILE
         ev_recv_ns += agmpc_now_ns() - _t;
 #endif
@@ -285,7 +286,7 @@ void AGMPCProtocol<nP, Cfg>::stream_evaluate(ComputeCtx &ctx, Source &source) {
     if ((int)ctx.cgamma_mu.size() < ctx.num_ands) ctx.cgamma_mu.resize(ctx.num_ands);
     if ((int)ctx.Lambda_AND.size() < ctx.num_ands) ctx.Lambda_AND.resize(ctx.num_ands);
   }
-  StreamEvaluatePass<nP, Cfg> pass(ctx, pool, io, Delta, ssp);
+  StreamEvaluatePass<nP, Cfg> pass(ctx, pool, io, Delta, ssp, opts.delivery);
   ag::run_pass(pass, source);
 }
 
@@ -302,7 +303,7 @@ void AGMPCProtocol<nP, Cfg>::receive_prepared_garbling(
   size_eval_chunk<nP, Cfg>(rows, num_ands);
   for (int base = 0; base < num_ands; base += cap)
     recv_garbling_window<nP, Cfg>(io, rows, (size_t)base, std::min(cap, num_ands - base),
-                                laand_window_bits(ssp));
+                                laand_window_bits(ssp), opts.delivery);
 }
 
 // Online P1 source for stored rows.  `cur` starts at the one full-circuit
@@ -316,7 +317,7 @@ void AGMPCProtocol<nP, Cfg>::evaluate_prepared(
     if ((int)ctx.cgamma_mu.size() < ctx.num_ands) ctx.cgamma_mu.resize(ctx.num_ands);
     if ((int)ctx.Lambda_AND.size() < ctx.num_ands) ctx.Lambda_AND.resize(ctx.num_ands);
   }
-  StreamEvaluatePass<nP, Cfg> pass(ctx, pool, io, Delta, ssp, &rows);
+  StreamEvaluatePass<nP, Cfg> pass(ctx, pool, io, Delta, ssp, opts.delivery, &rows);
   ag::run_pass(pass, source);
 }
 

@@ -139,7 +139,7 @@ public:
                 int64_t planned_receiver_cots = -1,
                 const AndPrepFactory<nP> &make_and_prep = {},
                 const CotExtensionFactory &cot = {},
-                const ProtocolOptions &options = ProtocolOptions{})
+                const ProtocolOptions &options = default_options<Cfg>())
       : io(io_), pool(pool_), party(party_), opts(options) {
     validate_cot_extension_factory(cot);
     validate_and_prep_factory(make_and_prep);
@@ -158,7 +158,7 @@ public:
     // fails; likewise on the build options that change the wire, on ssp, on the AND gates'
     // protocol, every one of which but the leaky ANDs binds its id, and on supplied COT
     // streams.
-    session_id = bind_garble_config<nP, Cfg>(session_id);
+    session_id = bind_garble_options<nP>(session_id, Cfg::auth, opts.delivery, Cfg::cot, Cfg::lpn);
     session_id = bind_build_options<nP, Cfg>(session_id, opts);
     session_id = bind_ssp(session_id, ssp);
     const AndPrepFactory<nP> prep = make_and_prep.make ? make_and_prep : default_and_prep<nP>(opts);

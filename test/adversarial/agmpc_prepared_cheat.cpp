@@ -4,6 +4,7 @@
 // bundle must fail its soldering open before evaluation.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
+#include "../test_options.h"
 #include <iostream>
 #include <string>
 
@@ -20,7 +21,8 @@ int main(int argc, char **argv) {
   const int party = parse_party(argv, nP);
   if (party > nP) return 0;
   ThreadPool pool(ag::default_pool_size(nP));
-  AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool);
+  const TestArgs args(argc, argv, {"prepare-only", TEST_OPTION_ARGS});
+  AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool, test_options(args));
   using Bit = Bit_T<typename AGMPCSession<nP>::ctx_t>;
 
   if (ag::hooks().corrupt_adopted_share) {
@@ -42,7 +44,7 @@ int main(int argc, char **argv) {
     // Returns false after the offline phase alone (prepare-only).
     auto run = [&](auto circuit) {
       auto prepared = sess.prepare(circuit);
-      if (argc >= 3 && std::string(argv[2]) == "prepare-only") return false;
+      if (args.has("prepare-only")) return false;
       auto x = sess.input<Bit>(1, party == 1);
       auto y = sess.input<Bit>(2, party == 2);
       auto out = sess.run(std::move(prepared), x, y);
