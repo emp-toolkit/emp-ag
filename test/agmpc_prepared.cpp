@@ -33,6 +33,15 @@ int main(int argc, char **argv) {
   AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool);
   using U8 = UInt_T<typename AGMPCSession<nP>::ctx_t, 8>;
   using Bit = Bit_T<typename AGMPCSession<nP>::ctx_t>;
+#ifdef PREP_ADOPT_ABOVE_TWO
+  {
+    // Above two parties an adopted bundle could differ toward each peer: refused.
+    const bool source_clear = party == nP;
+    auto source = sess.protocol().process_input(&source_clear, 1, nP);
+    (void)sess.adopt_authenticated_input<Bit>(source.wire_bundle.data());
+    return 1;
+  }
+#endif
   using Batch = decltype(sess.input_batch());
   using BackendMaterial = typename AGMPCSession<nP>::Engine::Material;
   static_assert(!std::is_copy_constructible_v<Batch> &&
@@ -127,8 +136,9 @@ int main(int argc, char **argv) {
   // Externally authenticated values adopted under an active prepare do not
   // exchange source labels: soldering needs only Lambda and the IT-MAC bundle.
   // A direct reveal also stays label-free; the first later ordinary circuit
-  // activates labels once, in one input-boundary batch.
-  {
+  // activates labels once, in one input-boundary batch. Two parties only, as
+  // adopt_authenticated_input is.
+  if constexpr (nP == 2) {
     const bool source_clear = party == nP;
     auto source = sess.protocol().process_input(&source_clear, 1, nP);
     const bool adopted_clear = true ^ (source.Lambda[0] != 0);
