@@ -62,6 +62,10 @@ struct PreparedMaterial {
   EvalChunk<nP> rows;                   // populated only at P1
   SecureWires<nP> target_inputs;        // fresh offline masks + garbling labels
   std::vector<unsigned char> bound;     // per input wire, set where bound at prepare (empty: none)
+  // Under WRK, output masks opened ahead of the run (AGMPCEngine::open_output_masks_early):
+  // this party's, in its recipient order. The run then opens none.
+  bool masks_open = false;
+  std::vector<unsigned char> early_mask;
   SecureWires<nP> output_static;        // authenticated bundles (+ garbler label0)
   std::vector<uint32_t> output_ids;
   bool linear = false;

@@ -341,6 +341,14 @@ labels during `prepare`, and `run_computation` takes no bits for it. The bound
 wires draw no masks: `planned_cots(computation, ssp, and_prep, bound)` leaves
 them out.
 
+For experts only, under `Auth::WRK`: `expert_open_output_masks(job)` opens a
+prepared job's output masks to their recipients before `run_computation`, which
+then opens none. emp-ag does not check that this is safe for the circuit. It is
+safe only if every output is an AND gate's output that depends on an input bound
+at run, such as a Public input. Otherwise a recipient can learn its output before
+the run, even from a job that never runs, and an XOR output's mask can give away
+input bits.
+
 ### Share mode
 
 A session can also hold Boolean values as aShares under its global keys and

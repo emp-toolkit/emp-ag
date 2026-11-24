@@ -602,6 +602,26 @@ public:
     proto_.abit->set_one_way_lock(true);
   }
 
+  // EXPERT USE ONLY: an ordinary Computation never calls it. Under WRK, opens the job's
+  // output masks to their recipients now, between prepare_computation and
+  // run_computation, so that each recipient holds its masks before the run; the run then
+  // opens none. emp-ag does not check that this is safe for the circuit; the caller
+  // vouches for it. Every output must be an AND gate's output that depends on an input
+  // bound only at run, such as a Public input: then no one can decode an output before
+  // the run, and each mask is a fresh random bit. With any other output, a recipient may
+  // learn its output early, even from a job that is never run, and an XOR output's mask
+  // can give away input bits. Not under KRRW, whose output masks stay closed until its
+  // output check.
+  void expert_open_output_masks(job_t &job) {
+    static_assert(Cfg::auth == ag::Auth::WRK,
+                  "AGMPCSession::expert_open_output_masks: WRK only");
+    expecting(holds_job_(job.slot_, JobKind::Computation),
+              "AGMPCSession::expert_open_output_masks: invalid, foreign, abandoned, or consumed job");
+    proto_.abit->set_one_way_lock(false);
+    engine_.open_output_masks_early(*job.slot_.material_, computation_open_to_(*job.io_));
+    proto_.abit->set_one_way_lock(true);
+  }
+
 private:
   // prepare_computation once the circuit is checked: the slots' parties and the job
   // state, before any traffic; then `prepare` (every preprocessing walk and the
@@ -722,12 +742,7 @@ private:
       }
     }
     const std::vector<uint32_t> out_off = circuit::output_slot_offsets(io_sig);
-    std::vector<std::vector<int>> open_to(nP + 1);
-    for (size_t s = 0; s < io_sig.outputs.size(); ++s)
-      for (int t = 1; t <= nP; ++t)
-        if (session::receives(io_sig.outputs[s], t))
-          for (uint32_t k = 0; k < io_sig.outputs[s].width; ++k)
-            open_to[(size_t)t].push_back((int)(out_off[s] + k));
+    const std::vector<std::vector<int>> open_to = computation_open_to_(io_sig);
 
     // Consume before the first online message: an aborted run is not retryable.
     std::unique_ptr<typename Engine::Material> material = take_job_(job.slot_);
@@ -1232,6 +1247,17 @@ private:
   }
 
   // The party that supplies each input wire, PUBLIC for a Public slot.
+  // Per party, the output positions it receives, in slot order.
+  static std::vector<std::vector<int>> computation_open_to_(const circuit::IoSignature &io) {
+    const std::vector<uint32_t> out_off = circuit::output_slot_offsets(io);
+    std::vector<std::vector<int>> open_to(nP + 1);
+    for (size_t s = 0; s < io.outputs.size(); ++s)
+      for (int t = 1; t <= nP; ++t)
+        if (session::receives(io.outputs[s], t))
+          for (uint32_t k = 0; k < io.outputs[s].width; ++k)
+            open_to[(size_t)t].push_back((int)(out_off[s] + k));
+    return open_to;
+  }
   static std::vector<int> computation_input_owners_(const circuit::IoSignature &io) {
     std::vector<int> owner;
     for (const circuit::InputRole &r : io.inputs)

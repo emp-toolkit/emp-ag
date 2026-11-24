@@ -236,3 +236,15 @@ add_np_variant(agmpc_share_eval_flip_tag_np3 ../agmpc_share_eval.cpp 3
 add_np_variant(agmpc_share_eval_flip_tag80_np3 ../agmpc_share_eval.cpp 3
                DEFS SHARE_NP=3 EMP_AG_SHARE_TAG_BYTES=10 EMP_AG_TEST_FLIP_TAG
                PASS_RE "share evaluation: MAC tag mismatch")
+
+# The output masks opened ahead of the run (../agmpc_computation_bound.cpp, expert_open_output_masks):
+# the last party flips its share of the first output, a Public one, so every honest party aborts
+# in that call, before the run.
+foreach(_np 2 3)
+    add_np_variant(agmpc_computation_bound_expert_flip_np${_np} ../agmpc_computation_bound.cpp ${_np}
+                   DEFS BOUND_NP=${_np} EMP_AG_GARBLE_AUTH=WRK BOUND_EXPERT BOUND_EXPERT_ONLY
+                        EMP_AG_TEST_FLIP_OUTPUT_SHARE
+                   PASS_RE "share-MAC hash mismatch")
+    set_tests_properties(agmpc_computation_bound_expert_flip_np${_np}
+                         PROPERTIES FAIL_REGULAR_EXPRESSION "P1 reached the run")
+endforeach()

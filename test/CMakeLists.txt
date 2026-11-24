@@ -296,16 +296,16 @@ add_np_variant(agmpc_share_eval_no_bank_np2 agmpc_share_eval.cpp 2 DEFS SHARE_NP
 
 # Party slots bound at prepare to share-mode values (prepare_computation(art, bound)), against
 # the circuits in the clear: at nP = 2, 3, 4 under each Auth, WRK with direct delivery, and on
-# the leaky ANDs from share_input and share_random alone. The misuses are refused before any
-# traffic.
+# the leaky ANDs from share_input and share_random alone; under WRK also with the output masks
+# opened ahead of the run. The misuses are refused before any traffic.
 foreach(_np 2 3 4)
     add_np_variant(agmpc_computation_bound_np${_np} agmpc_computation_bound.cpp ${_np}
                    DEFS BOUND_NP=${_np})
     add_np_variant(agmpc_computation_bound_wrk_np${_np} agmpc_computation_bound.cpp ${_np}
-                   DEFS BOUND_NP=${_np} EMP_AG_GARBLE_AUTH=WRK)
+                   DEFS BOUND_NP=${_np} EMP_AG_GARBLE_AUTH=WRK BOUND_EXPERT)
 endforeach()
 add_np_variant(agmpc_computation_bound_wrk_direct_np3 agmpc_computation_bound.cpp 3
-               DEFS BOUND_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT)
+               DEFS BOUND_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT BOUND_EXPERT)
 add_np_variant(agmpc_computation_bound_leaky_np3 agmpc_computation_bound.cpp 3
                DEFS BOUND_NP=3 BOUND_LEAKY)
 add_np_variant(agmpc_computation_bound_leaky_wrk_np2 agmpc_computation_bound.cpp 2
