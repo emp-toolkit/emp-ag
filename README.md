@@ -332,6 +332,15 @@ before that protocol releases anything that depends on them; `run_computation`
 runs it again before it opens anything. While the job is outstanding these two
 are the only way to the streams.
 
+At any party count, a Party slot can take share-mode values (below) at prepare:
+`prepare_computation(art, bound)`, or `(plan, io, bound)` for a composed program,
+takes one `const SharedWires *` per input slot, null for an ordinary slot. Each
+bound wire takes its value as its mask, with masked value 0, so nothing about
+the value is opened: no mask opens for the slot, the garblers send party 1 its
+labels during `prepare`, and `run_computation` takes no bits for it. The bound
+wires draw no masks: `planned_cots(computation, ssp, and_prep, bound)` leaves
+them out.
+
 ### Share mode
 
 A session can also hold Boolean values as aShares under its global keys and

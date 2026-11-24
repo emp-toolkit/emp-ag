@@ -192,7 +192,8 @@ add_np_variant(agmpc_computation_authenticated_check agmpc_computation_authentic
                DEFS AUTH_CASE=4 PASS_RE "check through AGMPCSession::check_cots")
 # A session's COT plan (AGMPCSession::planned_cots) is exactly what its streams draw: the
 # leaky ANDs, cut-and-choose over several batches, no AND gates, job draws at nP = 2, the
-# B13 LPN set on SilentFerret streams, and share mode planned from its draws.
+# B13 LPN set on SilentFerret streams, share mode planned from its draws, and a slot bound at
+# prepare.
 add_np_variant(agmpc_planned_cots_np2 agmpc_planned_cots.cpp 2 DEFS PLANNED_NP=2)
 add_np_variant(agmpc_planned_cots_np3 agmpc_planned_cots.cpp 3 DEFS PLANNED_NP=3)
 add_np_variant(agmpc_independent_triples_direct_np2 agmpc_independent_triples.cpp 2)
@@ -292,6 +293,29 @@ add_np_variant(agmpc_share_eval_tag80_np3 agmpc_share_eval.cpp 3
                DEFS SHARE_NP=3 EMP_AG_SHARE_TAG_BYTES=10)
 add_np_variant(agmpc_share_eval_no_bank_np2 agmpc_share_eval.cpp 2 DEFS SHARE_NP=2 SHARE_NO_BANK
                PASS_RE "keeps no triple bank")
+
+# Party slots bound at prepare to share-mode values (prepare_computation(art, bound)), against
+# the circuits in the clear: at nP = 2, 3, 4 under each Auth, WRK with direct delivery, and on
+# the leaky ANDs from share_input and share_random alone. The misuses are refused before any
+# traffic.
+foreach(_np 2 3 4)
+    add_np_variant(agmpc_computation_bound_np${_np} agmpc_computation_bound.cpp ${_np}
+                   DEFS BOUND_NP=${_np})
+    add_np_variant(agmpc_computation_bound_wrk_np${_np} agmpc_computation_bound.cpp ${_np}
+                   DEFS BOUND_NP=${_np} EMP_AG_GARBLE_AUTH=WRK)
+endforeach()
+add_np_variant(agmpc_computation_bound_wrk_direct_np3 agmpc_computation_bound.cpp 3
+               DEFS BOUND_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_GARBLE_DELIVERY=DIRECT)
+add_np_variant(agmpc_computation_bound_leaky_np3 agmpc_computation_bound.cpp 3
+               DEFS BOUND_NP=3 BOUND_LEAKY)
+add_np_variant(agmpc_computation_bound_leaky_wrk_np2 agmpc_computation_bound.cpp 2
+               DEFS BOUND_NP=2 BOUND_LEAKY EMP_AG_GARBLE_AUTH=WRK)
+add_np_variant(agmpc_computation_bound_width_np2 agmpc_computation_bound.cpp 2
+               DEFS BOUND_NP=2 BOUND_MISUSE=1 PASS_RE "a bound value differs from its slot's width")
+add_np_variant(agmpc_computation_bound_public_np2 agmpc_computation_bound.cpp 2
+               DEFS BOUND_NP=2 BOUND_MISUSE=2 PASS_RE "a bound slot must be a Party slot")
+add_np_variant(agmpc_computation_bound_foreign_np2 agmpc_computation_bound.cpp 2
+               DEFS BOUND_NP=2 BOUND_MISUSE=3 PASS_RE "wires from another session")
 
 # Fault-injection / adversarial tests: compile the production-guarded EMP_AG_TEST_FLIP_*
 # hooks and assert the protocol aborts.
