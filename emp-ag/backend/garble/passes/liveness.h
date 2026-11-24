@@ -11,8 +11,10 @@ namespace emp::ag {
 // Live liveness/layout: derive the slot-reuse layout from a re-executed circuit body,
 // with NO materialized BooleanProgram. It is a BooleanContext replayed TWICE over the
 // body source: phase 1 records persist / last_use / num_ands / the wire count; phase 2
-// applies the persist+freelist slot recycling (inputs / AND-outputs / declared outputs
-// persist; XOR/NOT fabric wires recycle freed slots) to produce phys / num_slots.
+// applies the persist+freelist slot recycling (inputs / AND-outputs / constants / declared
+// outputs persist; XOR/NOT fabric wires recycle freed slots) to produce phys / num_slots.
+// A constant persists because a later occurrence of the same value is the same wire
+// (the dedup below), possibly read after the gates that would otherwise recycle its slot.
 // public_bit DEDUPS constants to one
 // Const0 + one Const1 wire (c0_/c1_), exactly as emp-tool's RecordCtx does at compile
 // time and as the crypto passes do under ctx.dedup_consts on this (body) path — so
@@ -80,7 +82,7 @@ struct AGMPCLivenessPass {
     const uint32_t id = wid++;
     if (!phase2) {
       last_use.push_back(-1);
-      persist.push_back(is_and ? 1 : 0);
+      persist.push_back(is_and || is_const ? 1 : 0);   // a constant is reused by dedup
       if (!is_const) { last_use[a] = gi; if (!is_not) last_use[b] = gi; }
       if (is_and) ++num_ands;
     } else {

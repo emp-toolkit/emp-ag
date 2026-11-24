@@ -291,6 +291,32 @@ int main(int argc, char **argv) {
     run_and_check(sess, a, random_inputs(rng, a.io), "Public inputs only");
   }
 
+  // A constant that appears twice in a dense program: the second is the same wire as the
+  // first, so its slot must keep the constant after the gates between them.
+  {
+    auto p = std::make_shared<BooleanProgram>();
+    p->num_inputs = 2;   // a from P1, b from the last party
+    p->num_wires = 7;
+    const auto gate = [](uint32_t out, Op op, uint32_t in0 = 0, uint32_t in1 = 0) {
+      Gate g;
+      g.out = out;
+      g.op = op;
+      g.in0 = in0;
+      g.in1 = in1;
+      return g;
+    };
+    p->gates = {gate(2, Op::Const1), gate(3, Op::Xor, 0, 2), gate(4, Op::Xor, 1, 0),
+                gate(5, Op::Const1), gate(6, Op::And, 4, 3)};
+    p->outputs = {6, 3};
+    ComputationArtifact a;
+    a.program = std::move(p);
+    a.io.inputs = {{1, InputKind::Party, 1}, {1, InputKind::Party, nP}};
+    a.io.outputs = {{2, OutputKind::Public, PUBLIC}};
+    for (int t = 0; t < 4; ++t)
+      run_and_check(sess, a, {emp::session::Bits{(uint8_t)(t & 1)}, emp::session::Bits{(uint8_t)(t >> 1)}},
+                    "a repeated constant");
+  }
+
   // No inputs at all.
   {
     std::mt19937_64 rng(3001);
