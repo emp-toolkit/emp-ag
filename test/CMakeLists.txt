@@ -316,6 +316,9 @@ add_np_variant(agmpc_computation_bound_public_np2 agmpc_computation_bound.cpp 2
                DEFS BOUND_NP=2 BOUND_MISUSE=2 PASS_RE "a bound slot must be a Party slot")
 add_np_variant(agmpc_computation_bound_foreign_np2 agmpc_computation_bound.cpp 2
                DEFS BOUND_NP=2 BOUND_MISUSE=3 PASS_RE "wires from another session")
+add_np_variant(agmpc_computation_bound_key_closed_np2 agmpc_computation_bound.cpp 2
+               DEFS BOUND_NP=2 BOUND_MISUSE=4 EMP_AG_GARBLE_AUTH=WRK
+               PASS_RE "AGMPCSession::expert_output_key")
 
 # Fault-injection / adversarial tests: compile the production-guarded EMP_AG_TEST_FLIP_*
 # hooks and assert the protocol aborts.

@@ -347,7 +347,12 @@ then opens none. emp-ag does not check that this is safe for the circuit. It is
 safe only if every output is an AND gate's output that depends on an input bound
 at run, such as a Public input. Otherwise a recipient can learn its output before
 the run, even from a job that never runs, and an XOR output's mask can give away
-input bits.
+input bits. With the masks open, `expert_output_key(job, pos, value, domain)`
+gives a garbler a key from its label for output `pos` taking `value`, and
+`run_computation(job, bindings, positions, domain, keys)` gives party 1 its keys
+from the labels it ends with, one per garbler. Garbler `j`'s key equals party 1's
+key from `j` exactly when the output takes that value, so a payload encrypted under
+it opens at party 1 only for that output. No `Delta` leaves the session.
 
 ### Share mode
 

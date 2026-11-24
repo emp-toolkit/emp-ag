@@ -34,7 +34,9 @@
 #include "emp-ag/backend/common/runtime.h"                  // ag::lanes_for (production lane count)
 #include <atomic>                                    // session serials (SharedWires)
 #include <memory>                                    // owned NetIOMP / NetIOMPGroup
+#include <string_view>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -565,6 +567,22 @@ public:
     return run_computation_(std::move(job), b, nullptr);
   }
 
+  // run_computation that also gives P1 its keys from output labels (expert_output_key):
+  // keys[k][j] for output position positions[k] and garbler j in [2, nP]. Left empty at
+  // the garblers. WRK only.
+  session::RawResult run_computation(job_t &&job, const session::RawBindings &b,
+                                     const std::vector<int> &positions, std::string_view domain,
+                                     std::vector<std::array<block, nP + 1>> &keys) {
+    static_assert(Cfg::auth == ag::Auth::WRK, "AGMPCSession::run_computation with keys: WRK only");
+    expecting(job.io_ != nullptr, "AGMPCSession::run_computation: invalid, foreign, abandoned, or consumed job");
+    uint64_t n_out = 0;
+    for (const circuit::OutputRole &r : job.io_->outputs) n_out += r.width;
+    for (int pos : positions)
+      expecting(pos >= 0 && (uint64_t)pos < n_out,
+                "AGMPCSession::run_computation: a key's output position is out of range");
+    return run_computation_(std::move(job), b, nullptr, &positions, domain, &keys);
+  }
+
   // run_computation, with some Party slots bound to values this session already holds
   // authenticated: aShare bundles under its global keys, for example values another
   // protocol proved on COTs from draw_cots(job, ...) below. authenticated[s] is null for
@@ -620,6 +638,35 @@ public:
     proto_.abit->set_one_way_lock(false);
     engine_.open_output_masks_early(*job.slot_.material_, computation_open_to_(*job.io_));
     proto_.abit->set_one_way_lock(true);
+  }
+
+  // EXPERT USE ONLY, with expert_open_output_masks: keys from output labels under WRK,
+  // with every Delta kept inside its session (backend/garble/output_key.h). At garbler
+  // party(), its key for output position `pos` taking `value`: a hash of its label for
+  // that value under `domain`. P1 gets its keys, one per garbler, from the labels it ends
+  // the run with (run_computation with keys); garbler j's key for `value` equals P1's key
+  // from j exactly when the output is `value`, so a payload a garbler encrypts under it
+  // opens at P1 only for that output. A garbler takes its key from the prepared job, once
+  // the mask of pos is open to it (it must receive pos).
+  block expert_output_key(const job_t &job, int pos, int value, std::string_view domain) const {
+    static_assert(Cfg::auth == ag::Auth::WRK, "AGMPCSession::expert_output_key: WRK only");
+    expecting(holds_job_(job.slot_, JobKind::Computation),
+              "AGMPCSession::expert_output_key: invalid, foreign, abandoned, or consumed job");
+    expecting(proto_.party != 1,
+              "AGMPCSession::expert_output_key: P1 takes its keys from run_computation");
+    expecting(value == 0 || value == 1, "AGMPCSession::expert_output_key: a value is 0 or 1");
+    const typename Engine::Material &m = *job.slot_.material_;
+    expecting(m.masks_open,
+              "AGMPCSession::expert_output_key: the output masks are not open (expert_open_output_masks)");
+    const std::vector<std::vector<int>> open_to = computation_open_to_(*job.io_);
+    const std::vector<int> &mine = open_to[(size_t)proto_.party];
+    const auto it = std::find(mine.begin(), mine.end(), pos);
+    expecting(it != mine.end(), "AGMPCSession::expert_output_key: this party does not receive that output");
+    const unsigned char lambda = (unsigned char)(m.early_mask[(size_t)(it - mine.begin())] & 1);
+    const block label = m.output_static.label0[(size_t)pos] ^
+                        (select_mask[(value ^ lambda) & 1] & proto_.Delta);
+    return ag::output_label_key(proto_.session_id, domain, (uint64_t)pos, (uint64_t)proto_.party,
+                                label);
   }
 
 private:
@@ -678,7 +725,10 @@ private:
   }
 
   session::RawResult run_computation_(job_t &&job, const session::RawBindings &b_in,
-                                      const std::vector<const AShareBundle<nP> *> *authenticated) {
+                                      const std::vector<const AShareBundle<nP> *> *authenticated,
+                                      const std::vector<int> *key_positions = nullptr,
+                                      std::string_view key_domain = {},
+                                      std::vector<std::array<block, nP + 1>> *keys = nullptr) {
     expecting(holds_job_(job.slot_, JobKind::Computation),
               "AGMPCSession::run_computation: invalid, foreign, abandoned, or consumed job");
     const std::shared_ptr<const circuit::IoSignature> io = job.io_;
@@ -751,7 +801,7 @@ private:
     const std::vector<unsigned char> bits = engine_.run_computation(
         *material, owner, lambda, open_to,
         authenticated != nullptr ? source.data() : nullptr,
-        authenticated != nullptr ? &from_source : nullptr);
+        authenticated != nullptr ? &from_source : nullptr, key_positions, key_domain, keys);
 
     session::RawResult r;
     r.outputs.resize(io_sig.outputs.size());
