@@ -79,6 +79,12 @@ inline double cut_and_choose_batch_target(int ssp, int64_t batch) {
   return (double)ssp + std::log2((double)batch) + std::log2((double)batch + 1);
 }
 
+// The target of every batch of a session that declares its batch count up front: the
+// session's 2^-ssp split evenly, 2^-ssp / batches each.
+inline double cut_and_choose_declared_target(int ssp, int64_t batches) {
+  return (double)ssp + std::log2((double)batches);
+}
+
 // The parameters with the fewest candidates for ell outputs whose two bounds sum to at
 // most 2^-target. The cut is FKOS15's 3 log2 t (at least T), far more than the
 // all-incorrect case needs; its exact term is part of the correctness bound.

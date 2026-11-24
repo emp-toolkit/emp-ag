@@ -50,9 +50,11 @@
 // nP == 2 there is no second honest view.
 //
 // Outputs are banked: take(n) serves n triples, generating batches of `batch` outputs as
-// the bank runs dry. Batch i of the session is held to 2^-ssp / (i (i + 1)). A batch keeps
-// the MAC and key of all 3 pop candidates toward every peer until its outputs are built,
-// 32 (nP - 1) bytes per aShare, and pop is about B T times the batch.
+// the bank runs dry. Batch i of the session is held to 2^-ssp / (i (i + 1)), or, when the
+// session declares how many batches it will run, each to 2^-ssp / batches, and a batch
+// beyond the declared count is refused. A batch keeps the MAC and key of all 3 pop
+// candidates toward every peer until its outputs are built, 32 (nP - 1) bytes per aShare,
+// and pop is about B T times the batch.
 //
 // CutAndChoosePrep (below) computes the AND gates' products from the bank
 // (triple/and_prep.h): it takes a triple per gate, draws the call's coin, and runs Beaver
@@ -88,15 +90,17 @@ public:
   static constexpr bool kKings = nP > 2 && !OpenCheck::kPerPeerOperands;
 
   // `abit` mints the candidates; its Delta is the triples' Delta. All parties construct
-  // the generator with the same ssp and batch and call take() at the same points.
+  // the generator with the same ssp, batch and declared batch count (`batches`, 0 for the
+  // per-batch schedule) and call take() at the same points.
   CutAndChooseTriples(NetIOMP<nP> *io, ThreadPool *pool, int party, AShareSource<nP> &abit,
                       block session_id, int ssp, int64_t batch,
-                      NetIOMPGroup<nP> *grp = nullptr)
+                      NetIOMPGroup<nP> *grp = nullptr, int64_t batches = 0)
       : io_(io), pool_(pool), party_(party), abit_(abit), Delta_(abit.delta()),
         sid_(RO("emp-ag:cut-and-choose", session_id).squeeze_block()),
-        ssp_(checked_statistical_security(ssp)), batch_(batch), grp_(grp),
+        ssp_(checked_statistical_security(ssp)), batch_(batch), declared_(batches), grp_(grp),
         check_(make_check_(io, pool, party, abit.delta(), sid_, &prg_, grp)) {
     expecting(batch >= 1, "cut-and-choose: batch must be positive");
+    expecting(batches >= 0, "cut-and-choose: a negative declared batch count");
   }
 
   CutAndChooseTriples(const CutAndChooseTriples &) = delete;
@@ -127,13 +131,17 @@ public:
   }
 
   // The share draws a fresh bank makes to serve its first n triples at statistical
-  // security ssp: 3 pop for each batch generate_() runs, batch i at its own target.
-  static std::vector<int64_t> draws(int64_t n, int ssp, int64_t batch) {
+  // security ssp: 3 pop for each batch generate_() runs, batch i at its own target (all at
+  // the declared target when `batches` > 0).
+  static std::vector<int64_t> draws(int64_t n, int ssp, int64_t batch, int64_t batches = 0) {
     expecting(n >= 0 && batch >= 1, "cut-and-choose: negative count or non-positive batch");
+    expecting(batches >= 0, "cut-and-choose: a negative declared batch count");
     const int s = checked_statistical_security(ssp);
     std::vector<int64_t> out;
-    for (int64_t i = 1, banked = 0; banked < n; ++i, banked += batch)
-      out.push_back(3 * cut_and_choose_params(batch, cut_and_choose_batch_target(s, i)).pop);
+    for (int64_t i = 1, banked = 0; banked < n; ++i, banked += batch) {
+      expecting(batches == 0 || i <= batches, "cut-and-choose: more batches than declared");
+      out.push_back(3 * cut_and_choose_params(batch, target_(s, i, batches)).pop);
+    }
     return out;
   }
 
@@ -157,6 +165,7 @@ private:
   block sid_;
   int ssp_;
   int64_t batch_;
+  int64_t declared_;   // the declared batch count, 0 for the per-batch schedule
   NetIOMPGroup<nP> *grp_;
   OpenCheck check_;
   CutAndChooseParams params_;
@@ -164,6 +173,11 @@ private:
   // The bank: bank_ell_ triples, a|b|c at stride bank_ell_; [bank_pos_, bank_ell_) unused.
   BlockVec bank_mac_[nP + 1], bank_key_[nP + 1];
   int64_t bank_ell_ = 0, bank_pos_ = 0;
+
+  static double target_(int ssp, int64_t batch, int64_t batches) {
+    return batches > 0 ? cut_and_choose_declared_target(ssp, batches)
+                       : cut_and_choose_batch_target(ssp, batch);
+  }
 
   static OpenCheck make_check_(NetIOMP<nP> *io, ThreadPool *pool, int party, block Delta,
                                block sid, PRG *prg, NetIOMPGroup<nP> *grp) {
@@ -357,8 +371,8 @@ private:
 
   void generate_(int64_t ell) {
     ++batches_;
-    const CutAndChooseParams P =
-        cut_and_choose_params(ell, cut_and_choose_batch_target(ssp_, batches_));
+    expecting(declared_ == 0 || batches_ <= declared_, "cut-and-choose: more batches than declared");
+    const CutAndChooseParams P = cut_and_choose_params(ell, target_(ssp_, batches_, declared_));
     expecting(P.pop > 0, "cut-and-choose: no parameters meet the batch's statistical target");
     expecting(3 * P.pop <= (int64_t)INT_MAX, "cut-and-choose: batch too large for one draw");
     params_ = P;
@@ -606,13 +620,14 @@ private:
 template <int nP, class OpenCheck = DefaultOpenCheck<nP>>
 class CutAndChoosePrep : public AndPrep<nP> {
 public:
-  // Triples generated `batch` at a time.
-  CutAndChoosePrep(const AndPrepContext<nP> &ctx, int64_t batch)
+  // Triples generated `batch` at a time, over `batches` declared batches (0: the
+  // per-batch schedule; CutAndChooseTriples).
+  CutAndChoosePrep(const AndPrepContext<nP> &ctx, int64_t batch, int64_t batches = 0)
       : mesh_(ctx.io, ctx.grp, ctx.pool, ctx.party), party_(ctx.party),
         sid_(ctx.session_id), abit_(*ctx.abit), Delta_(abit_.delta()),
         check_(ctx.io, ctx.pool, ctx.party, Delta_, ctx.session_id, &prg_, ctx.grp),
         bank_(ctx.io, ctx.pool, ctx.party, abit_, ctx.session_id,
-              checked_statistical_security(ctx.ssp), batch, ctx.grp),
+              checked_statistical_security(ctx.ssp), batch, ctx.grp, batches),
         beaver_(mesh_, Delta_) {}
 
   void validate(int64_t n) override {
@@ -658,18 +673,22 @@ private:
   BlockVec mac_[nP + 1], key_[nP + 1];   // the call's triples, a | b | c
 };
 
-// The factory for CutAndChoosePrep with batches of `batch` (AGMPCSession's constructor
-// takes one). Its id carries the batch, since the triples served depend on it. A call
+// The factory for CutAndChoosePrep with batches of `batch`, and `batches` of them declared
+// up front (0: the per-batch schedule), which AGMPCSession's constructor takes. Its id
+// carries the batch and a declared count, since the triples served depend on them. A call
 // run(n) takes n triples from the bank, so its draws are the bank's.
 template <int nP>
-AndPrepFactory<nP> cut_and_choose_prep(int64_t batch) {
+AndPrepFactory<nP> cut_and_choose_prep(int64_t batch, int64_t batches = 0) {
   expecting(batch >= 1, "cut-and-choose: batch must be positive");
-  return {"emp-ag:cut-and-choose:" + std::to_string(batch),
-          [batch](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
-            return std::make_unique<CutAndChoosePrep<nP>>(c, batch);
+  expecting(batches >= 0, "cut-and-choose: a negative declared batch count");
+  std::string id = "emp-ag:cut-and-choose:" + std::to_string(batch);
+  if (batches > 0) id += ":" + std::to_string(batches);
+  return {std::move(id),
+          [batch, batches](const AndPrepContext<nP> &c) -> std::unique_ptr<AndPrep<nP>> {
+            return std::make_unique<CutAndChoosePrep<nP>>(c, batch, batches);
           },
-          [batch](int64_t n, int ssp) {
-            return CutAndChooseTriples<nP>::draws(n, ssp, batch);
+          [batch, batches](int64_t n, int ssp) {
+            return CutAndChooseTriples<nP>::draws(n, ssp, batch, batches);
           }};
 }
 

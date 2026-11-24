@@ -123,6 +123,8 @@ set(AG_TEST_CNC_BATCH "$<IF:$<CONFIG:Debug>,1024,16384>")
 add_np_variant(agmpc_cut_and_choose_np2 agmpc_cut_and_choose.cpp 2 DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS)
 add_np_variant(agmpc_cut_and_choose_np3 agmpc_cut_and_choose.cpp 3 DEFS CNC_NP=3 EMP_AG_DEBUG_CHECKS)
 add_np_variant(agmpc_cut_and_choose_np4 agmpc_cut_and_choose.cpp 4 DEFS CNC_NP=4 EMP_AG_DEBUG_CHECKS)
+add_np_variant(agmpc_cut_and_choose_over_declared_np2 agmpc_cut_and_choose.cpp 2
+               DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS CNC_OVER_DECLARED PASS_RE "more batches than declared")
 add_np_variant(agmpc_cut_and_choose_symmetric_np2 agmpc_cut_and_choose.cpp 2
                DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS EMP_AG_OPEN_CHECK_SYMMETRIC)
 add_np_variant(agmpc_cut_and_choose_pairwise_np3 agmpc_cut_and_choose.cpp 3
