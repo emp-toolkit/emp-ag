@@ -166,7 +166,7 @@ void AGMPCProtocol<nP, Cfg>::draw_and_seed(ComputeCtx &ctx, Source &source) {
     if (party == 1 && num_ands > 0) {
       ctx.ev_tg.resize((size_t)3 * (nP - 1) * num_ands);
       pass.tg_ = ctx.ev_tg.data();
-      if constexpr (Cfg::auth == Auth::KRRW) {
+      if (opts.auth == Auth::KRRW) {
         ctx.ev_mu.resize((size_t)3 * num_ands);
         pass.mu_ = ctx.ev_mu.data();
       } else {
@@ -201,18 +201,20 @@ void AGMPCProtocol<nP, Cfg>::draw_and_seed(ComputeCtx &ctx, Source &source) {
     unsigned char *aub = ctx.ev_auth_bits.data();
     const block D = Delta;
     const AShareBundle<nP> *sig = ctx.sigma.data();
-    ag::parallel_for(pool, num_ands, [&, tg, mu, au, aub, D, sig](int lo, int hi) {
-      for (int ai = lo; ai < hi; ++ai) {
-        block *r = tg + (size_t)3 * (nP - 1) * ai;
-        for (int i = 2; i <= nP; ++i)
-          r[3 * (i - 2) + 2] = r[3 * (i - 2) + 2] ^ sig[ai].mac(i - 2);
-        if constexpr (Cfg::auth == Auth::KRRW) {
-          mu[3 * ai + 0] = mu[3 * ai + 0] ^ ag::spdz_mac_share(sig[ai], D);
-        } else {
-          au[3 * ai + 2] = au[3 * ai + 2] ^ peer_key_sum(sig[ai]);
-          aub[ai] = (unsigned char)(aub[ai] ^ (own_bit(sig[ai]) << 2));
+    dispatch_auth(opts.auth, [&]<Auth A>() {
+      ag::parallel_for(pool, num_ands, [&, tg, mu, au, aub, D, sig](int lo, int hi) {
+        for (int ai = lo; ai < hi; ++ai) {
+          block *r = tg + (size_t)3 * (nP - 1) * ai;
+          for (int i = 2; i <= nP; ++i)
+            r[3 * (i - 2) + 2] = r[3 * (i - 2) + 2] ^ sig[ai].mac(i - 2);
+          if constexpr (A == Auth::KRRW) {
+            mu[3 * ai + 0] = mu[3 * ai + 0] ^ ag::spdz_mac_share(sig[ai], D);
+          } else {
+            au[3 * ai + 2] = au[3 * ai + 2] ^ peer_key_sum(sig[ai]);
+            aub[ai] = (unsigned char)(aub[ai] ^ (own_bit(sig[ai]) << 2));
+          }
         }
-      }
+      });
     });
   }
   // The half-gate hash seed: one domain-separated squeeze of the coin of the AND gates'

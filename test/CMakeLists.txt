@@ -50,12 +50,12 @@ add_np_variant(ashare_test_np4 ashare_test.cpp 4 DEFS ASHARE_NP=4)
 # the production owning ctor; agmpc_wire_reuse also hosts the three-strategy
 # (body / compiled / run_artifact) agreement block.
 add_test_case_with_run(program_engine_test)
-add_test_case_with_run(agmpc_artifact)
+add_np_variant(agmpc_artifact agmpc_artifact.cpp 3)
 add_test_case_with_run(agmpc_rounds)
-add_test_case_with_run(agmpc_chain)
-add_test_case_with_run(agmpc_reactive)
-add_test_case_with_run(agmpc_wire_reuse)
-add_test_case_with_run(agmpc_compose)
+add_np_variant(agmpc_chain agmpc_chain.cpp 3)
+add_np_variant(agmpc_reactive agmpc_reactive.cpp 3)
+add_np_variant(agmpc_wire_reuse agmpc_wire_reuse.cpp 3)
+add_np_variant(agmpc_compose agmpc_compose.cpp 3)
 
 # Single-process circuit analysis (no parties). The Delta bit-pinning property
 # bit1(+_p Delta_p)=1 is checked by a static_assert next to the pinning in
@@ -97,24 +97,24 @@ add_np_variant(agmpc_golden_pairwise_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN
 add_np_variant(agmpc_golden_direct_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 ARGS delivery=direct)
 add_np_variant(agmpc_golden_direct_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 ARGS delivery=direct)
 add_np_variant(agmpc_prepared_direct_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3 ARGS delivery=direct)
-add_np_variant(agmpc_golden_wrk_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2 EMP_AG_GARBLE_AUTH=WRK)
-add_np_variant(agmpc_golden_wrk_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 EMP_AG_GARBLE_AUTH=WRK)
-add_np_variant(agmpc_golden_wrk_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 EMP_AG_GARBLE_AUTH=WRK)
+add_np_variant(agmpc_golden_wrk_np2 agmpc_golden_snapshot.cpp 2 DEFS GOLDEN_NP=2 ARGS auth=wrk)
+add_np_variant(agmpc_golden_wrk_np3 agmpc_golden_snapshot.cpp 3 DEFS GOLDEN_NP=3 ARGS auth=wrk)
+add_np_variant(agmpc_golden_wrk_np4 agmpc_golden_snapshot.cpp 4 DEFS GOLDEN_NP=4 ARGS auth=wrk)
 add_np_variant(agmpc_golden_wrk_direct_np3 agmpc_golden_snapshot.cpp 3
-               DEFS GOLDEN_NP=3 EMP_AG_GARBLE_AUTH=WRK ARGS delivery=direct)
+               DEFS GOLDEN_NP=3 ARGS auth=wrk delivery=direct)
 add_np_variant(agmpc_golden_wrk_direct_np4 agmpc_golden_snapshot.cpp 4
-               DEFS GOLDEN_NP=4 EMP_AG_GARBLE_AUTH=WRK ARGS delivery=direct)
-add_np_variant(agmpc_prepared_wrk_np2 agmpc_prepared.cpp 2 DEFS PREP_NP=2 EMP_AG_GARBLE_AUTH=WRK)
-add_np_variant(agmpc_prepared_wrk_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3 EMP_AG_GARBLE_AUTH=WRK)
-add_np_variant(agmpc_linear_wrk_np3 agmpc_linear.cpp 3 DEFS LIN_NP=3 EMP_AG_GARBLE_AUTH=WRK)
+               DEFS GOLDEN_NP=4 ARGS auth=wrk delivery=direct)
+add_np_variant(agmpc_prepared_wrk_np2 agmpc_prepared.cpp 2 DEFS PREP_NP=2 ARGS auth=wrk)
+add_np_variant(agmpc_prepared_wrk_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3 ARGS auth=wrk)
+add_np_variant(agmpc_linear_wrk_np3 agmpc_linear.cpp 3 DEFS LIN_NP=3 ARGS auth=wrk)
 # Three-party runs that chain (an AND-derived output of one run is an input of the next,
 # revealed to every party), compose and reuse wires, under WRK and under direct delivery.
 foreach(_t agmpc_chain agmpc_reactive agmpc_compose agmpc_wire_reuse agmpc_artifact)
-    add_np_variant(${_t}_wrk ${_t}.cpp 3 DEFS EMP_AG_GARBLE_AUTH=WRK)
+    add_np_variant(${_t}_wrk ${_t}.cpp 3 ARGS auth=wrk)
 endforeach()
 foreach(_t agmpc_chain agmpc_reactive)
     add_np_variant(${_t}_direct ${_t}.cpp 3 ARGS delivery=direct)
-    add_np_variant(${_t}_wrk_direct ${_t}.cpp 3 DEFS EMP_AG_GARBLE_AUTH=WRK ARGS delivery=direct)
+    add_np_variant(${_t}_wrk_direct ${_t}.cpp 3 ARGS auth=wrk delivery=direct)
 endforeach()
 
 # Cut-and-choose triples (backend/triple/cut_and_choose_triples.h). The generator alone,
@@ -242,14 +242,9 @@ _apply_strict_memaccess(test_trace_np3)
 # output to the oracle.
 foreach(_agmpc2 agmpc_context_api agmpc_direct_chunks agmpc_program_replay agmpc_body_replay_equiv
                 agmpc_session_id)
-    add_executable(test_${_agmpc2} ${_agmpc2}.cpp)
-    target_link_libraries(test_${_agmpc2} PRIVATE emp-ag::emp-ag)
-    _apply_strict_memaccess(test_${_agmpc2})
-    add_test(NAME ${_agmpc2}
-             COMMAND ${PROJECT_SOURCE_DIR}/runN 2 $<TARGET_FILE:test_${_agmpc2}>
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    add_np_variant(${_agmpc2} ${_agmpc2}.cpp 2)
 endforeach()
-# The session id of a build that chose a non-default open checker is bound to it.
+# The session id of a session that chose a non-default open checker is bound to it.
 add_np_variant(agmpc_session_id_open_check agmpc_session_id.cpp 2 ARGS open_check=symmetric)
 
 # Circuit mode (Computation): the knob matrix, Auth x Delivery x triple source x nP
@@ -259,10 +254,10 @@ foreach(_np 2 3 4)
     foreach(_auth KRRW WRK)
         foreach(_src leaky cnc)
             string(TOLOWER "agmpc_computation_${_auth}_${_src}_np${_np}" _name)
-            set(_defs COMP_NP=${_np} EMP_AG_GARBLE_AUTH=${_auth})
-            set(_args "")
+            set(_defs COMP_NP=${_np})
+            string(TOLOWER "auth=${_auth}" _args)
             if(_src STREQUAL "cnc")
-                set(_args cnc=${AG_TEST_CNC_BATCH})
+                list(APPEND _args cnc=${AG_TEST_CNC_BATCH})
             endif()
             add_np_variant(${_name} agmpc_computation.cpp ${_np} DEFS ${_defs} ARGS ${_args})
             if(NOT _np EQUAL 2)
@@ -274,7 +269,7 @@ foreach(_np 2 3 4)
 endforeach()
 add_np_variant(agmpc_computation_ssp60_np3 agmpc_computation.cpp 3 DEFS COMP_NP=3 ARGS ssp=60)
 add_np_variant(agmpc_computation_wrk_ssp60_np2 agmpc_computation.cpp 2
-               DEFS COMP_NP=2 EMP_AG_GARBLE_AUTH=WRK ARGS ssp=60)
+               DEFS COMP_NP=2 ARGS auth=wrk ssp=60)
 add_np_variant(agmpc_computation_busy_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 ARGS busy
                PASS_RE "a Computation job is outstanding")
 add_np_variant(agmpc_computation_bad_owner_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 ARGS bad_owner
@@ -312,22 +307,22 @@ foreach(_np 2 3 4)
     add_np_variant(agmpc_computation_bound_np${_np} agmpc_computation_bound.cpp ${_np}
                    DEFS BOUND_NP=${_np})
     add_np_variant(agmpc_computation_bound_wrk_np${_np} agmpc_computation_bound.cpp ${_np}
-                   DEFS BOUND_NP=${_np} EMP_AG_GARBLE_AUTH=WRK BOUND_EXPERT)
+                   DEFS BOUND_NP=${_np} ARGS auth=wrk expert)
 endforeach()
 add_np_variant(agmpc_computation_bound_wrk_direct_np3 agmpc_computation_bound.cpp 3
-               DEFS BOUND_NP=3 EMP_AG_GARBLE_AUTH=WRK BOUND_EXPERT ARGS delivery=direct)
+               DEFS BOUND_NP=3 ARGS auth=wrk expert delivery=direct)
 add_np_variant(agmpc_computation_bound_leaky_np3 agmpc_computation_bound.cpp 3
-               DEFS BOUND_NP=3 BOUND_LEAKY)
+               DEFS BOUND_NP=3 ARGS leaky)
 add_np_variant(agmpc_computation_bound_leaky_wrk_np2 agmpc_computation_bound.cpp 2
-               DEFS BOUND_NP=2 BOUND_LEAKY EMP_AG_GARBLE_AUTH=WRK)
+               DEFS BOUND_NP=2 ARGS leaky auth=wrk)
 add_np_variant(agmpc_computation_bound_width_np2 agmpc_computation_bound.cpp 2
-               DEFS BOUND_NP=2 BOUND_MISUSE=1 PASS_RE "a bound value differs from its slot's width")
+               DEFS BOUND_NP=2 ARGS misuse=1 PASS_RE "a bound value differs from its slot's width")
 add_np_variant(agmpc_computation_bound_public_np2 agmpc_computation_bound.cpp 2
-               DEFS BOUND_NP=2 BOUND_MISUSE=2 PASS_RE "a bound slot must be a Party slot")
+               DEFS BOUND_NP=2 ARGS misuse=2 PASS_RE "a bound slot must be a Party slot")
 add_np_variant(agmpc_computation_bound_foreign_np2 agmpc_computation_bound.cpp 2
-               DEFS BOUND_NP=2 BOUND_MISUSE=3 PASS_RE "wires from another session")
+               DEFS BOUND_NP=2 ARGS misuse=3 PASS_RE "wires from another session")
 add_np_variant(agmpc_computation_bound_key_closed_np2 agmpc_computation_bound.cpp 2
-               DEFS BOUND_NP=2 BOUND_MISUSE=4 EMP_AG_GARBLE_AUTH=WRK
+               DEFS BOUND_NP=2 ARGS misuse=4 auth=wrk
                PASS_RE "AGMPCSession::expert_output_key")
 
 # Fault-injection / adversarial tests: turn on the test hooks and assert the protocol

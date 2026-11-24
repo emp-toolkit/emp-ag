@@ -18,7 +18,8 @@ endfunction()
 # runN launcher at the repo root and, if PASS_RE is given, gate on that regex (an abort
 # message, for a test that must abort).
 #   DEFS   the executable's PRIVATE compile definitions. Every variant with the same source
-#          and DEFS shares one executable, test_<name of the first such variant>.
+#          and DEFS shares one executable: test_<source name>, or test_<source name>_np<nP>
+#          when it has DEFS.
 #   HOOKS  the test hooks (emp-ag/backend/common/test_hooks.h) the run turns on, through the
 #          EMP_AG_TEST_HOOKS environment variable. Without a hooks build
 #          (EMP_AG_TEST_HOOKS=OFF) a variant with hooks is not added.
@@ -35,7 +36,15 @@ function(add_np_variant _name _src _np)
     string(SHA1 _key "${_path}|${_defs}")
     get_property(_exe GLOBAL PROPERTY "AG_NP_VARIANT_EXE_${_key}")
     if(NOT _exe)
-        set(_exe test_${_name})
+        get_filename_component(_stem "${_src}" NAME_WE)
+        if(NV_DEFS)
+            set(_exe test_${_stem}_np${_np})
+        else()
+            set(_exe test_${_stem})
+        endif()
+        if(TARGET ${_exe})
+            message(FATAL_ERROR "add_np_variant(${_name}): ${_exe} is already built with other DEFS")
+        endif()
         add_executable(${_exe} ${_src})
         target_link_libraries(${_exe} PRIVATE emp-ag::emp-ag)
         if(NV_DEFS)

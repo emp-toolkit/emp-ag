@@ -158,7 +158,7 @@ public:
     // fails; likewise on the build options that change the wire, on ssp, on the AND gates'
     // protocol, every one of which but the leaky ANDs binds its id, and on supplied COT
     // streams.
-    session_id = bind_garble_options<nP>(session_id, Cfg::auth, opts.delivery, Cfg::cot, Cfg::lpn);
+    session_id = bind_garble_options<nP>(session_id, opts.auth, opts.delivery, Cfg::cot, Cfg::lpn);
     session_id = bind_build_options<nP, Cfg>(session_id, opts);
     session_id = bind_ssp(session_id, ssp);
     const AndPrepFactory<nP> prep = make_and_prep.make ? make_and_prep : default_and_prep<nP>(opts);

@@ -200,7 +200,7 @@ class AGMPCEngine {
     PreparedRunResult result;
     result.bound_inputs = std::move(material.target_inputs);
     result.outputs = evaluate_stored_(material, /*linear_masks=*/true);
-    if constexpr (Cfg::auth == Auth::WRK) {
+    if (mpc->opts.auth == Auth::WRK) {
       if (st.num_ands > 0) mpc->deliver_output_masks_(result.outputs);
       AG_PHASE("deliver_output_masks");
     }
@@ -225,7 +225,7 @@ class AGMPCEngine {
   // ahead of its run, which then opens none. `open_to` must be the run's. Whether that is
   // safe depends on the circuit (AGMPCSession::expert_open_output_masks).
   void open_output_masks_early(Material &material, const std::vector<std::vector<int>> &open_to) {
-    static_assert(Cfg::auth == Auth::WRK, "open_output_masks_early: WRK only");
+    expecting(mpc->opts.auth == Auth::WRK, "open_output_masks_early: WRK only");
     expecting(material.live(), "open_output_masks_early: prepared material was already consumed");
     expecting(!material.masks_open, "open_output_masks_early: the output masks are already open");
     material.early_mask = open_output_masks_(material.output_static.wire_bundle, open_to);
@@ -274,7 +274,7 @@ class AGMPCEngine {
     load_bound_prepared_inputs_(st, material.target_inputs);
 
     std::vector<unsigned char> mask;   // this party's opened output masks, in open_to[party] order
-    if constexpr (Cfg::auth == Auth::WRK)
+    if (mpc->opts.auth == Auth::WRK)
       mask = material.masks_open ? std::move(material.early_mask)
                                  : open_output_masks_(material.output_static.wire_bundle, open_to);
 
@@ -292,9 +292,9 @@ class AGMPCEngine {
         }
       }
     }
-    if constexpr (Cfg::auth == Auth::KRRW)
+    if (mpc->opts.auth == Auth::KRRW)
       mask = open_output_masks_(out.wire_bundle, open_to);
-    if constexpr (Cfg::auth == Auth::WRK) {
+    if (mpc->opts.auth == Auth::WRK) {
       mpc->deliver_output_masks_to_(out, open_to);
       AG_PHASE("deliver_output_masks");
     }
@@ -541,13 +541,13 @@ class AGMPCEngine {
       if (mpc->party == 1)
         mpc->evaluate_prepared(st, source, std::move(material.rows));
       AG_PHASE("prepared-eval");
-      if constexpr (Cfg::auth == Auth::KRRW) {
+      if (mpc->opts.auth == Auth::KRRW) {
         mpc->open_and_masks(st, source);
         AG_PHASE("open_and_masks");
         mpc->output_check(st, source);
         AG_PHASE("output_check[SPDZ]");
       }
-      if constexpr (Cfg::auth == Auth::WRK)   // P1 checked every gate during evaluation
+      if (mpc->opts.auth == Auth::WRK)   // P1 checked every gate during evaluation
         if (linear_masks && st.num_ands == 0) mpc->linear_masks_(st, source);
       out = gather_prepared_outputs_(material);
       AG_PHASE("gather_outputs");
@@ -727,18 +727,18 @@ class AGMPCEngine {
     if (mpc->party == 1) mpc->stream_evaluate(st, source);    // evaluator
     else                 mpc->garble_and_ship(st, source);    // garbler
     AG_PHASE("garble/eval");
-    if constexpr (Cfg::auth == Auth::KRRW) {
+    if (mpc->opts.auth == Auth::KRRW) {
       mpc->open_and_masks(st, source); // open + EARLY-broadcast Lambda_AND (pipelining)
       AG_PHASE("open_and_masks");
       mpc->output_check(st, source);   // symmetric SPDZ c_gamma MACCheck (garble/passes/mask_witness.h)
       AG_PHASE("output_check[SPDZ]");
     }
     std::vector<int> oi(out_ids.begin(), out_ids.end());
-    if constexpr (Cfg::auth == Auth::WRK)   // P1 checked every gate during evaluation
+    if (mpc->opts.auth == Auth::WRK)   // P1 checked every gate during evaluation
       if (st.num_ands == 0) mpc->linear_masks_(st, source);
     Wires out = mpc->gather_outputs(st, oi);
     AG_PHASE("gather_outputs");
-    if constexpr (Cfg::auth == Auth::WRK) {
+    if (mpc->opts.auth == Auth::WRK) {
       if (st.num_ands > 0) mpc->deliver_output_masks_(out);
       AG_PHASE("deliver_output_masks");
     }

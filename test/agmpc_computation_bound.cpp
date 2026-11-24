@@ -10,14 +10,14 @@
 //   2. every Party slot bound, so only Public bits arrive at run time;
 //   3. no AND gates: outputs linear in the bound, Party and Public bits;
 //   4. a bound value from share_input and share_random alone, which also runs on the
-//      leaky ANDs (BOUND_LEAKY: the only case there, as share_evaluate needs a bank);
+//      leaky ANDs (the leaky argument: the only case there, as share_evaluate needs a bank);
 //   5. a composed Computation with a bound slot;
-//   6. under WRK (BOUND_EXPERT), the output masks opened between prepare and run
+//   6. under WRK (the expert argument), the output masks opened between prepare and run
 //      (expert_open_output_masks), every output an AND gate on a Public bit; the keys from
 //      output labels (expert_output_key, run_computation with keys) agree exactly for
 //      the output's value, compared in share mode.
-// test/CMakeLists.txt builds it at nP = 2, 3, 4 under each Auth; the BOUND_MISUSE cases
-// are refused before any traffic.
+// test/CMakeLists.txt runs it at nP = 2, 3, 4 under each Auth; the misuse=<n> cases are
+// refused before any traffic.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
 #include "test_options.h"
@@ -135,13 +135,19 @@ static void run_and_check(AgSession &sess, int party, const char *name,
 
 int main(int argc, char **argv) {
   const int party = parse_party(argv, nP);
-  const ag::ProtocolOptions opts = test_options(TestArgs(argc, argv, {TEST_OPTION_ARGS}));
+  // misuse=<1..4>: a misuse the session must refuse before any traffic (below). leaky: the
+  // leaky ANDs, which keep no bank, so only case 4 runs. expert: case 6 too (WRK);
+  // expert_only: case 6 alone.
+  const TestArgs args(argc, argv, {"misuse", "leaky", "expert", "expert_only", TEST_OPTION_ARGS});
+  const ag::ProtocolOptions opts = test_options(args);
+  const int misuse = (int)args.num("misuse", 0);
+  const bool leaky = args.has("leaky"), expert = args.has("expert"),
+             expert_only = args.has("expert_only");
   if (party > nP) return 0;
   ThreadPool pool(ag::default_pool_size(nP));
 
-#ifdef BOUND_MISUSE
-  {
-    // BOUND_MISUSE = 1: a bound value of the wrong width; 2: a bound Public slot;
+  if (misuse != 0) {
+    // misuse = 1: a bound value of the wrong width; 2: a bound Public slot;
     // 3: wires another session built; 4 (WRK): a key from output labels before the masks
     // are open, which P1 may not take at all. Sessions over one mesh, one at a time.
     NetIOMP<nP> io(party, peer_port());
@@ -153,254 +159,247 @@ int main(int argc, char **argv) {
     sig.outputs.push_back({W, OutputKind::Public, PUBLIC});
     const auto art = artifact(bl.done(), sig);
     Wires v;
-#if BOUND_MISUSE == 3
-    {
+    if (misuse == 3) {
       AgSession first(&io, &pool, party, opts);
       v = first.share_random(W);
     }
-#endif
     AgSession sess(&io, &pool, party, opts);
-#if BOUND_MISUSE == 1
-    v = sess.share_random(W);
-    const Wires narrow = v.slice(0, W - 1);
-    (void)sess.prepare_computation(art, {&narrow, nullptr});
-#elif BOUND_MISUSE == 2
-    v = sess.share_random(W);
-    (void)sess.prepare_computation(art, {nullptr, &v});
-#elif BOUND_MISUSE == 4
-    auto job = sess.prepare_computation(art);
-    (void)sess.expert_output_key(job, 0, 1, "misuse");
-#else
-    (void)sess.prepare_computation(art, {&v, nullptr});
-#endif
+    if (misuse == 1) {
+      v = sess.share_random(W);
+      const Wires narrow = v.slice(0, W - 1);
+      (void)sess.prepare_computation(art, {&narrow, nullptr});
+    } else if (misuse == 2) {
+      v = sess.share_random(W);
+      (void)sess.prepare_computation(art, {nullptr, &v});
+    } else if (misuse == 4) {
+      auto job = sess.prepare_computation(art);
+      (void)sess.expert_output_key(job, 0, 1, "misuse");
+    } else {
+      (void)sess.prepare_computation(art, {&v, nullptr});
+    }
     return 1;
   }
-#else
-#ifdef BOUND_LEAKY
-  AgSession sess(party, peer_port(), nullptr, &pool, opts);
-#else
   AgSession sess(party, peer_port(), nullptr, &pool, opts, 40, -1, std::nullopt, BaseOtKind::CSW, -1, -1,
-                 ag::cut_and_choose_prep<nP>(1024));
-#endif
+                 leaky ? ag::leaky_and_prep<nP>() : ag::cut_and_choose_prep<nP>(1024));
   std::mt19937_64 rng(4242);
 
-#if !defined(BOUND_LEAKY) && !defined(BOUND_EXPERT_ONLY)
-  // 1. bound | party 2's bits | Public bits; out: u to every party, v to P1, v ^ b to garbler nP.
-  {
-    Bits bc;
-    const Wires bv = bound_values(sess, party, rng, &bc);
-    const Bits x = random_bits(rng, W), q = random_bits(rng, W);
-    Builder bl(3 * W);
-    std::vector<uint32_t> u(W), v(W);
-    for (uint32_t k = 0; k < W; ++k) {
-      const uint32_t t = bl.gate(Op::And, k, W + k);
-      u[k] = bl.gate(Op::Xor, t, 2 * W + k);
-    }
-    for (uint32_t k = 0; k < W; ++k) v[k] = bl.gate(Op::And, u[k], (k + 1) % W);
-    std::vector<uint32_t> vb(W);
-    for (uint32_t k = 0; k < W; ++k) vb[k] = bl.gate(Op::Xor, v[k], k);
-    for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(u[k]);
-    for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(v[k]);
-    for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(vb[k]);
-    IoSignature io;
-    io.inputs.push_back({W, InputKind::Party, 1});   // bound
-    io.inputs.push_back({W, InputKind::Party, 2});
-    io.inputs.push_back({W, InputKind::Public, PUBLIC});
-    io.outputs.push_back({W, OutputKind::Public, PUBLIC});
-    io.outputs.push_back({W, OutputKind::Party, 1});
-    io.outputs.push_back({W, OutputKind::Party, nP});
-    std::vector<Bits> want(3, Bits(W));
-    for (uint32_t k = 0; k < W; ++k) want[0][k] = (uint8_t)((bc[k] & x[k]) ^ q[k]);
-    for (uint32_t k = 0; k < W; ++k) want[1][k] = (uint8_t)(want[0][k] & bc[(k + 1) % W]);
-    for (uint32_t k = 0; k < W; ++k) want[2][k] = (uint8_t)(want[1][k] ^ bc[k]);
-    emp::session::RawBindings b;
-    b.inputs.resize(3);
-    if (party == 2) b.inputs[1] = x;
-    b.inputs[2] = q;
-    run_and_check(sess, party, "bound, Party and Public slots", artifact(bl.done(), io),
-                  {&bv, nullptr, nullptr}, b, want);
-  }
-  // 2. every Party slot bound: two bound slots and Public bits.
-  {
-    Bits bc0, bc1;
-    const Wires b0 = bound_values(sess, party, rng, &bc0);
-    const Wires b1 = bound_values(sess, party, rng, &bc1);
-    const Bits q = random_bits(rng, W);
-    Builder bl(3 * W);
-    for (uint32_t k = 0; k < W; ++k) {
-      const uint32_t t = bl.gate(Op::And, k, W + k);
-      bl.p.outputs.push_back(bl.gate(Op::Xor, t, 2 * W + k));
-    }
-    for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::And, k, 2 * W + k));
-    IoSignature io;
-    io.inputs.push_back({W, InputKind::Party, 2});   // bound
-    io.inputs.push_back({W, InputKind::Party, 1});   // bound
-    io.inputs.push_back({W, InputKind::Public, PUBLIC});
-    io.outputs.push_back({W, OutputKind::Public, PUBLIC});
-    io.outputs.push_back({W, OutputKind::Party, nP});
-    std::vector<Bits> want(2, Bits(W));
-    for (uint32_t k = 0; k < W; ++k) want[0][k] = (uint8_t)((bc0[k] & bc1[k]) ^ q[k]);
-    for (uint32_t k = 0; k < W; ++k) want[1][k] = (uint8_t)(bc0[k] & q[k]);
-    emp::session::RawBindings b;
-    b.inputs.resize(3);
-    b.inputs[2] = q;   // the owners pass nothing for their bound slots
-    run_and_check(sess, party, "every Party slot bound", artifact(bl.done(), io), {&b0, &b1, nullptr},
-                  b, want);
-  }
-  // 3. no AND gates.
-  {
-    Bits bc;
-    const Wires bv = bound_values(sess, party, rng, &bc);
-    const Bits x = random_bits(rng, W), q = random_bits(rng, W);
-    Builder bl(3 * W);
-    for (uint32_t k = 0; k < W; ++k) {
-      const uint32_t t = bl.gate(Op::Xor, k, W + k);
-      bl.p.outputs.push_back(bl.gate(Op::Xor, t, 2 * W + k));
-    }
-    for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::Not, k));
-    IoSignature io;
-    io.inputs.push_back({W, InputKind::Party, 1});   // bound
-    io.inputs.push_back({W, InputKind::Party, nP});
-    io.inputs.push_back({W, InputKind::Public, PUBLIC});
-    io.outputs.push_back({W, OutputKind::Party, 1});
-    io.outputs.push_back({W, OutputKind::Public, PUBLIC});
-    std::vector<Bits> want(2, Bits(W));
-    for (uint32_t k = 0; k < W; ++k) want[0][k] = (uint8_t)(bc[k] ^ x[k] ^ q[k]);
-    for (uint32_t k = 0; k < W; ++k) want[1][k] = (uint8_t)(bc[k] ^ 1);
-    emp::session::RawBindings b;
-    b.inputs.resize(3);
-    if (party == nP) b.inputs[1] = x;
-    b.inputs[2] = q;
-    run_and_check(sess, party, "no AND gates", artifact(bl.done(), io), {&bv, nullptr, nullptr}, b, want);
-  }
-  // 5. a composed Computation: a unit u(a, b) = (a AND b) XOR a, called on (bound, Party)
-  //    and then on (that, Public).
-  {
-    Bits bc;
-    const Wires bv = bound_values(sess, party, rng, &bc);
-    const Bits x = random_bits(rng, W), q = random_bits(rng, W);
-    auto unit = std::make_shared<BooleanProgram>();
+  if (!leaky && !expert_only) {
+    // 1. bound | party 2's bits | Public bits; out: u to every party, v to P1, v ^ b to garbler nP.
     {
-      Builder u(2);
-      const uint32_t t = u.gate(Op::And, 0, 1);
-      u.p.outputs.push_back(u.gate(Op::Xor, t, 0));
-      *unit = u.done();
+      Bits bc;
+      const Wires bv = bound_values(sess, party, rng, &bc);
+      const Bits x = random_bits(rng, W), q = random_bits(rng, W);
+      Builder bl(3 * W);
+      std::vector<uint32_t> u(W), v(W);
+      for (uint32_t k = 0; k < W; ++k) {
+        const uint32_t t = bl.gate(Op::And, k, W + k);
+        u[k] = bl.gate(Op::Xor, t, 2 * W + k);
+      }
+      for (uint32_t k = 0; k < W; ++k) v[k] = bl.gate(Op::And, u[k], (k + 1) % W);
+      std::vector<uint32_t> vb(W);
+      for (uint32_t k = 0; k < W; ++k) vb[k] = bl.gate(Op::Xor, v[k], k);
+      for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(u[k]);
+      for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(v[k]);
+      for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(vb[k]);
+      IoSignature io;
+      io.inputs.push_back({W, InputKind::Party, 1});   // bound
+      io.inputs.push_back({W, InputKind::Party, 2});
+      io.inputs.push_back({W, InputKind::Public, PUBLIC});
+      io.outputs.push_back({W, OutputKind::Public, PUBLIC});
+      io.outputs.push_back({W, OutputKind::Party, 1});
+      io.outputs.push_back({W, OutputKind::Party, nP});
+      std::vector<Bits> want(3, Bits(W));
+      for (uint32_t k = 0; k < W; ++k) want[0][k] = (uint8_t)((bc[k] & x[k]) ^ q[k]);
+      for (uint32_t k = 0; k < W; ++k) want[1][k] = (uint8_t)(want[0][k] & bc[(k + 1) % W]);
+      for (uint32_t k = 0; k < W; ++k) want[2][k] = (uint8_t)(want[1][k] ^ bc[k]);
+      emp::session::RawBindings b;
+      b.inputs.resize(3);
+      if (party == 2) b.inputs[1] = x;
+      b.inputs[2] = q;
+      run_and_check(sess, party, "bound, Party and Public slots", artifact(bl.done(), io),
+                    {&bv, nullptr, nullptr}, b, want);
     }
-    ComposeCtx cx;
-    const uint32_t first = cx.external_input(3 * W);
-    std::vector<uint32_t> o1(W), o2(W);
-    for (uint32_t k = 0; k < W; ++k) {
-      const uint32_t a[2] = {first + k, first + W + k};
-      o1[k] = cx.call_unit(unit, a, 2)[0];
+    // 2. every Party slot bound: two bound slots and Public bits.
+    {
+      Bits bc0, bc1;
+      const Wires b0 = bound_values(sess, party, rng, &bc0);
+      const Wires b1 = bound_values(sess, party, rng, &bc1);
+      const Bits q = random_bits(rng, W);
+      Builder bl(3 * W);
+      for (uint32_t k = 0; k < W; ++k) {
+        const uint32_t t = bl.gate(Op::And, k, W + k);
+        bl.p.outputs.push_back(bl.gate(Op::Xor, t, 2 * W + k));
+      }
+      for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::And, k, 2 * W + k));
+      IoSignature io;
+      io.inputs.push_back({W, InputKind::Party, 2});   // bound
+      io.inputs.push_back({W, InputKind::Party, 1});   // bound
+      io.inputs.push_back({W, InputKind::Public, PUBLIC});
+      io.outputs.push_back({W, OutputKind::Public, PUBLIC});
+      io.outputs.push_back({W, OutputKind::Party, nP});
+      std::vector<Bits> want(2, Bits(W));
+      for (uint32_t k = 0; k < W; ++k) want[0][k] = (uint8_t)((bc0[k] & bc1[k]) ^ q[k]);
+      for (uint32_t k = 0; k < W; ++k) want[1][k] = (uint8_t)(bc0[k] & q[k]);
+      emp::session::RawBindings b;
+      b.inputs.resize(3);
+      b.inputs[2] = q;   // the owners pass nothing for their bound slots
+      run_and_check(sess, party, "every Party slot bound", artifact(bl.done(), io), {&b0, &b1, nullptr},
+                    b, want);
     }
-    for (uint32_t k = 0; k < W; ++k) {
-      const uint32_t a[2] = {o1[k], first + 2 * W + k};
-      o2[k] = cx.call_unit(unit, a, 2)[0];
+    // 3. no AND gates.
+    {
+      Bits bc;
+      const Wires bv = bound_values(sess, party, rng, &bc);
+      const Bits x = random_bits(rng, W), q = random_bits(rng, W);
+      Builder bl(3 * W);
+      for (uint32_t k = 0; k < W; ++k) {
+        const uint32_t t = bl.gate(Op::Xor, k, W + k);
+        bl.p.outputs.push_back(bl.gate(Op::Xor, t, 2 * W + k));
+      }
+      for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::Not, k));
+      IoSignature io;
+      io.inputs.push_back({W, InputKind::Party, 1});   // bound
+      io.inputs.push_back({W, InputKind::Party, nP});
+      io.inputs.push_back({W, InputKind::Public, PUBLIC});
+      io.outputs.push_back({W, OutputKind::Party, 1});
+      io.outputs.push_back({W, OutputKind::Public, PUBLIC});
+      std::vector<Bits> want(2, Bits(W));
+      for (uint32_t k = 0; k < W; ++k) want[0][k] = (uint8_t)(bc[k] ^ x[k] ^ q[k]);
+      for (uint32_t k = 0; k < W; ++k) want[1][k] = (uint8_t)(bc[k] ^ 1);
+      emp::session::RawBindings b;
+      b.inputs.resize(3);
+      if (party == nP) b.inputs[1] = x;
+      b.inputs[2] = q;
+      run_and_check(sess, party, "no AND gates", artifact(bl.done(), io), {&bv, nullptr, nullptr}, b, want);
     }
-    std::vector<uint32_t> outs(o2);
-    outs.insert(outs.end(), o1.begin(), o1.end());
-    auto plan = std::make_shared<const ComposePlan>(cx.finish(outs));
-    IoSignature io;
-    io.inputs.push_back({W, InputKind::Party, 1});   // bound
-    io.inputs.push_back({W, InputKind::Party, 2});
-    io.inputs.push_back({W, InputKind::Public, PUBLIC});
-    io.outputs.push_back({W, OutputKind::Public, PUBLIC});
-    io.outputs.push_back({W, OutputKind::Party, 1});
-    std::vector<Bits> want(2, Bits(W));
-    for (uint32_t k = 0; k < W; ++k) {
-      want[1][k] = (uint8_t)((bc[k] & x[k]) ^ bc[k]);
-      want[0][k] = (uint8_t)((want[1][k] & q[k]) ^ want[1][k]);
+    // 5. a composed Computation: a unit u(a, b) = (a AND b) XOR a, called on (bound, Party)
+    //    and then on (that, Public).
+    {
+      Bits bc;
+      const Wires bv = bound_values(sess, party, rng, &bc);
+      const Bits x = random_bits(rng, W), q = random_bits(rng, W);
+      auto unit = std::make_shared<BooleanProgram>();
+      {
+        Builder u(2);
+        const uint32_t t = u.gate(Op::And, 0, 1);
+        u.p.outputs.push_back(u.gate(Op::Xor, t, 0));
+        *unit = u.done();
+      }
+      ComposeCtx cx;
+      const uint32_t first = cx.external_input(3 * W);
+      std::vector<uint32_t> o1(W), o2(W);
+      for (uint32_t k = 0; k < W; ++k) {
+        const uint32_t a[2] = {first + k, first + W + k};
+        o1[k] = cx.call_unit(unit, a, 2)[0];
+      }
+      for (uint32_t k = 0; k < W; ++k) {
+        const uint32_t a[2] = {o1[k], first + 2 * W + k};
+        o2[k] = cx.call_unit(unit, a, 2)[0];
+      }
+      std::vector<uint32_t> outs(o2);
+      outs.insert(outs.end(), o1.begin(), o1.end());
+      auto plan = std::make_shared<const ComposePlan>(cx.finish(outs));
+      IoSignature io;
+      io.inputs.push_back({W, InputKind::Party, 1});   // bound
+      io.inputs.push_back({W, InputKind::Party, 2});
+      io.inputs.push_back({W, InputKind::Public, PUBLIC});
+      io.outputs.push_back({W, OutputKind::Public, PUBLIC});
+      io.outputs.push_back({W, OutputKind::Party, 1});
+      std::vector<Bits> want(2, Bits(W));
+      for (uint32_t k = 0; k < W; ++k) {
+        want[1][k] = (uint8_t)((bc[k] & x[k]) ^ bc[k]);
+        want[0][k] = (uint8_t)((want[1][k] & q[k]) ^ want[1][k]);
+      }
+      emp::session::RawBindings b;
+      b.inputs.resize(3);
+      if (party == 2) b.inputs[1] = x;
+      b.inputs[2] = q;
+      auto job = sess.prepare_computation(plan, io, {&bv, nullptr, nullptr});
+      check_outputs(io, sess.run_computation(std::move(job), b), party, "composed, bound", want);
     }
-    emp::session::RawBindings b;
-    b.inputs.resize(3);
-    if (party == 2) b.inputs[1] = x;
-    b.inputs[2] = q;
-    auto job = sess.prepare_computation(plan, io, {&bv, nullptr, nullptr});
-    check_outputs(io, sess.run_computation(std::move(job), b), party, "composed, bound", want);
   }
-#endif
-#ifndef BOUND_EXPERT_ONLY
-  // 4. bound values from share_input and share_random alone (no bank needed).
-  {
-    const Bits mine = random_bits(rng, W);   // party 1's, known to all: test only
-    const Wires in1 = sess.share_input(1, party == 1 ? mine : Bits(W, 0));
-    const Wires r = sess.share_random(W);
-    const Wires bv = in1 ^ r;
-    const std::optional<Bits> rv = sess.share_reveal(r, PUBLIC);
-    check(rv.has_value(), "random shares revealed", party);
-    Bits bc(W);
-    for (uint32_t k = 0; k < W; ++k) bc[k] = (uint8_t)(mine[k] ^ (*rv)[k]);
-    const Bits q = random_bits(rng, W);
-    Builder bl(2 * W);
-    for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::And, k, W + k));
-    IoSignature io;
-    io.inputs.push_back({W, InputKind::Party, 1});   // bound
-    io.inputs.push_back({W, InputKind::Public, PUBLIC});
-    io.outputs.push_back({W, OutputKind::Public, PUBLIC});
-    std::vector<Bits> want(1, Bits(W));
-    for (uint32_t k = 0; k < W; ++k) want[0][k] = (uint8_t)(bc[k] & q[k]);
-    emp::session::RawBindings b;
-    b.inputs.resize(2);
-    if (party == 1) b.inputs[0] = random_bits(rng, W);   // ignored: the slot is bound
-    else (void)random_bits(rng, W);
-    b.inputs[1] = q;
-    run_and_check(sess, party, "bound from share_input and share_random", artifact(bl.done(), io),
-                  {&bv, nullptr}, b, want);
-  }
-#endif
-#ifdef BOUND_EXPERT
-  // 6. under WRK, the output masks opened ahead of the run (expert_open_output_masks): the
-  //    Party slot bound, and every output an AND gate on a Public bit.
-  {
-    Bits bc;
-    const Wires bv = bound_values(sess, party, rng, &bc);
-    const Bits q = random_bits(rng, W);
-    Builder bl(2 * W);
-    for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::And, k, W + k));
-    std::vector<uint32_t> t(W);
-    for (uint32_t k = 0; k < W; ++k) t[k] = bl.gate(Op::Xor, k, W + k);
-    for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::And, t[k], W + (k + 1) % W));
-    IoSignature io;
-    io.inputs.push_back({W, InputKind::Party, 1});   // bound
-    io.inputs.push_back({W, InputKind::Public, PUBLIC});
-    io.outputs.push_back({W, OutputKind::Public, PUBLIC});
-    io.outputs.push_back({W, OutputKind::Party, nP});
-    std::vector<Bits> want(2, Bits(W));
-    for (uint32_t k = 0; k < W; ++k) want[0][k] = (uint8_t)(bc[k] & q[k]);
-    for (uint32_t k = 0; k < W; ++k) want[1][k] = (uint8_t)((bc[k] ^ q[k]) & q[(k + 1) % W]);
-    emp::session::RawBindings b;
-    b.inputs.resize(2);
-    b.inputs[1] = q;
-    auto job = sess.prepare_computation(artifact(bl.done(), io), {&bv, nullptr});
-    sess.expert_open_output_masks(job);
-    if (party == 1) {   // flushed: an abort in the run must not swallow it
-      std::printf("P1 reached the run\n");
-      std::fflush(stdout);
-    }
-    // Keys from output labels on position 0, a Public output: each garbler's for both
-    // values before the run, P1's from every garbler after it.
-    const std::string_view dom = "agmpc_computation_bound";
-    block gk[2] = {zero_block, zero_block};
-    if (party != 1)
-      for (int v = 0; v < 2; ++v) gk[v] = sess.expert_output_key(job, 0, v, dom);
-    std::vector<std::array<block, nP + 1>> pk;
-    check_outputs(io, sess.run_computation(std::move(job), b, {0}, dom, pk), party,
-                  "masks opened ahead of the run", want);
-    check(party == 1 ? pk.size() == 1 : pk.empty(), "keys at P1 only", party);
-    // In share mode: P1's key from garbler j equals j's key for the output's value, and
-    // differs from j's key for the other value.
-    const int z = want[0][0];
-    for (int j = 2; j <= nP; ++j) {
-      const Wires a = sess.share_input(1, party == 1 ? bits_of_block(pk[0][(size_t)j]) : Bits(128, 0));
-      const Wires same = sess.share_input(j, party == j ? bits_of_block(gk[z]) : Bits(128, 0));
-      const Wires other = sess.share_input(j, party == j ? bits_of_block(gk[1 - z]) : Bits(128, 0));
-      const std::optional<Bits> d0 = sess.share_reveal(a ^ same, PUBLIC);
-      const std::optional<Bits> d1 = sess.share_reveal(a ^ other, PUBLIC);
-      check(d0.has_value() && *d0 == Bits(128, 0), "P1's key matches the output's value", party);
-      check(d1.has_value() && *d1 != Bits(128, 0), "and not the other value", party);
+  if (!expert_only) {
+    // 4. bound values from share_input and share_random alone (no bank needed).
+    {
+      const Bits mine = random_bits(rng, W);   // party 1's, known to all: test only
+      const Wires in1 = sess.share_input(1, party == 1 ? mine : Bits(W, 0));
+      const Wires r = sess.share_random(W);
+      const Wires bv = in1 ^ r;
+      const std::optional<Bits> rv = sess.share_reveal(r, PUBLIC);
+      check(rv.has_value(), "random shares revealed", party);
+      Bits bc(W);
+      for (uint32_t k = 0; k < W; ++k) bc[k] = (uint8_t)(mine[k] ^ (*rv)[k]);
+      const Bits q = random_bits(rng, W);
+      Builder bl(2 * W);
+      for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::And, k, W + k));
+      IoSignature io;
+      io.inputs.push_back({W, InputKind::Party, 1});   // bound
+      io.inputs.push_back({W, InputKind::Public, PUBLIC});
+      io.outputs.push_back({W, OutputKind::Public, PUBLIC});
+      std::vector<Bits> want(1, Bits(W));
+      for (uint32_t k = 0; k < W; ++k) want[0][k] = (uint8_t)(bc[k] & q[k]);
+      emp::session::RawBindings b;
+      b.inputs.resize(2);
+      if (party == 1) b.inputs[0] = random_bits(rng, W);   // ignored: the slot is bound
+      else (void)random_bits(rng, W);
+      b.inputs[1] = q;
+      run_and_check(sess, party, "bound from share_input and share_random", artifact(bl.done(), io),
+                    {&bv, nullptr}, b, want);
     }
   }
-#endif
+  if (expert) {
+    // 6. under WRK, the output masks opened ahead of the run (expert_open_output_masks): the
+    //    Party slot bound, and every output an AND gate on a Public bit.
+    {
+      Bits bc;
+      const Wires bv = bound_values(sess, party, rng, &bc);
+      const Bits q = random_bits(rng, W);
+      Builder bl(2 * W);
+      for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::And, k, W + k));
+      std::vector<uint32_t> t(W);
+      for (uint32_t k = 0; k < W; ++k) t[k] = bl.gate(Op::Xor, k, W + k);
+      for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::And, t[k], W + (k + 1) % W));
+      IoSignature io;
+      io.inputs.push_back({W, InputKind::Party, 1});   // bound
+      io.inputs.push_back({W, InputKind::Public, PUBLIC});
+      io.outputs.push_back({W, OutputKind::Public, PUBLIC});
+      io.outputs.push_back({W, OutputKind::Party, nP});
+      std::vector<Bits> want(2, Bits(W));
+      for (uint32_t k = 0; k < W; ++k) want[0][k] = (uint8_t)(bc[k] & q[k]);
+      for (uint32_t k = 0; k < W; ++k) want[1][k] = (uint8_t)((bc[k] ^ q[k]) & q[(k + 1) % W]);
+      emp::session::RawBindings b;
+      b.inputs.resize(2);
+      b.inputs[1] = q;
+      auto job = sess.prepare_computation(artifact(bl.done(), io), {&bv, nullptr});
+      sess.expert_open_output_masks(job);
+      if (party == 1) {   // flushed: an abort in the run must not swallow it
+        std::printf("P1 reached the run\n");
+        std::fflush(stdout);
+      }
+      // Keys from output labels on position 0, a Public output: each garbler's for both
+      // values before the run, P1's from every garbler after it.
+      const std::string_view dom = "agmpc_computation_bound";
+      block gk[2] = {zero_block, zero_block};
+      if (party != 1)
+        for (int v = 0; v < 2; ++v) gk[v] = sess.expert_output_key(job, 0, v, dom);
+      std::vector<std::array<block, nP + 1>> pk;
+      check_outputs(io, sess.run_computation(std::move(job), b, {0}, dom, pk), party,
+                    "masks opened ahead of the run", want);
+      check(party == 1 ? pk.size() == 1 : pk.empty(), "keys at P1 only", party);
+      // In share mode: P1's key from garbler j equals j's key for the output's value, and
+      // differs from j's key for the other value.
+      const int z = want[0][0];
+      for (int j = 2; j <= nP; ++j) {
+        const Wires a = sess.share_input(1, party == 1 ? bits_of_block(pk[0][(size_t)j]) : Bits(128, 0));
+        const Wires same = sess.share_input(j, party == j ? bits_of_block(gk[z]) : Bits(128, 0));
+        const Wires other = sess.share_input(j, party == j ? bits_of_block(gk[1 - z]) : Bits(128, 0));
+        const std::optional<Bits> d0 = sess.share_reveal(a ^ same, PUBLIC);
+        const std::optional<Bits> d1 = sess.share_reveal(a ^ other, PUBLIC);
+        check(d0.has_value() && *d0 == Bits(128, 0), "P1's key matches the output's value", party);
+        check(d1.has_value() && *d1 != Bits(128, 0), "and not the other value", party);
+      }
+    }
+  }
 
   if (fails) {
     std::printf("P%d: FAIL (%d)\n", party, fails);
@@ -408,5 +407,4 @@ int main(int argc, char **argv) {
   }
   if (party == 1) std::printf("bound computations: all cases passed\n");
   return 0;
-#endif
 }

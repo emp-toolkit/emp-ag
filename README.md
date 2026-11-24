@@ -138,22 +138,22 @@ its session id, so a mismatch fails setup.
 
 A session's run-time options are an `ag::ProtocolOptions`
 (`backend/garble/garble_config.h`), which its constructors take after the worker pool
-(after the party, with a caller-owned mesh): how the garblers' rows reach party 1
-(`delivery`, below), the open checker of the AND gates' protocol (`open_check`; by
-default pairwise at two parties and symmetric above), share mode's tag
-width (`share_tag_bytes`), and the AND gates' protocol of a session given none
-(`cut_and_choose_batch`: 0, the default, for the leaky ANDs). `-DEMP_AG_OPEN_CHECK_PAIRWISE`
-or `_SYMMETRIC`, `-DEMP_AG_SHARE_TAG_BYTES` and `-DEMP_AG_CUT_AND_CHOOSE_BATCH` set their
-defaults for a whole build. Every party must choose alike; a session binds each
+(after the party, with a caller-owned mesh): how party 1's masked values are
+authenticated (`auth`, below), how the garblers' rows reach party 1 (`delivery`,
+below), the open checker of the AND gates' protocol (`open_check`; by default pairwise
+at two parties and symmetric above), share mode's tag width (`share_tag_bytes`), and
+the AND gates' protocol of a session given none (`cut_and_choose_batch`: 0, the
+default, for the leaky ANDs). Every party must choose alike; a session binds each
 non-default option into its session id, so a mismatch fails setup.
 
-The garbling options are compile-time: `AGMPCSession<nP, ag::GarbleConfig<A, D, C, L>>`
-(`backend/garble/garble_config.h`). Every party must use the same options; a session binds
-any non-default choice into its session id, so a mismatch fails setup.
-`D` is the default of the run-time option `delivery`; a session given options runs the
-delivery they name, and `ag::default_options<Cfg>()` gives a configuration's own.
-`-DEMP_AG_GARBLE_AUTH=WRK`, `-DEMP_AG_GARBLE_DELIVERY=DIRECT` and
-`-DEMP_AG_OT_BACKEND=SilentFerret` change the default for a whole build.
+A session's configuration is `AGMPCSession<nP, ag::GarbleConfig<A, D, C, L>>`
+(`backend/garble/garble_config.h`). The COT streams, `C` and `L`, are fixed at compile
+time; `A` and `D` are the defaults of the options `auth` and `delivery`. A session given
+options runs the ones they name, and `ag::default_options<Cfg>()` gives a
+configuration's own. `-DEMP_AG_GARBLE_AUTH=WRK`, `-DEMP_AG_GARBLE_DELIVERY=DIRECT`,
+`-DEMP_AG_OPEN_CHECK_PAIRWISE` (or `_SYMMETRIC`), `-DEMP_AG_SHARE_TAG_BYTES`,
+`-DEMP_AG_CUT_AND_CHOOSE_BATCH` and `-DEMP_AG_OT_BACKEND=SilentFerret` change the
+defaults for a whole build.
 
 | Option | Values | Effect |
 |---|---|---|

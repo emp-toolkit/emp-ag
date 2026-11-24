@@ -603,7 +603,7 @@ public:
   session::RawResult run_computation(job_t &&job, const session::RawBindings &b,
                                      const std::vector<int> &positions, std::string_view domain,
                                      std::vector<std::array<block, nP + 1>> &keys) {
-    static_assert(Cfg::auth == ag::Auth::WRK, "AGMPCSession::run_computation with keys: WRK only");
+    expecting(proto_.opts.auth == ag::Auth::WRK, "AGMPCSession::run_computation with keys: WRK only");
     expecting(job.io_ != nullptr, "AGMPCSession::run_computation: invalid, foreign, abandoned, or consumed job");
     uint64_t n_out = 0;
     for (const circuit::OutputRole &r : job.io_->outputs) n_out += r.width;
@@ -665,8 +665,8 @@ public:
   // fresh random mask, so its opened mask is a uniform bit. Not under KRRW, whose output
   // masks stay closed until its output check.
   void expert_open_output_masks(job_t &job) {
-    static_assert(Cfg::auth == ag::Auth::WRK,
-                  "AGMPCSession::expert_open_output_masks: WRK only");
+    expecting(proto_.opts.auth == ag::Auth::WRK,
+              "AGMPCSession::expert_open_output_masks: WRK only");
     expecting(holds_job_(job.slot_, JobKind::Computation),
               "AGMPCSession::expert_open_output_masks: invalid, foreign, abandoned, or consumed job");
     proto_.abit->set_one_way_lock(false);
@@ -683,7 +683,7 @@ public:
   // opens at P1 only for that output. A garbler takes its key from the prepared job, once
   // the mask of pos is open to it (it must receive pos).
   block expert_output_key(const job_t &job, int pos, int value, std::string_view domain) const {
-    static_assert(Cfg::auth == ag::Auth::WRK, "AGMPCSession::expert_output_key: WRK only");
+    expecting(proto_.opts.auth == ag::Auth::WRK, "AGMPCSession::expert_output_key: WRK only");
     expecting(holds_job_(job.slot_, JobKind::Computation),
               "AGMPCSession::expert_output_key: invalid, foreign, abandoned, or consumed job");
     expecting(proto_.party != 1,
