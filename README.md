@@ -387,7 +387,8 @@ sends anything about `v`. The call settles the session's checks first, as
 `share_reveal` does, and returns this party's share bits and its MACs on them under
 each peer's key. On receiving a peer's bits, `absorb_expected_macs(hash, v, peer,
 bits)` puts into the application's hash the MACs that peer's shares must carry,
-so no `Delta` leaves the session.
+so no `Delta` leaves the session. Both also work between `prepare_computation` and
+`run_computation`, while nothing is drawn.
 
 ### Values and circuits
 
