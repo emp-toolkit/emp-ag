@@ -623,13 +623,17 @@ public:
   // EXPERT USE ONLY: an ordinary Computation never calls it. Under WRK, opens the job's
   // output masks to their recipients now, between prepare_computation and
   // run_computation, so that each recipient holds its masks before the run; the run then
-  // opens none. emp-ag does not check that this is safe for the circuit; the caller
-  // vouches for it. Every output must be an AND gate's output that depends on an input
-  // bound only at run, such as a Public input: then no one can decode an output before
-  // the run, and each mask is a fresh random bit. With any other output, a recipient may
-  // learn its output early, even from a job that is never run, and an XOR output's mask
-  // can give away input bits. Not under KRRW, whose output masks stay closed until its
-  // output check.
+  // opens none. emp-ag does not check that this is safe; the caller vouches for it. Call
+  // it only when every private input of the job is already fixed: every Party slot bound
+  // at prepare_computation, and no Carry input. Under free-XOR an output mask is affine
+  // in the input masks, so a recipient whose mask combines another party's input mask
+  // with its own could read that party's input from the masked value the owner
+  // broadcasts, and still choose its own input afterwards. With every private input
+  // fixed, an opened mask gives away no more than its output, but it can give that away
+  // before the run, even for a job that is never run, unless the output depends on an
+  // input bound at run, such as a Public input. An output written by an AND gate has a
+  // fresh random mask, so its opened mask is a uniform bit. Not under KRRW, whose output
+  // masks stay closed until its output check.
   void expert_open_output_masks(job_t &job) {
     static_assert(Cfg::auth == ag::Auth::WRK,
                   "AGMPCSession::expert_open_output_masks: WRK only");

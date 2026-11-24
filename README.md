@@ -343,11 +343,16 @@ them out.
 
 For experts only, under `Auth::WRK`: `expert_open_output_masks(job)` opens a
 prepared job's output masks to their recipients before `run_computation`, which
-then opens none. emp-ag does not check that this is safe for the circuit. It is
-safe only if every output is an AND gate's output that depends on an input bound
-at run, such as a Public input. Otherwise a recipient can learn its output before
-the run, even from a job that never runs, and an XOR output's mask can give away
-input bits. With the masks open, `expert_output_key(job, pos, value, domain)`
+then opens none. emp-ag does not check that this is safe. Call it only when every
+private input of the job is already fixed: every Party slot bound at
+`prepare_computation`, and no Carry input. Under free-XOR an output mask is affine
+in the input masks, so a recipient whose mask combines another party's input mask
+with its own could read that party's input from the masked value the owner
+broadcasts, and still choose its own input afterwards. With every private input
+fixed, an opened mask gives away no more than its output, but it can give that away
+before the run, even for a job that never runs, unless the output depends on an
+input bound at run, such as a Public input. An output written by an AND gate has a
+fresh random mask, so its opened mask is a uniform bit. With the masks open, `expert_output_key(job, pos, value, domain)`
 gives a garbler a key from its label for output `pos` taking `value`, and
 `run_computation(job, bindings, positions, domain, keys)` gives party 1 its keys
 from the labels it ends with, one per garbler. Garbler `j`'s key equals party 1's
