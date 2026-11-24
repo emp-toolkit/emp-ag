@@ -2,8 +2,9 @@
 // setup: both hold the same one, it is not zero, and two sessions get
 // different ids. A given id is used as is, bound to the session's options when they
 // are not the defaults (ag::bind_garble_config, ag::bind_build_options) and to its
-// protocol for the AND gates unless that is the leaky ANDs (ag::bind_and_prep). The
-// sessions share one mesh, as the golden-snapshot cases do.
+// protocol for the AND gates unless that is the leaky ANDs (ag::bind_and_prep).
+// SilentFerret's LPN set binds the id only when it is not the default, and only on
+// SilentFerret streams. The sessions share one mesh, as the golden-snapshot cases do.
 //
 // BUILD_OPTIONS_BOUND: this build chose a build option other than the default (CMake
 // builds a variant with EMP_AG_OPEN_CHECK_SYMMETRIC), so ag::bind_build_options must
@@ -86,6 +87,21 @@ int main(int argc, char **argv) {
     const block want = ag::bind_and_prep(base, ag::cut_and_choose_prep<nP>(1024).id);
     expecting(cmpBlock(&bound, &want, 1) && !cmpBlock(&bound, &base, 1),
               "agmpc_session_id: cut-and-choose triples did not bind the id");
+  }
+  {
+    // SilentFerret's LPN set: B13 binds the id beyond what SilentFerret itself binds, and
+    // SoftSpoken streams ignore it.
+    using Ferret12 = ag::GarbleConfig<ag::Auth::KRRW, ag::Delivery::RING, ag::Cot::SilentFerret>;
+    using Ferret13 = ag::GarbleConfig<ag::Auth::KRRW, ag::Delivery::RING, ag::Cot::SilentFerret,
+                                      ag::FerretLpn::B13>;
+    using Soft13 = ag::GarbleConfig<ag::Auth::KRRW, ag::Delivery::RING, ag::Cot::SoftSpoken,
+                                    ag::FerretLpn::B13>;
+    const block f12 = ag::bind_garble_config<nP, Ferret12>(given);
+    const block f13 = ag::bind_garble_config<nP, Ferret13>(given);
+    const block s13 = ag::bind_garble_config<nP, Soft13>(given);
+    expecting(!cmpBlock(&f12, &given, 1) && !cmpBlock(&f13, &f12, 1) && !cmpBlock(&f13, &given, 1),
+              "agmpc_session_id: SilentFerret's LPN set did not bind the id");
+    expecting(cmpBlock(&s13, &given, 1), "agmpc_session_id: an LPN set changed a SoftSpoken id");
   }
   if (party == 1) printf("agmpc_session_id: OK\n");
   return 0;

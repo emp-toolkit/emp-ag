@@ -23,10 +23,14 @@
 
 namespace emp::ag {
 
-// The mint for a Cot (cot.h). What a mint offers is in softspoken_mint.h.
-template <int nP, Cot C>
-using MintFor = std::conditional_t<C == Cot::SilentFerret, SilentFerretMint<nP>,
-                                   SoftSpokenMint<nP>>;
+// The mint for a Cot and, for SilentFerret, its LPN set (cot.h). What a mint offers is in
+// softspoken_mint.h.
+template <int nP, Cot C, FerretLpn L = FerretLpn::B12>
+using MintFor = std::conditional_t<
+    C == Cot::SilentFerret,
+    std::conditional_t<L == FerretLpn::B13, SilentFerretMint<nP, emp::tuning::ferret_b13>,
+                       SilentFerretMint<nP>>,
+    SoftSpokenMint<nP>>;
 
 // Π_aShare, the authenticated-share generator: each call mints fresh shares. check1 is the gadget-tail Δ-consistency check
 // using pair-specific x^{me,j}; check2 is the share-consistency check (nP>2): every peer
