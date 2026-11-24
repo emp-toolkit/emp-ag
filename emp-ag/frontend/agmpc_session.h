@@ -32,6 +32,7 @@
 #include "emp-ag/backend/triple/share_eval.h"               // share mode
 #include "emp-ag/backend/common/netmp.h"                    // NetIOMP / NetIOMPGroup (owned below)
 #include "emp-ag/backend/common/runtime.h"                  // ag::lanes_for (production lane count)
+#include <atomic>                                    // session serials (SharedWires)
 #include <memory>                                    // owned NetIOMP / NetIOMPGroup
 
 #include <array>
@@ -178,6 +179,9 @@ public:
     PreparedExecution &operator=(PreparedExecution &&) noexcept = default;
   };
 
+  // Share mode's values (defined with share mode below).
+  class SharedWires;
+
   // Circuit mode (emp-tool ComputationSession): a prepared Computation, one use,
   // this session only. Destroying it unrun drops it: its preprocessing is never
   // reused, and the session continues.
@@ -186,10 +190,12 @@ public:
     JobSlot_ slot_;
     std::shared_ptr<const circuit::IoSignature> io_;   // the Computation's slots
     std::vector<unsigned char> mask_;   // per input wire: its mask where opened to this party
+    std::vector<unsigned char> bound_;  // per input slot: set where bound at prepare (empty: none)
 
     ComputationJob(JobSlot_ slot, std::shared_ptr<const circuit::IoSignature> io,
-                   std::vector<unsigned char> mask)
-        : slot_(std::move(slot)), io_(std::move(io)), mask_(std::move(mask)) {}
+                   std::vector<unsigned char> mask, std::vector<unsigned char> bound)
+        : slot_(std::move(slot)), io_(std::move(io)), mask_(std::move(mask)),
+          bound_(std::move(bound)) {}
 
   public:
     ComputationJob(ComputationJob &&) noexcept = default;
@@ -405,14 +411,23 @@ public:
   // (AndPrepFactory::draws), each draw with check2's hiding shares at nP > 2 and the
   // first with check1's tail. Every stream draws the same count. Pass it as the
   // constructor's planned_sender_cots and planned_receiver_cots, adding to a stream the
-  // COTs drawn from it through draw_cots(job, ...).
+  // COTs drawn from it through draw_cots(job, ...). bound[s] marks a slot that
+  // prepare_computation binds to shared values, whose wires draw no mask.
   static int64_t planned_cots(const circuit::ComputationArtifact &art, int ssp = 40,
-                              const ag::AndPrepFactory<nP> &and_prep = {}) {
+                              const ag::AndPrepFactory<nP> &and_prep = {},
+                              const std::vector<bool> &bound = {}) {
     validate_computation_(art);
-    return planned_cots((int64_t)art.program->num_inputs, ag::agmpc_count_ands(*art.program),
-                        ssp, and_prep);
+    int64_t masked = (int64_t)art.program->num_inputs;
+    if (!bound.empty()) {
+      expecting(bound.size() == art.io.inputs.size(),
+                "AGMPCSession::planned_cots: one bound entry per input slot");
+      for (size_t s = 0; s < bound.size(); ++s)
+        if (bound[s]) masked -= (int64_t)art.io.inputs[s].width;
+    }
+    return planned_cots(masked, ag::agmpc_count_ands(*art.program), ssp, and_prep);
   }
-  // The same, from the Computation's input-wire and AND-gate counts.
+  // The same, from the counts of the Computation's input wires that draw a mask and of
+  // its AND gates.
   static int64_t planned_cots(int64_t num_inputs, int64_t num_ands, int ssp,
                               const ag::AndPrepFactory<nP> &and_prep) {
     expecting(num_inputs >= 0 && num_ands >= 0, "AGMPCSession::planned_cots: a negative count");
@@ -499,10 +514,23 @@ public:
   // and while a job is outstanding every other call of the session that sends
   // anything is fatal.
   job_t prepare_computation(std::shared_ptr<const circuit::ComputationArtifact> art) {
+    return prepare_computation(std::move(art), {});
+  }
+  // The same with some Party slots bound to values this session holds as shares
+  // (SharedWires, share mode): bound[s] is null for an ordinary slot and otherwise slot s's
+  // value, of the slot's width; an empty vector binds none. Each bound wire takes its
+  // value as its mask, with masked value 0, so nothing about the value is opened: no mask
+  // is opened for the slot, the garblers send P1 its labels here, offline, and the run
+  // takes no bits for it (its owner's entry is ignored). A bound slot draws no masks
+  // (planned_cots).
+  job_t prepare_computation(std::shared_ptr<const circuit::ComputationArtifact> art,
+                            const std::vector<const SharedWires *> &bound) {
     expecting(art != nullptr, "AGMPCSession::prepare_computation: null computation");
     validate_computation_(*art);
     std::shared_ptr<const circuit::IoSignature> io(art, &art->io);
-    return prepare_computation_(std::move(io), [&] { return engine_.prepare_program(art->program); });
+    return prepare_computation_(std::move(io), bound, [&](const ag::PreparedBound<nP> *pb) {
+      return engine_.prepare_program(art->program, pb);
+    });
   }
 
   // A composed Computation: the circuit as the frontend records it (emp-tool ComposeCtx,
@@ -512,10 +540,17 @@ public:
   // layout, so a unit called m times is never copied m times. Each unit must be
   // WireReuse::Linear or dense. run_computation takes the job as it takes any other.
   job_t prepare_computation(std::shared_ptr<const ComposePlan> plan, circuit::IoSignature io) {
+    return prepare_computation(std::move(plan), std::move(io), {});
+  }
+  // A composed Computation with some Party slots bound, as above.
+  job_t prepare_computation(std::shared_ptr<const ComposePlan> plan, circuit::IoSignature io,
+                            const std::vector<const SharedWires *> &bound) {
     expecting(plan != nullptr, "AGMPCSession::prepare_computation: null composed program");
     validate_computation_(*plan, io);
-    return prepare_computation_(std::make_shared<const circuit::IoSignature>(std::move(io)),
-                                [&] { return engine_.prepare_composed(std::move(plan)); });
+    return prepare_computation_(std::make_shared<const circuit::IoSignature>(std::move(io)), bound,
+                                [&](const ag::PreparedBound<nP> *pb) {
+                                  return engine_.prepare_composed(std::move(plan), pb);
+                                });
   }
 
   // The online half: this party binds its own Party slots and every Public slot
@@ -524,7 +559,8 @@ public:
   // at nP >= 3), the garblers send P1 the input labels, P1 evaluates the stored
   // rows, and each output slot opens to its recipients: under KRRW after the
   // output check, under WRK in the first flight after the inputs, with P1's
-  // masked values handed to each garbler recipient after evaluation.
+  // masked values handed to each garbler recipient after evaluation. A slot bound
+  // at prepare takes no bits, and its owner's entry in `b` is ignored.
   session::RawResult run_computation(job_t &&job, const session::RawBindings &b) {
     return run_computation_(std::move(job), b, nullptr);
   }
@@ -571,7 +607,8 @@ private:
   // state, before any traffic; then `prepare` (every preprocessing walk and the
   // garbling) and the round that opens the input masks.
   template <class Prepare>
-  job_t prepare_computation_(std::shared_ptr<const circuit::IoSignature> io, Prepare &&prepare) {
+  job_t prepare_computation_(std::shared_ptr<const circuit::IoSignature> io,
+                             const std::vector<const SharedWires *> &bound, Prepare &&prepare) {
     for (const circuit::InputRole &r : io->inputs)
       expecting(r.kind == circuit::InputKind::Public || r.owner <= nP,
                 "AGMPCSession::prepare_computation: an input owner is above the party count");
@@ -582,11 +619,42 @@ private:
               "AGMPCSession::prepare_computation: a prepared execution is outstanding");
     require_no_computation_job_("AGMPCSession::prepare_computation");
 
-    std::unique_ptr<typename Engine::Material> material = prepare();
+    // The bound slots, per input wire; none bound leaves the default path untouched.
+    std::vector<unsigned char> bound_slots;
+    ag::PreparedBound<nP> pb;
+    if (!bound.empty()) {
+      expecting(bound.size() == io->inputs.size(),
+                "AGMPCSession::prepare_computation: one bound entry per input slot");
+      const std::vector<uint32_t> off = circuit::input_slot_offsets(*io);
+      size_t total = 0;
+      for (const circuit::InputRole &r : io->inputs) total += r.width;
+      for (size_t s = 0; s < bound.size(); ++s) {
+        if (bound[s] == nullptr) continue;
+        const SharedWires &v = *bound[s];
+        expecting(io->inputs[s].kind == circuit::InputKind::Party,
+                  "AGMPCSession::prepare_computation: a bound slot must be a Party slot");
+        expecting(v.size() == (size_t)io->inputs[s].width,
+                  "AGMPCSession::prepare_computation: a bound value differs from its slot's width");
+        require_mine_(v, "AGMPCSession::prepare_computation");
+        if (bound_slots.empty()) {
+          bound_slots.assign(io->inputs.size(), 0);
+          pb.bound.assign(total, 0);
+          pb.bundle.resize(total);
+        }
+        bound_slots[s] = 1;
+        for (uint32_t k = 0; k < io->inputs[s].width; ++k) {
+          pb.bound[(size_t)off[s] + k] = 1;
+          pb.bundle[(size_t)off[s] + k] = v.b_[k];
+        }
+      }
+    }
+
+    std::unique_ptr<typename Engine::Material> material =
+        prepare(bound_slots.empty() ? nullptr : &pb);
     std::vector<int> owner = computation_input_owners_(*io);
     std::vector<unsigned char> mask = engine_.open_input_masks(*material, owner);
     return job_t(begin_job_(JobKind::Computation, std::move(material)), std::move(io),
-                 std::move(mask));
+                 std::move(mask), std::move(bound_slots));
   }
 
   session::RawResult run_computation_(job_t &&job, const session::RawBindings &b_in,
@@ -599,13 +667,22 @@ private:
     auto is_authenticated = [&](size_t s) {
       return authenticated != nullptr && (*authenticated)[s] != nullptr;
     };
+    auto is_bound = [&](size_t s) { return !job.bound_.empty() && job.bound_[s] != 0; };
     session::RawBindings b = b_in;
+    if (!job.bound_.empty()) {
+      if (b.inputs.size() < io_sig.inputs.size()) b.inputs.resize(io_sig.inputs.size());
+      for (size_t s = 0; s < io_sig.inputs.size(); ++s)
+        if (is_bound(s) && session::binds(io_sig.inputs[s], me))   // bound at prepare: no bits
+          b.inputs[s] = session::Bits(io_sig.inputs[s].width, 0);
+    }
     if (authenticated != nullptr) {
       expecting(authenticated->size() == io_sig.inputs.size(),
                 "AGMPCSession::run_computation: one authenticated entry per input slot");
       if (b.inputs.size() < io_sig.inputs.size()) b.inputs.resize(io_sig.inputs.size());
       for (size_t s = 0; s < io_sig.inputs.size(); ++s) {
         if (!is_authenticated(s)) continue;
+        expecting(!is_bound(s),
+                  "AGMPCSession::run_computation: a slot bound at prepare takes no authenticated value");
         expecting(nP == 2, "AGMPCSession::run_computation: authenticated slots need two parties");
         expecting(io_sig.inputs[s].kind == circuit::InputKind::Party,
                   "AGMPCSession::run_computation: an authenticated slot must be a Party slot");
@@ -637,7 +714,7 @@ private:
       }
     }
     for (size_t s = 0; s < io_sig.inputs.size(); ++s) {
-      if (!session::binds(io_sig.inputs[s], me) || is_authenticated(s)) continue;
+      if (!session::binds(io_sig.inputs[s], me) || is_authenticated(s) || is_bound(s)) continue;
       const session::Bits &bits = *b.inputs[s];
       for (uint32_t k = 0; k < io_sig.inputs[s].width; ++k) {
         const size_t w = (size_t)in_off[s] + k;
@@ -820,19 +897,28 @@ public:
     SharedWires slice(size_t lo, size_t hi) const {
       expecting(lo <= hi && hi <= b_.size(), "SharedWires::slice: out of range");
       SharedWires r;
+      r.sess_ = sess_;
       r.b_.assign(b_.begin() + (std::ptrdiff_t)lo, b_.begin() + (std::ptrdiff_t)hi);
       return r;
     }
-    // The wires of `parts`, in order.
+    // The wires of `parts`, in order; all from one session.
     static SharedWires concat(std::initializer_list<const SharedWires *> parts) {
       SharedWires r;
-      for (const SharedWires *p : parts) r.b_.insert(r.b_.end(), p->b_.begin(), p->b_.end());
+      for (const SharedWires *p : parts) {
+        if (p->size() == 0) continue;
+        expecting(r.sess_ == 0 || r.sess_ == p->sess_,
+                  "SharedWires::concat: wires from different sessions");
+        r.sess_ = p->sess_;
+        r.b_.insert(r.b_.end(), p->b_.begin(), p->b_.end());
+      }
       return r;
     }
     // Wire-wise XOR, local.
     friend SharedWires operator^(const SharedWires &a, const SharedWires &b) {
       expecting(a.size() == b.size(), "SharedWires: XOR of different widths");
+      expecting(a.size() == 0 || a.sess_ == b.sess_, "SharedWires: XOR of wires from different sessions");
       SharedWires r;
+      r.sess_ = a.sess_;
       r.b_.resize(a.size());
       for (size_t i = 0; i < a.size(); ++i) ag::xor_share(r.b_[i], a.b_[i], b.b_[i]);
       return r;
@@ -840,6 +926,7 @@ public:
 
   private:
     friend class AGMPCSession<nP, Cfg>;
+    uint64_t sess_ = 0;   // the serial of the session that built the wires; 0 for none
     ag::AShareBundleVec<nP> b_;
   };
 
@@ -849,6 +936,7 @@ public:
     require_no_job_("AGMPCSession::share_input");
     expecting(bits.size() <= (size_t)INT_MAX, "AGMPCSession::share_input: too many bits");
     SharedWires r;
+    r.sess_ = serial_;
     r.b_ = proto_.share_inputs(owner, bits.data(), (int)bits.size());
     return r;
   }
@@ -857,12 +945,14 @@ public:
     require_no_job_("AGMPCSession::share_random");
     expecting(n >= 0 && n <= (int64_t)INT_MAX, "AGMPCSession::share_random: count out of range");
     SharedWires r;
+    r.sess_ = serial_;
     if (n > 0) proto_.abit->draw((int)n, r.b_);
     return r;
   }
   // Public bits as shares, and v XOR public bits: local.
   SharedWires share_public(const session::Bits &bits) const {
     SharedWires r;
+    r.sess_ = serial_;
     r.b_.resize(bits.size());
     for (size_t i = 0; i < bits.size(); ++i) {
       ag::zero_share(r.b_[i]);
@@ -872,6 +962,7 @@ public:
   }
   SharedWires share_xor_public(const SharedWires &v, const session::Bits &bits) const {
     expecting(bits.size() == v.size(), "AGMPCSession::share_xor_public: widths differ");
+    require_mine_(v, "AGMPCSession::share_xor_public");
     SharedWires r = v;
     for (size_t i = 0; i < bits.size(); ++i)
       if (bits[i] & 1) add_one_(r.b_[i]);
@@ -880,6 +971,7 @@ public:
   // `prog`, a dense circuit, on `in`: one flight per AND layer.
   SharedWires share_evaluate(const circuit::BooleanProgram &prog, const SharedWires &in) {
     require_no_job_("AGMPCSession::share_evaluate");
+    require_mine_(in, "AGMPCSession::share_evaluate");
     if (!share_eval_) {
       ag::TripleBank<nP> *bank = proto_.and_prep->triples();
       expecting(bank != nullptr,
@@ -890,12 +982,14 @@ public:
           *proto_.abit, *bank, EMP_AG_SHARE_TAG_BYTES);
     }
     SharedWires r;
+    r.sess_ = serial_;
     r.b_ = share_eval_->evaluate(prog, in.b_);
     return r;
   }
   // v opened to `recipient`, a party or PUBLIC: the bits there, nullopt elsewhere.
   std::optional<session::Bits> share_reveal(const SharedWires &v, int recipient) {
     require_no_job_("AGMPCSession::share_reveal");
+    require_mine_(v, "AGMPCSession::share_reveal");
     expecting(v.size() <= (size_t)INT_MAX, "AGMPCSession::share_reveal: too many wires");
     std::vector<unsigned char> bits = proto_.share_open(v.b_.data(), (int)v.size(), recipient);
     if (recipient != PUBLIC && recipient != proto_.party) return std::nullopt;
@@ -970,6 +1064,7 @@ private:
   std::unordered_map<uint32_t, StagedLoc> staged_by_id_;
   JobKind job_ = JobKind::None;      // the outstanding job's kind, if any
   std::unique_ptr<ag::ShareEval<nP>> share_eval_;   // share mode's evaluator, built on first use
+  uint64_t serial_ = next_serial_();                 // names this session in its SharedWires
   uint64_t job_token_ = 0;            // and the token that names it
   uint64_t next_job_token_ = 0;
   size_t lazy_label_count_ = 0;
@@ -1189,6 +1284,16 @@ private:
   // Share mode sends outside every job's flights, so it waits for no job at all.
   void require_no_job_(const char *what) const {
     expecting(job_ == JobKind::None, [&] { return std::string(what) + ": a job is outstanding"; });
+  }
+  // Wires another session built hold shares under other keys.
+  void require_mine_(const SharedWires &v, const char *what) const {
+    expecting(v.size() == 0 || v.sess_ == serial_,
+              [&] { return std::string(what) + ": wires from another session"; });
+  }
+  // A serial per session, never 0, for SharedWires to name their session.
+  static uint64_t next_serial_() {
+    static std::atomic<uint64_t> next{0};
+    return ++next;
   }
   void add_one_(ag::AShareBundle<nP> &b) const {
     const int party = proto_.party;

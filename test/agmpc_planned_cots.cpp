@@ -11,7 +11,9 @@
 //   5. the leaky ANDs on SilentFerret streams with the B13 LPN set;
 //   6. share mode on cut-and-choose triples in batches of 16: five input bits from every
 //      party, three random shares, and 40 AND gates in two evaluations (three batches),
-//      planned from the draws' lengths (planned_cots_of_draws).
+//      planned from the draws' lengths (planned_cots_of_draws);
+//   7. case 1 with party 1's slot bound at prepare to share_input(1, x): the bound wires
+//      draw no masks, so the plan is share_input's draw and the Computation's others.
 // A SoftSpoken stream aborts on a plan short of its draws; a plan beyond them leaves
 // cots_drawn() below it, which the check catches. Every case also checks the output, and
 // the Computation cases that planned_cots from the input-wire and AND-gate counts gives
@@ -190,6 +192,42 @@ static bool run_share_case(NetIOMP<nP> &io, ThreadPool &pool, int party) {
   return ok;
 }
 
+template <class Cfg>
+static bool run_bound_case(NetIOMP<nP> &io, ThreadPool &pool, int party) {
+  using Sess = AGMPCSession<nP, Cfg>;
+  constexpr int kAnds = 40;
+  const ag::AndPrepFactory<nP> prep = ag::leaky_and_prep<nP>();
+  auto art = std::make_shared<const ComputationArtifact>(make_art(kAnds));
+  std::vector<int64_t> comp = {(int64_t)art->program->num_inputs - W, kAnds};
+  for (int64_t n : prep.draws(kAnds, kSsp)) comp.push_back(n);
+  std::vector<int64_t> draws = {W};
+  draws.insert(draws.end(), comp.begin(), comp.end());
+  const int64_t plan = Sess::planned_cots_of_draws(draws);
+  bool ok = Sess::planned_cots(*art, kSsp, prep, {true, false, false}) == Sess::planned_cots_of_draws(comp);
+  {
+    Sess sess(&io, &pool, party, kSsp, nullptr, std::nullopt, BaseOtKind::CSW, plan, plan, prep);
+    const typename Sess::SharedWires x =
+        sess.share_input(1, party == 1 ? bits_of(kX, W) : emp::session::Bits(W, 0));
+    auto job = sess.prepare_computation(art, {&x, nullptr, nullptr});
+    emp::session::RawBindings b;
+    b.inputs.resize(3);
+    if (party == 2) b.inputs[1] = bits_of(kY, W);
+    b.inputs[2] = bits_of(kP, kPublic);
+    const emp::session::RawResult r = sess.run_computation(std::move(job), b);
+    uint32_t got = 0;
+    for (int i = 0; i < W; ++i) got |= (uint32_t)((*r.outputs[0])[(size_t)i] & 1) << i;
+    ok = ok && got == clear_output(kAnds);
+    for (int p = 1; p <= nP; ++p) {
+      if (p == party) continue;
+      ok = ok && sess.protocol().abit->cots_drawn(p, true) == plan &&
+           sess.protocol().abit->cots_drawn(p, false) == plan;
+    }
+  }
+  std::printf("agmpc_planned_cots[np=%d, bound slot] party %d: plan %lld: %s\n", nP, party,
+              (long long)plan, ok ? "GOOD" : "BAD");
+  return ok;
+}
+
 int main(int argc, char **argv) {
   const int party = parse_party(argv, nP);
   if (party > nP) return 0;
@@ -209,5 +247,6 @@ int main(int argc, char **argv) {
                                     ag::Cot::SilentFerret, ag::FerretLpn::B13>;
   ok = run_case<Ferret13>(io, pool, party, "SilentFerret b13", 40, ag::leaky_and_prep<nP>()) && ok;
   ok = run_share_case<Build>(io, pool, party) && ok;
+  ok = run_bound_case<Build>(io, pool, party) && ok;
   return ok ? 0 : 1;
 }

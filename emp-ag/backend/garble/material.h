@@ -33,6 +33,19 @@ struct PreparedInputBinding {
   size_t size() const { return owner.size(); }
 };
 
+// Input wires a Computation binds at prepare to values the session holds as aShares
+// under its global keys. Where bound[w] is set, bundle[w] is wire w's value, and it
+// becomes the wire's mask with masked value 0: nothing about it is opened, its labels go
+// to P1 at prepare, and the run takes no bits for it. Both vectors have one entry per
+// circuit input wire.
+template <int nP>
+struct PreparedBound {
+  std::vector<unsigned char> bound;
+  AShareBundleVec<nP> bundle;
+
+  size_t size() const { return bound.size(); }
+};
+
 template <int nP>
 struct PreparedMaterial {
   PreparedMaterial() = default;
@@ -48,6 +61,7 @@ struct PreparedMaterial {
   ComputeCtx<nP> ctx;
   EvalChunk<nP> rows;                   // populated only at P1
   SecureWires<nP> target_inputs;        // fresh offline masks + garbling labels
+  std::vector<unsigned char> bound;     // per input wire, set where bound at prepare (empty: none)
   SecureWires<nP> output_static;        // authenticated bundles (+ garbler label0)
   std::vector<uint32_t> output_ids;
   bool linear = false;

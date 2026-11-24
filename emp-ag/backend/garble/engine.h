@@ -77,8 +77,10 @@ class AGMPCEngine {
   // Owner/value-independent offline preparation for one immutable typed circuit.
   // The returned material is intentionally backend-only; AGMPCSession wraps it in
   // the typed move-only public handle that enforces same-session, one-use access.
+  // `bound` (optional): input wires bound to values the session holds (PreparedBound).
   std::unique_ptr<Material> prepare_program(
-      const std::shared_ptr<const circuit::BooleanProgram> &prog) {
+      const std::shared_ptr<const circuit::BooleanProgram> &prog,
+      const PreparedBound<nP> *bound = nullptr) {
     expecting(prog != nullptr, "prepare_program: null compiled program");
     expecting(prog->wire_reuse != circuit::WireReuse::Full,
               "prepare_program: WireReuse::Full is not supported");
@@ -117,13 +119,14 @@ class AGMPCEngine {
       material->output_ids = run_liveness_(st, source);
     }
 
-    prepare_material_(*material);
+    prepare_material_(*material, bound);
     return material;
   }
 
   // The same for a composed program: its layout is built once, here, and every walk
   // replays it, so each distinct unit is lowered once however often it is called.
-  std::unique_ptr<Material> prepare_composed(std::shared_ptr<const ComposePlan> plan) {
+  std::unique_ptr<Material> prepare_composed(std::shared_ptr<const ComposePlan> plan,
+                                             const PreparedBound<nP> *bound = nullptr) {
     expecting(plan != nullptr, "prepare_composed: null composed program");
     auto material = std::make_unique<Material>();
     auto layout = std::make_shared<const ComposedLayout>(build_composed_layout(std::move(plan)));
@@ -138,17 +141,18 @@ class AGMPCEngine {
     material->composed = std::move(layout);
     material->linear = true;   // the layout's ids are the slots
     prepare_trust_layout_(st);
-    prepare_material_(*material);
+    prepare_material_(*material, bound);
     return material;
   }
 
  private:
   // prepare_program / prepare_composed after the layout: the offline masks of the
   // inputs, every preprocessing walk, and the garbling (P1 stores the rows).
-  void prepare_material_(Material &m) {
+  void prepare_material_(Material &m, const PreparedBound<nP> *bound) {
     ComputeCtx &st = m.ctx;
     Material *material = &m;
-    material->target_inputs = mpc->make_prepared_inputs_(st.num_in);
+    material->target_inputs = mpc->make_prepared_inputs_(st.num_in, bound);
+    if (bound != nullptr) material->bound = bound->bound;
     load_prepared_inputs_(st, material->target_inputs);
     with_prepared_source_(*material, [&](auto &source) {
       produce_(st, source);
@@ -205,12 +209,12 @@ class AGMPCEngine {
   // or PUBLIC.  Offline, after prepare_program: open each Party input's mask to
   // its owner and each Public input's to every party.  Returns per input wire
   // the mask where it was opened to this party.
-  std::vector<unsigned char> open_input_masks(const Material &material,
+  std::vector<unsigned char> open_input_masks(Material &material,
                                               const std::vector<int> &owner) {
     expecting(material.live(), "open_input_masks: prepared material was already consumed");
     expecting(owner.size() == (size_t)material.ctx.num_in,
               "open_input_masks: owner count differs from the circuit input width");
-    return mpc->open_computation_input_masks_(material.target_inputs, owner);
+    return mpc->open_computation_input_masks_(material.target_inputs, owner, &material.bound);
   }
 
   // Online.  `lambda[w]` is Lambda for the input wires this party knows (its own
@@ -245,7 +249,8 @@ class AGMPCEngine {
     ComputeCtx &st = material.ctx;
     [[maybe_unused]] auto *io = mpc->io;
     AG_PHASE_BEGIN();
-    mpc->bind_computation_inputs_(material.target_inputs, owner, lambda, source, from_source);
+    mpc->bind_computation_inputs_(material.target_inputs, owner, lambda, source, from_source,
+                                  &material.bound);
     AG_PHASE("computation-bind");
     load_bound_prepared_inputs_(st, material.target_inputs);
 

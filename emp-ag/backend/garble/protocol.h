@@ -273,12 +273,16 @@ private:
   // Input-label exchange, shared by process_inputs and
   // adopt_authenticated_input: garblers ship label0 ⊕ Λ·Δ to the evaluator.
   void exchange_input_labels_(SecureWires<nP> &sw, int n_total);
+  // The same for the input wires `wires` only, in that order.
+  void exchange_input_labels_(SecureWires<nP> &sw, const std::vector<int> &wires);
 
   // Prepared execution input seam.  make_prepared_inputs_ mints fresh target
   // masks/labels without assigning an owner or opening a mask.  The online
   // binder then either attaches staged clear bits or solders an existing
   // authenticated value onto those targets, in one flattened phase.
-  SecureWires<nP> make_prepared_inputs_(int n);
+  // A Computation's wires bound at prepare (`bound`, optional) take their value as the
+  // mask instead of a fresh one.
+  SecureWires<nP> make_prepared_inputs_(int n, const PreparedBound<nP> *bound = nullptr);
   void bind_prepared_inputs_(SecureWires<nP> &target,
                              const PreparedInputBinding<nP> &binding);
   void broadcast_input_masks_(SecureWires<nP> &sw,
@@ -292,14 +296,18 @@ private:
   // (its own and the Public ones), broadcasts the owners' masked values and
   // exchanges the input labels. A wire with an authenticated source (source != null,
   // from_source[w] set) takes no broadcast: every party opens d = source ^ mask under a
-  // MAC check, and Lambda = d.
+  // MAC check, and Lambda = d. A wire bound at prepare (bound[w] set, PreparedBound) is
+  // opened to no one; offline, the garblers send P1 its labels for Lambda = 0, and online
+  // it takes neither a broadcast nor a label.
   std::vector<unsigned char> open_computation_input_masks_(
-      const SecureWires<nP> &target, const std::vector<int> &owner);
+      SecureWires<nP> &target, const std::vector<int> &owner,
+      const std::vector<unsigned char> *bound = nullptr);
   void bind_computation_inputs_(SecureWires<nP> &target,
                                 const std::vector<int> &owner,
                                 const std::vector<unsigned char> &lambda,
                                 const AShareBundle<nP> *source = nullptr,
-                                const std::vector<unsigned char> *from_source = nullptr);
+                                const std::vector<unsigned char> *from_source = nullptr,
+                                const std::vector<unsigned char> *bound = nullptr);
 
   // One method per protocol phase over a shared ComputeCtx; AGMPCEngine<nP>
   // sequences them in protocol order.

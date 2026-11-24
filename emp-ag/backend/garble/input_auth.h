@@ -229,14 +229,29 @@ void AGMPCProtocol<nP, Cfg>::broadcast_input_masks_(
 // Offline half of prepared input handling: mint a fresh authenticated mask and
 // garbling-label pair for every circuit input, but do not name an owner, open a
 // mask, or select an evaluator label.  Lambda/eval_label are zero placeholders
-// solely so the ordinary slot loader can seed the offline circuit walks.
+// solely so the ordinary slot loader can seed the offline circuit walks.  A wire
+// bound at prepare takes its value as the mask, with Lambda 0 for good, and draws
+// none: one draw covers the other wires, in order.
 template <int nP, class Cfg>
-SecureWires<nP> AGMPCProtocol<nP, Cfg>::make_prepared_inputs_(int n) {
+SecureWires<nP> AGMPCProtocol<nP, Cfg>::make_prepared_inputs_(int n,
+                                                              const PreparedBound<nP> *bound) {
   expecting(n >= 0, "make_prepared_inputs: negative input width");
+  expecting(bound == nullptr || (bound->bound.size() == (size_t)n && bound->bundle.size() == (size_t)n),
+            "make_prepared_inputs: bound inputs differ in width");
   SecureWires<nP> sw;
   sw.Lambda.assign((size_t)n, 0);
   if (n == 0) return sw;
-  abit->draw(n, sw.wire_bundle);
+  if (bound == nullptr) {
+    abit->draw(n, sw.wire_bundle);
+  } else {
+    int fresh_n = 0;
+    for (int w = 0; w < n; ++w) fresh_n += bound->bound[(size_t)w] ? 0 : 1;
+    AShareBundleVec<nP> fresh;
+    if (fresh_n > 0) abit->draw(fresh_n, fresh);
+    sw.wire_bundle.resize((size_t)n);
+    for (int w = 0, j = 0; w < n; ++w)
+      sw.wire_bundle[(size_t)w] = bound->bound[(size_t)w] ? bound->bundle[(size_t)w] : fresh[(size_t)j++];
+  }
   if (party != 1) {
     sw.label0.resize((size_t)n);
     prg.random_block(sw.label0.data(), n);
@@ -320,16 +335,25 @@ void AGMPCProtocol<nP, Cfg>::bind_prepared_inputs_(
 // party; no owner broadcast is needed for it online.
 template <int nP, class Cfg>
 std::vector<unsigned char> AGMPCProtocol<nP, Cfg>::open_computation_input_masks_(
-    const SecureWires<nP> &target, const std::vector<int> &owner) {
+    SecureWires<nP> &target, const std::vector<int> &owner,
+    const std::vector<unsigned char> *bound) {
   const int n = (int)owner.size();
   expecting(target.wire_bundle.size() == (size_t)n,
             "open_computation_input_masks: target width mismatch");
+  expecting(bound == nullptr || bound->empty() || bound->size() == (size_t)n,
+            "open_computation_input_masks: bound flags differ in width");
   std::vector<unsigned char> mine((size_t)n, 0);
   if (n == 0) return mine;
+  auto is_bound = [&](int w) { return bound != nullptr && !bound->empty() && (*bound)[(size_t)w] != 0; };
   std::vector<std::vector<int>> targets(nP + 1);
+  std::vector<int> bound_wires;
   for (int w = 0; w < n; ++w) {
     expecting(owner[w] == PUBLIC || (owner[w] >= 1 && owner[w] <= nP),
               "open_computation_input_masks: owner must be a party id in [1, nP] or PUBLIC");
+    if (is_bound(w)) {
+      bound_wires.push_back(w);
+      continue;
+    }
     if (owner[w] == PUBLIC)
       for (int t = 1; t <= nP; ++t) targets[t].push_back(w);
     else
@@ -343,6 +367,8 @@ std::vector<unsigned char> AGMPCProtocol<nP, Cfg>::open_computation_input_masks_
   std::vector<unsigned char> lam = open_to_targets(target.wire_bundle.data(), targets);
   const std::vector<int> &me = targets[party];
   for (size_t j = 0; j < me.size(); ++j) mine[(size_t)me[j]] = (unsigned char)(lam[j] & 1);
+  // A bound wire's masked value is 0, known now: its labels go to P1 offline.
+  if (!bound_wires.empty()) exchange_input_labels_(target, bound_wires);
   return mine;
 }
 
@@ -363,16 +389,23 @@ template <int nP, class Cfg>
 void AGMPCProtocol<nP, Cfg>::bind_computation_inputs_(
     SecureWires<nP> &target, const std::vector<int> &owner,
     const std::vector<unsigned char> &lambda, const AShareBundle<nP> *source,
-    const std::vector<unsigned char> *from_source) {
+    const std::vector<unsigned char> *from_source, const std::vector<unsigned char> *bound) {
   const int n = (int)owner.size();
   expecting(target.size() == (size_t)n && lambda.size() == (size_t)n,
             "bind_computation_inputs: width mismatch");
   expecting(source == nullptr || (from_source != nullptr && from_source->size() == (size_t)n),
             "bind_computation_inputs: source flags differ in width");
+  expecting(bound == nullptr || bound->empty() || bound->size() == (size_t)n,
+            "bind_computation_inputs: bound flags differ in width");
   if (n == 0) return;
   auto sourced = [&](int w) { return source != nullptr && (*from_source)[(size_t)w] != 0; };
-  std::vector<int> source_wires;
-  for (int w = 0; w < n; ++w) if (sourced(w)) source_wires.push_back(w);
+  auto is_bound = [&](int w) { return bound != nullptr && !bound->empty() && (*bound)[(size_t)w] != 0; };
+  std::vector<int> source_wires, unbound_wires;
+  for (int w = 0; w < n; ++w) {
+    expecting(!(sourced(w) && is_bound(w)), "bind_computation_inputs: a wire is both bound and sourced");
+    if (sourced(w)) source_wires.push_back(w);
+    if (!is_bound(w)) unbound_wires.push_back(w);
+  }
   if (!source_wires.empty()) {
     abit->maybe_flush_cot_check();
     abit->settle_check2();
@@ -388,13 +421,15 @@ void AGMPCProtocol<nP, Cfg>::bind_computation_inputs_(
   }
   std::vector<std::vector<int>> owner_wires(nP + 1);
   for (int w = 0; w < n; ++w) {
-    if (sourced(w)) continue;
+    if (sourced(w) || is_bound(w)) continue;
     if (owner[w] == PUBLIC || owner[w] == party)
       target.Lambda[w] = (unsigned char)(lambda[w] & 1);
     if (owner[w] != PUBLIC) owner_wires[owner[w]].push_back(w);
   }
   broadcast_input_masks_(target, owner_wires);
-  exchange_input_labels_(target, n);
+  // A bound wire's labels went to P1 at prepare.
+  if (unbound_wires.size() == (size_t)n) exchange_input_labels_(target, n);
+  else if (!unbound_wires.empty()) exchange_input_labels_(target, unbound_wires);
 }
 
 // Input-label exchange, shared with adopt_authenticated_input: garblers (Pi, i>=2)
@@ -414,6 +449,33 @@ void AGMPCProtocol<nP, Cfg>::exchange_input_labels_(SecureWires<nP> &sw, int n_t
       res.push_back(pool->enqueue([this, &sw, n_total, party2]() {
         io->recv_data(party2, sw.eval_label[party2].data(),
                       n_total * sizeof(block));
+      }));
+    }
+    joinNclean(res);
+  }
+}
+
+template <int nP, class Cfg>
+void AGMPCProtocol<nP, Cfg>::exchange_input_labels_(SecureWires<nP> &sw,
+                                                    const std::vector<int> &wires) {
+  const int m = (int)wires.size();
+  if (m == 0) return;
+  if (party != 1) {
+    BlockVec tmp(m);
+    for (int j = 0; j < m; ++j) {
+      const int i = wires[(size_t)j];
+      tmp[j] = sw.Lambda[(size_t)i] ? (sw.label0[(size_t)i] ^ Delta) : sw.label0[(size_t)i];
+    }
+    io->send_data(1, tmp.data(), m * sizeof(block));
+    io->flush(1);
+  } else {
+    std::vector<future<void>> res;
+    for (int p2 = 2; p2 <= nP; ++p2) {
+      const int party2 = p2;
+      res.push_back(pool->enqueue([this, &sw, &wires, m, party2]() {
+        BlockVec tmp(m);
+        io->recv_data(party2, tmp.data(), m * sizeof(block));
+        for (int j = 0; j < m; ++j) sw.eval_label[party2][(size_t)wires[(size_t)j]] = tmp[j];
       }));
     }
     joinNclean(res);
