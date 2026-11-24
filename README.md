@@ -128,13 +128,15 @@ instead from a bank of cut-and-choose triples
 (`backend/triple/cut_and_choose_triples.h`), generated `batch` at a time and
 checked before use. This sends fewer bytes per triple when COTs are cheap
 (`Ferret`) and batches are large, at the cost of more computation and of memory
-proportional to the batch. Any other protocol for the AND gates can be passed the
+proportional to the batch. Batch `i` of a session is held to `2^-ssp / (i(i+1))`;
+`ag::cut_and_choose_prep<nP>(batch, batches)` instead declares the number of
+batches up front, holds each to `2^-ssp / batches`, and refuses a batch beyond it. Any other protocol for the AND gates can be passed the
 same way (`backend/triple/and_prep.h` states what it must guarantee, and how its
 factory lists its draws for a session's COT plan). Every party
 must make the same choice; a session binds every protocol but the leaky ANDs into
 its session id, so a mismatch fails setup.
 
-The garbling options are compile-time: `AGMPCSession<nP, ag::GarbleConfig<A, D, C>>`
+The garbling options are compile-time: `AGMPCSession<nP, ag::GarbleConfig<A, D, C, L>>`
 (`backend/garble/garble_config.h`). Every party must use the same options; a session binds
 any non-default choice into its session id, so a mismatch fails setup.
 `-DEMP_AG_GARBLE_AUTH=WRK`, `-DEMP_AG_GARBLE_DELIVERY=DIRECT` and
@@ -148,6 +150,8 @@ any non-default choice into its session id, so a mismatch fails setup.
 | | `Delivery::DIRECT` | Each garbler sends its own rows to party 1, which sums them: no chain of hops, but every garbler's rows on party 1's link. |
 | `C` | `Cot::SoftSpoken` (default) | Each party runs one SoftSpoken extension per peer and direction: 16 bits per COT at `k = 8`, with each stream's consistency check deferred to before the next reveal. |
 | | `Cot::SilentFerret` | One SilentFerret instance per peer and direction, all of them prepaid at setup and folded together with one public LPN matrix: about 0.4 bits per COT, and drawing moves no bytes. |
+| `L` (`Cot::SilentFerret`) | `FerretLpn::B12` (default) | emp-ot's `ferret_b12` LPN parameters. |
+| | `FerretLpn::B13` | emp-ot's `ferret_b13`: longer rounds, about 0.2 bits per COT, and LPN tables twice the size. |
 
 ## Consuming from another CMake project
 
@@ -327,6 +331,33 @@ as_sender, out, n)` draws raw COTs from one stream (SoftSpoken mint), and
 before that protocol releases anything that depends on them; `run_computation`
 runs it again before it opens anything. While the job is outstanding these two
 are the only way to the streams.
+
+### Share mode
+
+A session can also hold Boolean values as aShares under its global keys and
+evaluate circuits on them (authenticated GMW). `SharedWires` is a vector of
+such values, which only the session builds:
+
+```cpp
+auto a = sess.share_input(1, bits);       // party 1's bits; the others pass as many, ignored
+auto r = sess.share_random(128);          // random shares
+auto y = sess.share_evaluate(prog, AGMPCSession<nP>::SharedWires::concat({&a, &r}));
+std::optional<emp::session::Bits> v = sess.share_reveal(y, PUBLIC);   // or to one party
+```
+
+XOR, NOT and constants are local (`a ^ b`, `share_public`, `share_xor_public`),
+and each layer of AND gates of the dense program `prog` is one Beaver
+multiplication in one flight, whose MAC tags are checked before its products
+are formed. The triples come from the session's protocol for the AND gates, which
+must keep a bank: `ag::cut_and_choose_prep<nP>(batch[, batches])`, whose bank the
+garbling's own AND gates draw from too. A session on the leaky ANDs refuses
+`share_evaluate`. A reveal flushes the COT check and settles the share
+consistency check before it opens anything. `-DEMP_AG_SHARE_TAG_BYTES=<10..16>`
+truncates share mode's tags (16 bytes by default; a forged tag passes with
+probability `2^-(8 bytes)`), and binds the session id. For a session's COT plan,
+`planned_cots_of_draws(draws)` takes the lengths of its pool draws: one per
+`share_input` and `share_random`, and the bank's, `and_prep.draws(T, ssp)` for
+`T` triples taken in all.
 
 ### Values and circuits
 
