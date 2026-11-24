@@ -26,6 +26,9 @@ namespace cf = emp::frontend;
 #ifndef COMP_SSP
 #define COMP_SSP 40
 #endif
+#ifndef COMP_SSP_SKEW   // misuse case: party 2 runs at COMP_SSP + COMP_SSP_SKEW
+#define COMP_SSP_SKEW 0
+#endif
 constexpr int nP = COMP_NP;
 using AgSession = AGMPCSession<nP>;
 
@@ -211,7 +214,7 @@ int main(int argc, char **argv) {
   const int party = parse_party(argv, nP);
   if (party > nP) return 0;
   ThreadPool pool(ag::default_pool_size(nP));
-  AgSession sess(party, peer_port(), nullptr, &pool, COMP_SSP);
+  AgSession sess(party, peer_port(), nullptr, &pool, COMP_SSP + (party == 2 ? COMP_SSP_SKEW : 0));
   static_assert(ComputationSession<AgSession>);
   static_assert(!std::is_copy_constructible_v<AgSession::job_t> &&
                 std::is_move_constructible_v<AgSession::job_t>);
