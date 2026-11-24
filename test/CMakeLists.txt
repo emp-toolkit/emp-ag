@@ -138,6 +138,11 @@ add_np_variant(agmpc_golden_cnc_pairwise_np3 agmpc_golden_snapshot.cpp 3
                     EMP_AG_OPEN_CHECK_PAIRWISE)
 set_tests_properties(agmpc_golden_cnc_np2 agmpc_golden_cnc_np3 agmpc_golden_cnc_pairwise_np3
                      PROPERTIES LABELS debug_heavy)
+# At nP = 4 the four parties share the macOS runners' three cores, and these become the
+# slowest Debug tests there, so they carry debug_heavy too. Every other job runs them.
+set_tests_properties(agmpc_golden_np4 agmpc_golden_pairwise_np4 agmpc_golden_direct_np4
+                     agmpc_golden_wrk_np4 agmpc_golden_wrk_direct_np4 agmpc_cut_and_choose_np4
+                     PROPERTIES LABELS debug_heavy)
 
 # Pure-linear (zero AND gates) revealed to a GARBLER: covers the num_ands==0
 # garbler-MASK propagation (a garbler sets its fabric MASK only in the output-check walk,
