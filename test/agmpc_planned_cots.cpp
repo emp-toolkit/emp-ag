@@ -8,10 +8,14 @@
 //      the inputs' masks are the only draw;
 //   4. at nP == 2, on SoftSpoken streams: the leaky ANDs, and 32 more COTs that party 1
 //      sends party 2 through draw_cots(job, ...), planned on those two streams only;
-//   5. the leaky ANDs on SilentFerret streams with the B13 LPN set.
+//   5. the leaky ANDs on SilentFerret streams with the B13 LPN set;
+//   6. share mode on cut-and-choose triples in batches of 16: five input bits from every
+//      party, three random shares, and 40 AND gates in two evaluations (three batches),
+//      planned from the draws' lengths (planned_cots_of_draws).
 // A SoftSpoken stream aborts on a plan short of its draws; a plan beyond them leaves
 // cots_drawn() below it, which the check catches. Every case also checks the output, and
-// that planned_cots from the input-wire and AND-gate counts gives the same plan.
+// the Computation cases that planned_cots from the input-wire and AND-gate counts gives
+// the same plan.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
 #include <cstdint>
@@ -126,6 +130,66 @@ static bool run_case(NetIOMP<nP> &io, ThreadPool &pool, int party, const char *n
   return ok;
 }
 
+// n AND gates, gate k on inputs k and k + shift (mod ni), each an output.
+static BooleanProgram and_pairs(uint32_t ni, int n, uint32_t shift) {
+  BooleanProgram p;
+  p.num_inputs = ni;
+  uint32_t next = ni;
+  for (int k = 0; k < n; ++k) {
+    Gate g;
+    g.op = Op::And;
+    g.in0 = (uint32_t)k % ni;
+    g.in1 = ((uint32_t)k + shift) % ni;
+    g.out = next++;
+    p.gates.push_back(g);
+    p.outputs.push_back(g.out);
+  }
+  p.num_wires = next;
+  return p;
+}
+
+template <class Cfg>
+static bool run_share_case(NetIOMP<nP> &io, ThreadPool &pool, int party) {
+  using Sess = AGMPCSession<nP, Cfg>;
+  using Wires = typename Sess::SharedWires;
+  constexpr int kIn = 5, kRandom = 3, kAnds = 20;
+  const ag::AndPrepFactory<nP> prep = ag::cut_and_choose_prep<nP>(16);
+  std::vector<int64_t> draws(nP, kIn);
+  draws.push_back(kRandom);
+  for (int64_t n : prep.draws(2 * kAnds, kSsp)) draws.push_back(n);
+  const int64_t plan = Sess::planned_cots_of_draws(draws);
+  bool ok = true;
+  {
+    Sess sess(&io, &pool, party, kSsp, nullptr, std::nullopt, BaseOtKind::CSW, plan, plan, prep);
+    Wires in;
+    std::vector<uint8_t> clear;
+    for (int o = 1; o <= nP; ++o) {
+      const emp::session::Bits mine = bits_of(0x15u + (uint32_t)o, kIn);   // known to all: test only
+      const Wires w = sess.share_input(o, party == o ? mine : emp::session::Bits(kIn, 0));
+      in = Wires::concat({&in, &w});
+      clear.insert(clear.end(), mine.begin(), mine.end());
+    }
+    const Wires r = sess.share_random(kRandom);
+    const std::optional<emp::session::Bits> rv = sess.share_reveal(r, PUBLIC);
+    ok = rv.has_value() && rv->size() == (size_t)kRandom;
+    for (uint32_t shift : {1u, 3u}) {
+      const BooleanProgram p = and_pairs((uint32_t)in.size(), kAnds, shift);
+      const std::optional<emp::session::Bits> got = sess.share_reveal(sess.share_evaluate(p, in), PUBLIC);
+      for (int k = 0; k < kAnds; ++k)
+        ok = ok && got.has_value() &&
+             (*got)[(size_t)k] == (clear[p.gates[(size_t)k].in0] & clear[p.gates[(size_t)k].in1]);
+    }
+    for (int p = 1; p <= nP; ++p) {
+      if (p == party) continue;
+      ok = ok && sess.protocol().abit->cots_drawn(p, true) == plan &&
+           sess.protocol().abit->cots_drawn(p, false) == plan;
+    }
+  }
+  std::printf("agmpc_planned_cots[np=%d, share mode] party %d: plan %lld: %s\n", nP, party,
+              (long long)plan, ok ? "GOOD" : "BAD");
+  return ok;
+}
+
 int main(int argc, char **argv) {
   const int party = parse_party(argv, nP);
   if (party > nP) return 0;
@@ -144,5 +208,6 @@ int main(int argc, char **argv) {
   using Ferret13 = ag::GarbleConfig<ag::Auth::EMP_AG_GARBLE_AUTH, ag::Delivery::EMP_AG_GARBLE_DELIVERY,
                                     ag::Cot::SilentFerret, ag::FerretLpn::B13>;
   ok = run_case<Ferret13>(io, pool, party, "SilentFerret b13", 40, ag::leaky_and_prep<nP>()) && ok;
+  ok = run_share_case<Build>(io, pool, party) && ok;
   return ok ? 0 : 1;
 }

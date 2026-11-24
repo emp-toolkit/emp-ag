@@ -223,3 +223,16 @@ add_np_variant(agmpc_computation_equiv_np3 ../agmpc_computation.cpp 3
 add_np_variant(agmpc_computation_equiv_wrk_np3 ../agmpc_computation.cpp 3
                DEFS COMP_NP=3 EMP_AG_GARBLE_AUTH=WRK EMP_AG_TEST_FLIP_INPUT_LAMBDA
                PASS_RE "input Lambda equivocation")
+
+# Share mode (../agmpc_share_eval.cpp). FLIP_XY: party 2 flips its share of a layer's first
+# x and sends it to everyone; FLIP_TAG: party 2 flips the last byte of the tag it sends to
+# P1, at the full and the 80-bit width. The pairwise check must abort.
+foreach(_np 2 3)
+    add_np_variant(agmpc_share_eval_flip_xy_np${_np} ../agmpc_share_eval.cpp ${_np}
+                   DEFS SHARE_NP=${_np} EMP_AG_TEST_FLIP_XY PASS_RE "share evaluation: MAC tag mismatch")
+endforeach()
+add_np_variant(agmpc_share_eval_flip_tag_np3 ../agmpc_share_eval.cpp 3
+               DEFS SHARE_NP=3 EMP_AG_TEST_FLIP_TAG PASS_RE "share evaluation: MAC tag mismatch")
+add_np_variant(agmpc_share_eval_flip_tag80_np3 ../agmpc_share_eval.cpp 3
+               DEFS SHARE_NP=3 EMP_AG_SHARE_TAG_BYTES=10 EMP_AG_TEST_FLIP_TAG
+               PASS_RE "share evaluation: MAC tag mismatch")

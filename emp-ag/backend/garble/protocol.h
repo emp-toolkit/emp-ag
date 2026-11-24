@@ -67,18 +67,21 @@ AndPrepFactory<nP> default_and_prep() {
 }
 
 // The build options that change the wire without a type of their own: the open checker
-// (EMP_AG_OPEN_CHECK_*, ashare/open_check.h) and SoftSpoken's k (EMP_AG_SOFTSPOKEN_K). As
-// with the garbling options, the defaults leave the session id as it is, and any other
-// choice binds it, so parties built differently fail setup.
+// (EMP_AG_OPEN_CHECK_*, ashare/open_check.h), SoftSpoken's k (EMP_AG_SOFTSPOKEN_K) and the
+// width of share evaluation's tags (EMP_AG_SHARE_TAG_BYTES). As with the garbling options,
+// the defaults leave the session id as it is, and any other choice binds it, so parties
+// built differently fail setup.
 template <int nP, class Cfg>
 inline block bind_build_options(block session_id) {
   constexpr bool pairwise = std::is_same_v<DefaultOpenCheck<nP>, PairwiseOpenCheck<nP>>;
   constexpr int k = Cfg::cot == Cot::SoftSpoken ? EMP_AG_SOFTSPOKEN_K : 0;
-  if (pairwise == (nP == 2) && (k == 0 || k == 8)) return session_id;
-  return RO("emp-ag:build-options", session_id)
-      .absorb((uint64_t)(pairwise ? 1 : 2))
-      .absorb((uint64_t)k)
-      .squeeze_block();
+  constexpr int share_tag = EMP_AG_SHARE_TAG_BYTES;
+  static_assert(share_tag >= 10 && share_tag <= 16, "EMP_AG_SHARE_TAG_BYTES must be 10 to 16");
+  if (pairwise == (nP == 2) && (k == 0 || k == 8) && share_tag == 16) return session_id;
+  RO ro("emp-ag:build-options", session_id);
+  ro.absorb((uint64_t)(pairwise ? 1 : 2)).absorb((uint64_t)k);
+  if (share_tag != 16) ro.absorb((uint64_t)share_tag);
+  return ro.squeeze_block();
 }
 
 // The statistical security parameter shapes the buckets, the row windows and the checks,
@@ -236,6 +239,13 @@ public:
   // recipient computes y_w = Λ_w ⊕ λ_w. Returns the n cleartext bits at
   // `recipient`; empty vector at non-recipients.
   std::vector<bool> decode(const SecureWires<nP> &wires, int recipient);
+
+  // Share mode (AGMPCSession::share_*): aShares with no garbling labels; see input_auth.h.
+  // share_inputs: n aShares of the owner's bits (non-owners pass n placeholder bits).
+  // share_open: n aShares opened to `recipient` (a party, or PUBLIC for every party); the
+  // bits at the recipients, empty elsewhere.
+  AShareBundleVec<nP> share_inputs(int owner, const unsigned char *bits, int n);
+  std::vector<unsigned char> share_open(const AShareBundle<nP> *b, int n, int recipient);
 
 private:
   template <int, class> friend class AGMPCEngine;  // the engine drives ComputeCtx + the per-step methods

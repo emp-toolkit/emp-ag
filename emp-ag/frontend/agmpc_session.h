@@ -29,6 +29,7 @@
 #include "emp-tool/ir/session/chunked_session.h"     // ChunkedSession<Derived> (ctx_t = ChunkRecorderCtx)
 #include "emp-ag/backend/garble/protocol.h"             // AGMPCProtocol, SecureWires, AShareBundle
 #include "emp-ag/backend/garble/engine.h"                   // emp::ag::AGMPCEngine<nP>
+#include "emp-ag/backend/triple/share_eval.h"               // share mode
 #include "emp-ag/backend/common/netmp.h"                    // NetIOMP / NetIOMPGroup (owned below)
 #include "emp-ag/backend/common/runtime.h"                  // ag::lanes_for (production lane count)
 #include <memory>                                    // owned NetIOMP / NetIOMPGroup
@@ -419,17 +420,29 @@ public:
     const ag::AndPrepFactory<nP> prep = and_prep.make ? and_prep : ag::default_and_prep<nP>();
     expecting(static_cast<bool>(prep.draws),
               "AGMPCSession::planned_cots: the AND-gate protocol does not state its draws");
+    std::vector<int64_t> draws;
+    if (num_inputs > 0) draws.push_back(num_inputs);   // the inputs' masks (make_prepared_inputs_)
+    if (num_ands > 0) {
+      draws.push_back(num_ands);                       // the AND gates' output masks (draw_and_seed)
+      for (int64_t n : prep.draws(num_ands, ssp)) draws.push_back(n);
+    }
+    return planned_cots_of_draws(draws);
+  }
+  // The COTs each COT stream draws in a session whose draws from its pool have the
+  // lengths `draws`, in any order: the mint's bootstrap prefix, then each draw with
+  // check2's hiding shares at nP > 2 and the first with check1's tail. A draw of none
+  // takes nothing. Share mode draws its width at each share_input and share_random; its
+  // AND gates take triples from the AND-gate protocol's bank, which draws
+  // and_prep.draws(T, ssp) for T triples taken in all, the protocol's own gates included.
+  static int64_t planned_cots_of_draws(const std::vector<int64_t> &draws) {
     using Pool = typename AGMPCProtocol<nP, Cfg>::ashare_t;
     int64_t cots = ag::MintFor<nP, Cfg::cot, Cfg::lpn>::kPrefix;
     bool first = true;
-    auto draw = [&](int64_t n) {
+    for (int64_t n : draws) {
+      expecting(n >= 0, "AGMPCSession::planned_cots_of_draws: a negative draw");
+      if (n == 0) continue;
       cots += Pool::cots_of_draw(n, first);
       first = false;
-    };
-    if (num_inputs > 0) draw(num_inputs);   // the inputs' masks (make_prepared_inputs_)
-    if (num_ands > 0) {
-      draw(num_ands);                       // the AND gates' output masks (draw_and_seed)
-      for (int64_t n : prep.draws(num_ands, ssp)) draw(n);
     }
     return cots;
   }
@@ -792,6 +805,106 @@ public:
     return Base::template from_ids_<V>(this->ctx_, ids);
   }
 
+  // ---- Share mode: Boolean values held as aShares under the session's global keys
+  // (authenticated GMW, backend/triple/share_eval.h). A SharedWires is a vector of them.
+  // Only the session builds one, from its pool, an owner's bits, public bits, local XOR
+  // and checked evaluation, so each share is one bit toward every peer. Every call that
+  // sends is refused while a job is outstanding. share_evaluate takes its triples from
+  // the session's AND-gate protocol, which must keep a bank (ag::cut_and_choose_prep);
+  // the protocol's own calls take from the same bank.
+  class SharedWires {
+  public:
+    SharedWires() = default;
+    size_t size() const { return b_.size(); }
+    // Wires [lo, hi).
+    SharedWires slice(size_t lo, size_t hi) const {
+      expecting(lo <= hi && hi <= b_.size(), "SharedWires::slice: out of range");
+      SharedWires r;
+      r.b_.assign(b_.begin() + (std::ptrdiff_t)lo, b_.begin() + (std::ptrdiff_t)hi);
+      return r;
+    }
+    // The wires of `parts`, in order.
+    static SharedWires concat(std::initializer_list<const SharedWires *> parts) {
+      SharedWires r;
+      for (const SharedWires *p : parts) r.b_.insert(r.b_.end(), p->b_.begin(), p->b_.end());
+      return r;
+    }
+    // Wire-wise XOR, local.
+    friend SharedWires operator^(const SharedWires &a, const SharedWires &b) {
+      expecting(a.size() == b.size(), "SharedWires: XOR of different widths");
+      SharedWires r;
+      r.b_.resize(a.size());
+      for (size_t i = 0; i < a.size(); ++i) ag::xor_share(r.b_[i], a.b_[i], b.b_[i]);
+      return r;
+    }
+
+  private:
+    friend class AGMPCSession<nP, Cfg>;
+    ag::AShareBundleVec<nP> b_;
+  };
+
+  // Shares of `owner`'s bits; the other parties pass bits of the same width, ignored. One
+  // draw, the masks opened to the owner, and its broadcast of x ^ mask (echoed at nP > 2).
+  SharedWires share_input(int owner, const session::Bits &bits) {
+    require_no_job_("AGMPCSession::share_input");
+    expecting(bits.size() <= (size_t)INT_MAX, "AGMPCSession::share_input: too many bits");
+    SharedWires r;
+    r.b_ = proto_.share_inputs(owner, bits.data(), (int)bits.size());
+    return r;
+  }
+  // n random shares: one draw from the session's pool.
+  SharedWires share_random(int64_t n) {
+    require_no_job_("AGMPCSession::share_random");
+    expecting(n >= 0 && n <= (int64_t)INT_MAX, "AGMPCSession::share_random: count out of range");
+    SharedWires r;
+    if (n > 0) proto_.abit->draw((int)n, r.b_);
+    return r;
+  }
+  // Public bits as shares, and v XOR public bits: local.
+  SharedWires share_public(const session::Bits &bits) const {
+    SharedWires r;
+    r.b_.resize(bits.size());
+    for (size_t i = 0; i < bits.size(); ++i) {
+      ag::zero_share(r.b_[i]);
+      if (bits[i] & 1) add_one_(r.b_[i]);
+    }
+    return r;
+  }
+  SharedWires share_xor_public(const SharedWires &v, const session::Bits &bits) const {
+    expecting(bits.size() == v.size(), "AGMPCSession::share_xor_public: widths differ");
+    SharedWires r = v;
+    for (size_t i = 0; i < bits.size(); ++i)
+      if (bits[i] & 1) add_one_(r.b_[i]);
+    return r;
+  }
+  // `prog`, a dense circuit, on `in`: one flight per AND layer.
+  SharedWires share_evaluate(const circuit::BooleanProgram &prog, const SharedWires &in) {
+    require_no_job_("AGMPCSession::share_evaluate");
+    if (!share_eval_) {
+      ag::TripleBank<nP> *bank = proto_.and_prep->triples();
+      expecting(bank != nullptr,
+                "AGMPCSession::share_evaluate: the AND-gate protocol keeps no triple bank "
+                "(use ag::cut_and_choose_prep)");
+      share_eval_ = std::make_unique<ag::ShareEval<nP>>(
+          io_view_, group_view_, proto_.pool, proto_.party, proto_.Delta, proto_.session_id,
+          *proto_.abit, *bank, EMP_AG_SHARE_TAG_BYTES);
+    }
+    SharedWires r;
+    r.b_ = share_eval_->evaluate(prog, in.b_);
+    return r;
+  }
+  // v opened to `recipient`, a party or PUBLIC: the bits there, nullopt elsewhere.
+  std::optional<session::Bits> share_reveal(const SharedWires &v, int recipient) {
+    require_no_job_("AGMPCSession::share_reveal");
+    expecting(v.size() <= (size_t)INT_MAX, "AGMPCSession::share_reveal: too many wires");
+    std::vector<unsigned char> bits = proto_.share_open(v.b_.data(), (int)v.size(), recipient);
+    if (recipient != PUBLIC && recipient != proto_.party) return std::nullopt;
+    return session::Bits(bits.begin(), bits.end());
+  }
+  // AND layers and gates share mode has evaluated.
+  int64_t share_layers() const { return share_eval_ ? share_eval_->layers() : 0; }
+  int64_t share_ands() const { return share_eval_ ? share_eval_->ands() : 0; }
+
 private:
   static int checked_owned_lanes_(int party, int port, ThreadPool *pool,
                                   int ssp, int lanes) {
@@ -856,6 +969,7 @@ private:
   std::vector<StagedInput> staged_inputs_;
   std::unordered_map<uint32_t, StagedLoc> staged_by_id_;
   JobKind job_ = JobKind::None;      // the outstanding job's kind, if any
+  std::unique_ptr<ag::ShareEval<nP>> share_eval_;   // share mode's evaluator, built on first use
   uint64_t job_token_ = 0;            // and the token that names it
   uint64_t next_job_token_ = 0;
   size_t lazy_label_count_ = 0;
@@ -1071,6 +1185,16 @@ private:
   void require_no_computation_job_(const char *what) const {
     expecting(job_ != JobKind::Computation,
               [&] { return std::string(what) + ": a Computation job is outstanding"; });
+  }
+  // Share mode sends outside every job's flights, so it waits for no job at all.
+  void require_no_job_(const char *what) const {
+    expecting(job_ == JobKind::None, [&] { return std::string(what) + ": a job is outstanding"; });
+  }
+  void add_one_(ag::AShareBundle<nP> &b) const {
+    const int party = proto_.party;
+    ag::add_public_one<nP>(party, proto_.Delta,
+                           [&](int p) -> block & { return b.mac(ag::peer_slot(party, p)); },
+                           [&](int p) -> block & { return b.key(ag::peer_slot(party, p)); });
   }
   void carry_load_(CarriedState& c, const SecureWires<nP>& s, size_t i) const {
     const int party = proto_.party;

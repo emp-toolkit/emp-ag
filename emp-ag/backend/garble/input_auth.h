@@ -103,6 +103,56 @@ std::vector<SecureWires<nP>> AGMPCProtocol<nP, Cfg>::process_inputs(
   return result;
 }
 
+// Share mode: process_inputs without the garbling labels. One draw of n masks, each
+// opened to the owner only; the owner broadcasts x ^ mask (echoed at nP > 2), and every
+// party folds that public bit into its share of the mask, giving an aShare of x. The
+// draw's consistency view stays pending, as in process_inputs: the broadcast reveals only
+// x ^ mask, and the next open check or opening settles it.
+template <int nP, class Cfg>
+AShareBundleVec<nP> AGMPCProtocol<nP, Cfg>::share_inputs(int owner, const unsigned char *bits,
+                                                         int n) {
+  expecting(owner >= 1 && owner <= nP, "share_inputs: owner id out of range [1, nP]");
+  expecting(n >= 0, "share_inputs: a negative count");
+  expecting(party != owner || n == 0 || bits != nullptr, "share_inputs: the owner's bits are missing");
+  if (n == 0) return {};
+  SecureWires<nP> sw;   // the masks and their public Λ only
+  sw.Lambda.assign((size_t)n, 0);
+  abit->draw(n, sw.wire_bundle);
+  abit->maybe_flush_cot_check();
+  std::vector<std::vector<int>> wires_of(nP + 1);
+  wires_of[owner].resize((size_t)n);
+  for (int i = 0; i < n; ++i) wires_of[owner][(size_t)i] = i;
+  const std::vector<unsigned char> lam = open_to_targets(sw.wire_bundle.data(), wires_of);
+  if (party == owner)
+    for (int i = 0; i < n; ++i) sw.Lambda[(size_t)i] = (unsigned char)((lam[(size_t)i] ^ bits[i]) & 1);
+  broadcast_input_masks_(sw, wires_of);
+  AShareBundleVec<nP> out = std::move(sw.wire_bundle);
+  for (int i = 0; i < n; ++i)
+    if (sw.Lambda[(size_t)i])
+      add_public_one<nP>(party, Delta,
+                         [&](int p) -> block & { return out[(size_t)i].mac(peer_slot(party, p)); },
+                         [&](int p) -> block & { return out[(size_t)i].key(peer_slot(party, p)); });
+  return out;
+}
+
+// Share mode: open n aShares, each recipient checking every peer's share against its own
+// keys. The COT check is flushed and the consistency view settled first, as in decode().
+template <int nP, class Cfg>
+std::vector<unsigned char> AGMPCProtocol<nP, Cfg>::share_open(const AShareBundle<nP> *b, int n,
+                                                              int recipient) {
+  expecting(recipient == PUBLIC || (recipient >= 1 && recipient <= nP),
+            "share_open: recipient must be a party id in [1, nP] or PUBLIC");
+  expecting(n >= 0, "share_open: a negative count");
+  abit->maybe_flush_cot_check();
+  abit->settle_check2();
+  std::vector<int> all((size_t)n);
+  for (int i = 0; i < n; ++i) all[(size_t)i] = i;
+  std::vector<std::vector<int>> targets(nP + 1);
+  if (recipient == PUBLIC) for (int t = 1; t <= nP; ++t) targets[t] = all;
+  else                     targets[recipient] = all;
+  return open_to_targets(b, targets);
+}
+
 template <int nP, class Cfg>
 SecureWires<nP> AGMPCProtocol<nP, Cfg>::process_input(const bool *inputs, int n,
                                                 int owner) {
