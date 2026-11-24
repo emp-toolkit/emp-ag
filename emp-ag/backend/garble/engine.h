@@ -217,6 +217,17 @@ class AGMPCEngine {
     return mpc->open_computation_input_masks_(material.target_inputs, owner, &material.bound);
   }
 
+  // Under WRK only: open a prepared Computation's output masks to their recipients now,
+  // ahead of its run, which then opens none. `open_to` must be the run's. Whether that is
+  // safe depends on the circuit (AGMPCSession::expert_open_output_masks).
+  void open_output_masks_early(Material &material, const std::vector<std::vector<int>> &open_to) {
+    static_assert(Cfg::auth == Auth::WRK, "open_output_masks_early: WRK only");
+    expecting(material.live(), "open_output_masks_early: prepared material was already consumed");
+    expecting(!material.masks_open, "open_output_masks_early: the output masks are already open");
+    material.early_mask = open_output_masks_(material.output_static.wire_bundle, open_to);
+    material.masks_open = true;
+  }
+
   // Online.  `lambda[w]` is Lambda for the input wires this party knows (its own
   // and the Public ones); `open_to[t]` lists the output positions party t
   // receives.  The inputs bind, P1 evaluates the stored rows, and every output
@@ -256,7 +267,8 @@ class AGMPCEngine {
 
     std::vector<unsigned char> mask;   // this party's opened output masks, in open_to[party] order
     if constexpr (Cfg::auth == Auth::WRK)
-      mask = open_output_masks_(material.output_static.wire_bundle, open_to);
+      mask = material.masks_open ? std::move(material.early_mask)
+                                 : open_output_masks_(material.output_static.wire_bundle, open_to);
 
     Wires out = evaluate_stored_(material, /*linear_masks=*/false);
     if constexpr (Cfg::auth == Auth::KRRW)

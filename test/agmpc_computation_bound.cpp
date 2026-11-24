@@ -11,7 +11,9 @@
 //   3. no AND gates: outputs linear in the bound, Party and Public bits;
 //   4. a bound value from share_input and share_random alone, which also runs on the
 //      leaky ANDs (BOUND_LEAKY: the only case there, as share_evaluate needs a bank);
-//   5. a composed Computation with a bound slot.
+//   5. a composed Computation with a bound slot;
+//   6. under WRK (BOUND_EXPERT), the output masks opened between prepare and run
+//      (expert_open_output_masks), every output an AND gate on a Public bit.
 // test/CMakeLists.txt builds it at nP = 2, 3, 4 under each Auth; the BOUND_MISUSE cases
 // are refused before any traffic.
 #include "emp-tool/emp-tool.h"
@@ -164,7 +166,7 @@ int main(int argc, char **argv) {
 #endif
   std::mt19937_64 rng(4242);
 
-#ifndef BOUND_LEAKY
+#if !defined(BOUND_LEAKY) && !defined(BOUND_EXPERT_ONLY)
   // 1. bound | party 2's bits | Public bits; out: u to every party, v to P1, v ^ b to garbler nP.
   {
     Bits bc;
@@ -299,6 +301,7 @@ int main(int argc, char **argv) {
     check_outputs(io, sess.run_computation(std::move(job), b), party, "composed, bound", want);
   }
 #endif
+#ifndef BOUND_EXPERT_ONLY
   // 4. bound values from share_input and share_random alone (no bank needed).
   {
     const Bits mine = random_bits(rng, W);   // party 1's, known to all: test only
@@ -326,6 +329,40 @@ int main(int argc, char **argv) {
     run_and_check(sess, party, "bound from share_input and share_random", artifact(bl.done(), io),
                   {&bv, nullptr}, b, want);
   }
+#endif
+#ifdef BOUND_EXPERT
+  // 6. under WRK, the output masks opened ahead of the run (expert_open_output_masks): the
+  //    Party slot bound, and every output an AND gate on a Public bit.
+  {
+    Bits bc;
+    const Wires bv = bound_values(sess, party, rng, &bc);
+    const Bits q = random_bits(rng, W);
+    Builder bl(2 * W);
+    for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::And, k, W + k));
+    std::vector<uint32_t> t(W);
+    for (uint32_t k = 0; k < W; ++k) t[k] = bl.gate(Op::Xor, k, W + k);
+    for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::And, t[k], W + (k + 1) % W));
+    IoSignature io;
+    io.inputs.push_back({W, InputKind::Party, 1});   // bound
+    io.inputs.push_back({W, InputKind::Public, PUBLIC});
+    io.outputs.push_back({W, OutputKind::Public, PUBLIC});
+    io.outputs.push_back({W, OutputKind::Party, nP});
+    std::vector<Bits> want(2, Bits(W));
+    for (uint32_t k = 0; k < W; ++k) want[0][k] = (uint8_t)(bc[k] & q[k]);
+    for (uint32_t k = 0; k < W; ++k) want[1][k] = (uint8_t)((bc[k] ^ q[k]) & q[(k + 1) % W]);
+    emp::session::RawBindings b;
+    b.inputs.resize(2);
+    b.inputs[1] = q;
+    auto job = sess.prepare_computation(artifact(bl.done(), io), {&bv, nullptr});
+    sess.expert_open_output_masks(job);
+    if (party == 1) {   // flushed: an abort in the run must not swallow it
+      std::printf("P1 reached the run\n");
+      std::fflush(stdout);
+    }
+    check_outputs(io, sess.run_computation(std::move(job), b), party, "masks opened ahead of the run",
+                  want);
+  }
+#endif
 
   if (fails) {
     std::printf("P%d: FAIL (%d)\n", party, fails);
