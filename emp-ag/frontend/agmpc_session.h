@@ -1060,6 +1060,47 @@ public:
     if (recipient != PUBLIC && recipient != proto_.party) return std::nullopt;
     return session::Bits(bits.begin(), bits.end());
   }
+  // Openings the caller checks itself, for example under one digest per pair that also
+  // covers values of its own (a mixed opening). Every party calls share_opening(v) at the
+  // same point, before it sends anything about v: it flushes the COT check and settles the
+  // share consistency check, as share_reveal does first, and returns this party's share
+  // bits of v and its MACs on them under each peer's key, which a party sends that peer.
+  // absorb_expected_macs puts into the caller's hash, through h.put_block, the MACs that
+  // peer's shares of v must carry for the bits it sent, K ^ bit * Delta, in order; the
+  // caller compares the digests. Delta stays in the session.
+  struct ShareOpening {
+    std::vector<unsigned char> bits;   // this party's share bit of each wire
+    std::vector<BlockVec> macs;        // macs[peer][k]: its MAC on bit k under peer's key
+  };
+  ShareOpening share_opening(const SharedWires &v) {
+    require_no_job_("AGMPCSession::share_opening");
+    require_mine_(v, "AGMPCSession::share_opening");
+    proto_.abit->maybe_flush_cot_check();
+    proto_.abit->settle_check2();
+    const int me = proto_.party;
+    ShareOpening o;
+    o.bits.resize(v.size());
+    o.macs.resize(nP + 1);
+    for (int p = 1; p <= nP; ++p) if (p != me) o.macs[(size_t)p].resize(v.size());
+    for (size_t k = 0; k < v.size(); ++k) {
+      o.bits[k] = (unsigned char)getLSB(v.b_[k].mac(0));   // bit 0 of every MAC
+      for (int p = 1; p <= nP; ++p)
+        if (p != me) o.macs[(size_t)p][k] = v.b_[k].mac(ag::peer_slot(me, p));
+    }
+    return o;
+  }
+  template <class Hash>
+  void absorb_expected_macs(Hash &h, const SharedWires &v, int peer, const unsigned char *bits) const {
+    require_mine_(v, "AGMPCSession::absorb_expected_macs");
+    expecting(peer >= 1 && peer <= nP && peer != proto_.party,
+              "AGMPCSession::absorb_expected_macs: peer must be another party");
+    const int s = ag::peer_slot(proto_.party, peer);
+    BlockVec e(v.size());
+    for (size_t k = 0; k < v.size(); ++k)
+      e[k] = v.b_[k].key(s) ^ (select_mask[bits[k] & 1] & proto_.Delta);
+    h.put_block(e.data(), (int64_t)e.size());
+  }
+
   // AND layers and gates share mode has evaluated.
   int64_t share_layers() const { return share_eval_ ? share_eval_->layers() : 0; }
   int64_t share_ands() const { return share_eval_ ? share_eval_->ands() : 0; }

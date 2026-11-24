@@ -381,6 +381,14 @@ probability `2^-(8 bytes)`), and binds the session id. For a session's COT plan,
 `share_input` and `share_random`, and the bank's, `and_prep.draws(T, ssp)` for
 `T` triples taken in all.
 
+An application that checks an opening itself, say under one digest per pair that
+also covers values of its own, calls `share_opening(v)` at every party before it
+sends anything about `v`. The call settles the session's checks first, as
+`share_reveal` does, and returns this party's share bits and its MACs on them under
+each peer's key. On receiving a peer's bits, `absorb_expected_macs(hash, v, peer,
+bits)` puts into the application's hash the MACs that peer's shares must carry,
+so no `Delta` leaves the session.
+
 ### Values and circuits
 
 Circuit values are emp-tool's context-bound types over the session's gate
