@@ -1067,16 +1067,20 @@ public:
   // bits of v and its MACs on them under each peer's key, which a party sends that peer.
   // absorb_expected_macs puts into the caller's hash, through h.put_block, the MACs that
   // peer's shares of v must carry for the bits it sent, K ^ bit * Delta, in order; the
-  // caller compares the digests. Delta stays in the session.
+  // caller compares the digests. Delta stays in the session. Both work while a
+  // Computation job is outstanding, between prepare_computation and run_computation: no
+  // share is drawn then, so the checks have nothing left to settle and nothing is sent.
   struct ShareOpening {
     std::vector<unsigned char> bits;   // this party's share bit of each wire
     std::vector<BlockVec> macs;        // macs[peer][k]: its MAC on bit k under peer's key
   };
   ShareOpening share_opening(const SharedWires &v) {
-    require_no_job_("AGMPCSession::share_opening");
     require_mine_(v, "AGMPCSession::share_opening");
+    const bool locked = job_ == JobKind::Computation;   // the job locks the pool's checks
+    if (locked) proto_.abit->set_one_way_lock(false);
     proto_.abit->maybe_flush_cot_check();
     proto_.abit->settle_check2();
+    if (locked) proto_.abit->set_one_way_lock(true);
     const int me = proto_.party;
     ShareOpening o;
     o.bits.resize(v.size());

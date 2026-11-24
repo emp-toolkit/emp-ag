@@ -2,7 +2,9 @@
 // application does when one digest per pair also covers values of its own. Every party sends
 // each peer its share bits and a digest of its MACs on them under that peer's key, and checks
 // each peer's digest against the MACs emp-ag expects for the bits it received. The opened
-// values are checked against share_reveal. The test's own messages share the session's mesh,
+// values are checked against share_reveal. The last round opens while a Computation job is
+// outstanding, between prepare_computation and run_computation, as an application does
+// between its offline and online phases. The test's own messages share the session's mesh,
 // in turn with the session. SHARE_OPEN_FLIP: party 2 flips the first bit it sends party 1,
 // which party 1's digest check must catch.
 #include "emp-tool/emp-tool.h"
@@ -10,6 +12,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
+#include <optional>
 #include <random>
 #include <vector>
 
@@ -49,6 +53,29 @@ int main(int argc, char **argv) {
     v = Wires::concat({&v, &r});
     const size_t n = v.size();
 
+    // The last round: a job outstanding, its Public input negated into a Public output.
+    std::optional<AgSession::job_t> job;
+    Bits q;
+    if (t == 2) {
+      auto prog = std::make_shared<emp::circuit::BooleanProgram>();
+      prog->num_inputs = 4;
+      for (uint32_t k = 0; k < 4; ++k) {
+        emp::circuit::Gate g;
+        g.op = emp::circuit::Op::Not;
+        g.in0 = k;
+        g.out = 4 + k;
+        prog->gates.push_back(g);
+        prog->outputs.push_back(4 + k);
+      }
+      prog->num_wires = 8;
+      auto art = std::make_shared<emp::circuit::ComputationArtifact>();
+      art->program = prog;
+      art->io.inputs.push_back({4, emp::circuit::InputKind::Public, PUBLIC});
+      art->io.outputs.push_back({4, emp::circuit::OutputKind::Public, PUBLIC});
+      job.emplace(sess.prepare_computation(art));
+      q = random_bits(rng, 4);
+    }
+
     const AgSession::ShareOpening op = sess.share_opening(v);
     for (int j = 1; j <= nP; ++j) if (j != party) {
       emp::Hash h;
@@ -77,6 +104,18 @@ int main(int argc, char **argv) {
       expecting(std::memcmp(want, dg, sizeof(dg)) == 0,
                 "share opening: a peer's bits do not match its MACs");
       for (size_t k = 0; k < n; ++k) opened[k] ^= (unsigned char)(got[k] & 1);
+    }
+    if (job) {
+      emp::session::RawBindings b;
+      b.inputs.resize(1);
+      b.inputs[0] = q;
+      const emp::session::RawResult res = sess.run_computation(std::move(*job), b);
+      bool good = res.outputs[0].has_value();
+      for (size_t k = 0; good && k < 4; ++k) good = (*res.outputs[0])[k] == (q[k] ^ 1);
+      if (!good) {
+        std::printf("  [FAIL] P%d: the job run after the opening\n", party);
+        ++fails;
+      }
     }
     const std::optional<Bits> rv = sess.share_reveal(v, PUBLIC);
     if (!rv.has_value() || *rv != Bits(opened.begin(), opened.end())) {
