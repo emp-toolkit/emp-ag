@@ -293,6 +293,13 @@ add_np_variant(agmpc_share_eval_tag80_np3 agmpc_share_eval.cpp 3
                DEFS SHARE_NP=3 EMP_AG_SHARE_TAG_BYTES=10)
 add_np_variant(agmpc_share_eval_no_bank_np2 agmpc_share_eval.cpp 2 DEFS SHARE_NP=2 SHARE_NO_BANK
                PASS_RE "keeps no triple bank")
+# Openings the caller checks itself (share_opening, absorb_expected_macs), at nP = 2 and 3; a
+# flipped bit must fail the caller's digest check.
+foreach(_np 2 3)
+    add_np_variant(agmpc_share_opening_np${_np} agmpc_share_opening.cpp ${_np} DEFS SHARE_OPEN_NP=${_np})
+endforeach()
+add_np_variant(agmpc_share_opening_flip_np3 agmpc_share_opening.cpp 3
+               DEFS SHARE_OPEN_NP=3 SHARE_OPEN_FLIP PASS_RE "a peer's bits do not match its MACs")
 
 # Party slots bound at prepare to share-mode values (prepare_computation(art, bound)), against
 # the circuits in the clear: at nP = 2, 3, 4 under each Auth, WRK with direct delivery, and on
