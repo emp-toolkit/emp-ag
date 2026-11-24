@@ -66,6 +66,7 @@
 #include <mutex>
 #include <type_traits>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
 // The width, in bytes, of share evaluation's tags (triple/share_eval.h): 16 by default.
 // Any other width changes the wire, so it binds the session id (garble/protocol.h).
@@ -73,7 +74,7 @@
 #define EMP_AG_SHARE_TAG_BYTES 16
 #endif
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 template <int nP>
 class PairwiseOpenCheck {
@@ -434,5 +435,5 @@ using DefaultOpenCheck =
     std::conditional_t<nP == 2, PairwiseOpenCheck<nP>, SymmetricOpenCheck<nP>>;
 #endif
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_ASHARE_OPEN_CHECK_H__

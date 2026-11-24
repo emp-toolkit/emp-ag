@@ -46,13 +46,14 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
 // Live body replay (sole consumer: the AGMPCSession::run(body) overload below). Re-execute a
 // pure circuit body LIVE over one protocol pass with no materialized IR: build typed args over
 // `pass` from input wire ids [0,total), invoke the body (both the [](a,b){...} and
 // [](auto& ctx, a, b){...} forms), and pack the output wire ids. Protocol-agnostic -- depends
 // only on emp-tool's frontend value / circuit_fn layer.
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 template <class F, class Pass, class... AS, std::size_t... I>
 inline std::vector<uint32_t> body_replay_impl(Pass &pass, F &body,
@@ -90,9 +91,9 @@ inline std::vector<uint32_t> body_replay(Pass &pass, F &body) {
   return body_replay_impl<F, Pass, AS...>(pass, body, std::index_sequence_for<AS...>{});
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 
-namespace emp {
+EMP_AG_PUBLIC_NAMESPACE_BEGIN
 // Backend protocol/engine/share types live in emp::ag; the public session is
 // emp::AGMPCSession<nP>. Pull the backend names it references into scope here.
 using emp::ag::AShareBundle;
@@ -1496,5 +1497,5 @@ static_assert(SessionIO<AGMPCSession<3>, UInt_T<AGMPCSession<3>::ctx_t, 32>>);
 static_assert(CheckpointingSession<AGMPCSession<3>>);
 static_assert(ComputationSession<AGMPCSession<3>>);
 
-}  // namespace emp
+EMP_AG_PUBLIC_NAMESPACE_END
 #endif  // EMP_AG_FRONTEND_AGMPC_SESSION_H__

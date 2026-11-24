@@ -20,8 +20,9 @@
 #include <cstdint>
 #include <utility>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 class BufferOT : public emp::OT {
  public:
@@ -92,5 +93,5 @@ class BufferOT : public emp::OT {
   size_t pos_ = 0;
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_ASHARE_BUFFER_OT_H__

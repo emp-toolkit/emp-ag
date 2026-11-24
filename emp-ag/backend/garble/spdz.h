@@ -8,8 +8,9 @@
 #include "emp-ag/backend/common/runtime.h"
 #include "emp-ag/backend/ashare/share.h"
 #include "emp-tool/emp-tool.h"   // gfmul, ThreadPool, joinNclean, select_mask
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // ---- c_gamma SPDZ-collapse witness kernels (shared by the circuit walks that
 // produce the witness material and the witness-folding pass that folds it) --------------
@@ -121,5 +122,5 @@ inline block rlc_fold_mu(const block *mu, int n, block chi, ThreadPool *pool) {
   return m;
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif // EMP_AG_BACKEND_GARBLE_SPDZ_H__

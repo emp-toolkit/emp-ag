@@ -14,8 +14,9 @@
 #include "emp-tool/runtime/core/block.h"   // block ops; makeBlock
 #include "emp-tool/runtime/crypto/mitccrh.h"
 #include <cstdint>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // Self-half-gate row: a garbler's own half-gate ciphertexts G0,G1 and the output 0-label
 // ml_g0, from the four self-hashes of the input labels, ml_a0, and the four per-wire shares
@@ -127,5 +128,5 @@ inline void halfgate_hash_evaluator(HalfGateHash<nP> &h, block *buf) {
   halfgate_hash_lanes<nP, 1, D>(h, buf);
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif // EMP_AG_BACKEND_GARBLE_HALFGATE_H__

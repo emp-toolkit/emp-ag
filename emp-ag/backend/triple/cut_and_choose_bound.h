@@ -41,8 +41,9 @@
 #include <cstdint>
 #include <utility>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 struct CutAndChooseParams {
   int64_t ell = 0;               // output triples
@@ -130,5 +131,5 @@ inline std::vector<std::pair<int64_t, int64_t>> cut_and_choose_tail_swaps(
   return swaps;
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_TRIPLE_CUT_AND_CHOOSE_BOUND_H__

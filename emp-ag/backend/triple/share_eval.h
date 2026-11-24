@@ -26,8 +26,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 template <int nP, class OpenCheck = PairwiseOpenCheck<nP>>
 class ShareEval {
@@ -168,5 +169,5 @@ private:
   int64_t layers_ = 0, ands_ = 0;
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_TRIPLE_SHARE_EVAL_H__

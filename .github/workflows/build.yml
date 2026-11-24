@@ -8,6 +8,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
         build_type: [Debug, Release]
+        hooks: [ON]
+        # One job builds the tests without fault-injection hooks, as production code is
+        # built, and runs every test that needs none; it alone builds the benches.
+        include:
+          - os: ubuntu-latest
+            build_type: Release
+            hooks: OFF
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -48,13 +55,14 @@ jobs:
           cmake --install "$RUNNER_TEMP/emp-ot/build"
 
       - name: Configure
-        # Benches are ON so CI compile-checks them; they are not ctests, so they
-        # build but do not run.
+        # The hooks-off job builds the benches, so CI compile-checks them; they are not
+        # ctests, so they build but do not run.
         run: >
           cmake -B build
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DCMAKE_PREFIX_PATH=${{ runner.temp }}/install
-          -DEMP_AG_BUILD_BENCHES=ON
+          -DEMP_AG_TEST_HOOKS=${{ matrix.hooks }}
+          -DEMP_AG_BUILD_BENCHES=${{ matrix.hooks == 'OFF' && 'ON' || 'OFF' }}
 
       - name: Build
         # Bounded parallelism: the nP-templated test/adversarial binaries are

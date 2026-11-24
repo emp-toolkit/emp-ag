@@ -49,8 +49,9 @@
 #include <algorithm>
 #include <cstring>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // The b operand of a row's candidate k toward peer p, as the leaky AND reads it: its MAC
 // and its key. Only phi, a linear blind, reads b. RowB reads the row's own b; a protocol
@@ -219,20 +220,20 @@ public:
                       pad[2 * j] ^ pad[2 * j + 1] ^ phi(r, layer, k, (size_t)layer * L + k);
                 }
               }
-#ifdef EMP_AG_TEST_FLIP_LAAND
-              // TEST-ONLY (never in production), nP > 2: a malicious party 2 flips bit 0 of
-              // EVERY leaky-AND row it ships to party 1, so P1's values diverge. The
-              // leaky-AND check (the batched windowed-alpha RLC) must abort during
-              // preprocessing. Every row, because P1 folds a row in only when its own
-              // selector bit for that AND is 1: a single faulty row is masked away half the
-              // time, while with every row faulty the fault stays hidden only if all B*L of
-              // P1's selectors are 0. Only ONE sender flips: P1 folds every sender's row
-              // under the same selector bit, so if all nP-1 senders flipped, the copies
-              // would cancel whenever nP-1 is even (nP = 3 here), a false negative.
-              if constexpr (nP > 2)
-                if (party_ == 2 && peer == 1)
+              if constexpr (kTestHooks && nP > 2) {
+                // TEST-ONLY (hook flip_laand), nP > 2: a malicious party 2 flips bit 0 of
+                // EVERY leaky-AND row it ships to party 1, so P1's values diverge. The
+                // leaky-AND check (the batched windowed-alpha RLC) must abort during
+                // preprocessing. Every row, because P1 folds a row in only when its own
+                // selector bit for that AND is 1: a single faulty row is masked away half
+                // the time, while with every row faulty the fault stays hidden only if all
+                // B*L of P1's selectors are 0. Only ONE sender flips: P1 folds every
+                // sender's row under the same selector bit, so if all nP-1 senders flipped,
+                // the copies would cancel whenever nP-1 is even (nP = 3 here), a false
+                // negative.
+                if (hooks().flip_laand && party_ == 2 && peer == 1)
                   for (int q = 0; q < ed - st; ++q) rowbuf[q] = rowbuf[q] ^ bit0_mask;
-#endif
+              }
               ag::pack_laand_blocks(packed.data(), rowbuf.data(), ed - st, gw);
               ch->send_data(peer, packed.data(), ag::laand_row_wire_bytes(ed - st, gw));
             }
@@ -246,6 +247,12 @@ public:
         // the local terms, giving the whole value.
         tasks.push_back(pool->enqueue([&, ch, peer, lane, lo, hi]() {
           const int len = hi - lo;
+          // TEST-ONLY: the receiver-value hooks below, read once outside the loop.
+          [[maybe_unused]] bool flip_value = false, flip_high = false;
+          if constexpr (kTestHooks) {
+            flip_value = hooks().flip_laand && party_ == 1 && lane == 0;
+            flip_high = hooks().flip_laand_high && party_ == 1 && lane == 0;
+          }
           std::vector<unsigned char> packed(ag::laand_row_wire_bytes(std::min(hg_chunk, len), gw));
           BlockVec wire(std::min(hg_chunk, len));
           block pad[16];
@@ -275,23 +282,24 @@ public:
                   if constexpr (nP == 2) {
                     value ^= phi(r, layer, k, flat) & select_mask[getLSB(r.mac[0][any_peer][k])];
                     value ^= Delta_ & select_mask[getLSB(r.mac[2][any_peer][k])];
-#ifdef EMP_AG_TEST_FLIP_LAAND
-                    // Deterministically corrupt ONE late-row receiver value.
-                    // Flipping a shipped row is masked away when its random selector
-                    // is zero, which makes an ell==1 adversarial test probabilistic.
-                    if (layer == B - 1 && k == 0 && party_ == 1 && lane == 0)
-                      value ^= bit0_mask;
-#endif
-#ifdef EMP_AG_TEST_FLIP_LAAND_HIGH
-                    // TEST-ONLY: the partial last byte must remain covered by F_eq.
-                    if (layer == B - 1 && k == 0 && party_ == 1 && lane == 0) {
-                      unsigned char fault[sizeof(block)] = {};
-                      fault[(gw - 1) / 8] = 1u << ((gw - 1) % 8);
-                      block delta;
-                      memcpy(&delta, fault, sizeof(delta));
-                      value ^= delta;
+                    if constexpr (kTestHooks) {
+                      if ((flip_value || flip_high) && layer == B - 1 && k == 0) {
+                        // TEST-ONLY (hook flip_laand): deterministically corrupt ONE
+                        // late-row receiver value. Flipping a shipped row is masked away
+                        // when its random selector is zero, which makes an ell==1
+                        // adversarial test probabilistic.
+                        if (flip_value) value ^= bit0_mask;
+                        // TEST-ONLY (hook flip_laand_high): the partial last byte must
+                        // remain covered by F_eq.
+                        if (flip_high) {
+                          unsigned char fault[sizeof(block)] = {};
+                          fault[(gw - 1) / 8] = 1u << ((gw - 1) % 8);
+                          block delta;
+                          memcpy(&delta, fault, sizeof(delta));
+                          value ^= delta;
+                        }
+                      }
                     }
-#endif
                     s[party_][flat] = LSB1(value);
                   }
                   memcpy(out + flat * gb, &value, gb);
@@ -331,17 +339,18 @@ public:
           }
         });
       }
-#ifdef EMP_AG_TEST_FLIP_LAAND_HIGH
-      // TEST-ONLY: corrupt the highest retained coordinate of exactly one local check
-      // input, after its s-bit is taken. Unlike a shipped-row fault, no selector masks it.
-      if (party_ == 1 && BL > 0) {
-        unsigned char fault[sizeof(block)] = {};
-        fault[(gw - 1) / 8] = 1u << ((gw - 1) % 8);
-        block delta;
-        memcpy(&delta, fault, sizeof(delta));
-        alpha_masked_cat_[0] ^= delta;
+      if constexpr (kTestHooks) {
+        // TEST-ONLY (hook flip_laand_high): corrupt the highest retained coordinate of
+        // exactly one local check input, after its s-bit is taken. Unlike a shipped-row
+        // fault, no selector masks it.
+        if (hooks().flip_laand_high && party_ == 1 && BL > 0) {
+          unsigned char fault[sizeof(block)] = {};
+          fault[(gw - 1) / 8] = 1u << ((gw - 1) % 8);
+          block delta;
+          memcpy(&delta, fault, sizeof(delta));
+          alpha_masked_cat_[0] ^= delta;
+        }
       }
-#endif
     }
 #ifdef AG_PROFILE
     g_ag_tp_hg_ns += agmpc_now_ns() - _tp_hg0;
@@ -529,5 +538,5 @@ private:
   BlockVec fzero_;                         // fzero_xor contribution scratch
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_TRIPLE_LAAND_H__

@@ -10,8 +10,9 @@
 #include <cstring>
 #include <future>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // Two structural low bits plus ssp random coordinates. Local rows remain
 // byte-addressable; only transport concatenates their exact bit windows.
@@ -233,5 +234,5 @@ inline void accumulate_leaky_and_window_bytes(FsHash &feq,
   feq.put(dg.data(), dg.size());
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif

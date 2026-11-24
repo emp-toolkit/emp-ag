@@ -13,8 +13,9 @@
 #include "emp-tool/runtime/core/block_vector.h"   // block, BlockVec
 #include <cstddef>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 constexpr int kGarbleChunk = 1 << 16;
 
@@ -67,5 +68,5 @@ struct EvalChunk {
   BlockVec T;     // WRK: the garblers' rows toward P1, summed and truncated, flat [3*loc + r]
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_PASSES_WIRE_FORMAT_H__

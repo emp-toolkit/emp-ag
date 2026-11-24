@@ -80,8 +80,9 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 template <int nP, class OpenCheck = DefaultOpenCheck<nP>>
 class CutAndChooseTriples : public TripleBank<nP> {
@@ -243,14 +244,14 @@ private:
         out[v] = x;
       }
       std::vector<uint8_t> flipped;
-#if defined(EMP_AG_TEST_CNC_SPLIT_ZR) || defined(EMP_AG_TEST_CNC_KING_SPLIT)
-      // TEST-ONLY (never in production): as a king, party 2 sends party 3 a different
-      // opening of its first value than it sends everyone else.
-      if (split && party_ == 2 && hi > lo) {
-        flipped.assign(out + lo, out + hi);
-        flipped[0] ^= 1;
+      if constexpr (kTestHooks) {
+        // TEST-ONLY (split, from hooks cnc_split_zr / cnc_king_split): as a king, party 2
+        // sends party 3 a different opening of its first value than it sends everyone else.
+        if (split && party_ == 2 && hi > lo) {
+          flipped.assign(out + lo, out + hi);
+          flipped[0] ^= 1;
+        }
       }
-#endif
       exchange_(
           [&](int peer) {
             const uint8_t *src = (peer == 3 && !flipped.empty()) ? flipped.data() : out + lo;
@@ -265,12 +266,12 @@ private:
       std::vector<uint8_t> *got = by_peer != nullptr ? by_peer : local;
       for (int p = 1; p <= nP; ++p) if (p != party_) got[p].resize((size_t)n);
       std::vector<uint8_t> flipped;
-#if defined(EMP_AG_TEST_CNC_SPLIT_ZR) || defined(EMP_AG_TEST_CNC_KING_SPLIT)
-      if (split && party_ == 2 && nP >= 3) {
-        flipped.assign(mine, mine + n);
-        flipped[0] ^= 1;
+      if constexpr (kTestHooks) {
+        if (split && party_ == 2 && nP >= 3) {
+          flipped.assign(mine, mine + n);
+          flipped[0] ^= 1;
+        }
       }
-#endif
       exchange_(
           [&](int peer) {
             const uint8_t *src = (peer == 3 && !flipped.empty()) ? flipped.data() : mine;
@@ -341,28 +342,29 @@ private:
               part[peer][(size_t)q] = v0 ^ (uint8_t)getLSB(pm[j]);
             }
           }
-#ifdef EMP_AG_TEST_CNC_FLIP_PRODUCT
-          // TEST-ONLY (never in production): party 2 flips every product correction it
-          // sends party 1, a selective failure on party 1's shares of a.
-          if (party_ == 2 && peer == 1)
-            for (int64_t q = lo; q < hi; ++q) u_out[peer][(size_t)q] ^= 1;
-#endif
+          if constexpr (kTestHooks) {
+            // TEST-ONLY (hook cnc_flip_product): party 2 flips every product correction it
+            // sends party 1, a selective failure on party 1's shares of a.
+            if (hooks().cnc_flip_product && party_ == 2 && peer == 1)
+              for (int64_t q = lo; q < hi; ++q) u_out[peer][(size_t)q] ^= 1;
+          }
         }));
     joinNclean(res);
     exchange_([&](int peer) { io_->send_bool(peer, (const bool *)u_out[peer].data(), pop); },
               [&](int peer) { io_->recv_bool(peer, (bool *)u_in[peer].data(), pop); });
     std::vector<uint8_t> zr((size_t)pop);
+    // TEST-ONLY (hook cnc_flip_receiver): as party 1's receiver, party 2 takes every
+    // correction under the other choice bit, a ^ 1. Read once, outside the loop.
+    [[maybe_unused]] bool flip_receiver = false;
+    if constexpr (kTestHooks) flip_receiver = hooks().cnc_flip_receiver && party_ == 2;
     parallel_for(pool_, (int)pop, [&](int lo, int hi) {
       for (int q = lo; q < hi; ++q) {
         const uint8_t a = bit[(size_t)q];
         uint8_t z = a & bit[(size_t)(pop + q)];
         for (int p = 1; p <= nP; ++p) if (p != party_)
           z ^= part[p][(size_t)q] ^ (a & u_in[p][(size_t)q]);
-#ifdef EMP_AG_TEST_CNC_FLIP_RECEIVER
-        // TEST-ONLY (never in production): as party 1's receiver, party 2 takes every
-        // correction under the other choice bit, a ^ 1.
-        if (party_ == 2) z ^= u_in[1][(size_t)q];
-#endif
+        if constexpr (kTestHooks)
+          if (flip_receiver) z ^= u_in[1][(size_t)q];
         zr[(size_t)q] = z ^ bit[(size_t)(2 * pop + q)];
       }
     });
@@ -396,24 +398,21 @@ private:
     // 2-3. Products, then c = r ^ (z ^ r): party 1 moves its share, everyone else its key
     //      on party 1's share.
     std::vector<uint8_t> zr = masked_products_(mac, key, bit, pop);
-#ifdef EMP_AG_TEST_CNC_FLIP_ZR
-    // TEST-ONLY (never in production): party 2 flips its share of candidate 0's z ^ r and
-    // sends it to everyone, so every party holds the same wrong c.
-    if (party_ == 2) zr[0] ^= 1;
-#endif
-#ifdef EMP_AG_TEST_CNC_FLIP_ALL_ZR
-    // TEST-ONLY (never in production): party 2 flips its share of every candidate's z ^ r.
-    // Every candidate is then wrong in the same way, which every sacrifice passes: only
-    // the cut catches it.
-    if (party_ == 2)
-      for (int64_t q = 0; q < pop; ++q) zr[(size_t)q] ^= 1;
-#endif
+    [[maybe_unused]] bool split_zr = false;
+    if constexpr (kTestHooks) {
+      // TEST-ONLY (hook cnc_flip_zr): party 2 flips its share of candidate 0's z ^ r and
+      // sends it to everyone, so every party holds the same wrong c.
+      if (hooks().cnc_flip_zr && party_ == 2) zr[0] ^= 1;
+      // TEST-ONLY (hook cnc_flip_all_zr): party 2 flips its share of every candidate's
+      // z ^ r. Every candidate is then wrong in the same way, which every sacrifice passes:
+      // only the cut catches it.
+      if (hooks().cnc_flip_all_zr && party_ == 2)
+        for (int64_t q = 0; q < pop; ++q) zr[(size_t)q] ^= 1;
+      // TEST-ONLY (hook cnc_split_zr): open_'s split, on the opening of z ^ r.
+      split_zr = hooks().cnc_split_zr;
+    }
     std::vector<uint8_t> zr_open((size_t)pop);
-#ifdef EMP_AG_TEST_CNC_SPLIT_ZR
-    open_(zr.data(), pop, zr_open.data(), nullptr, /*split=*/true);
-#else
-    open_(zr.data(), pop, zr_open.data(), nullptr);
-#endif
+    open_(zr.data(), pop, zr_open.data(), nullptr, split_zr);
     char zr_view[FsHash::DIGEST_SIZE];
     FsHash::hash_once(zr_view, zr_open.data(), zr_open.size());
     parallel_for(pool_, (int)pop, [&](int lo, int hi) {
@@ -480,17 +479,16 @@ private:
         mine[(size_t)v] = bit[(size_t)e0] ^ (e1 >= 0 ? bit[(size_t)e1] : 0);
       }
     });
-#ifdef EMP_AG_TEST_CNC_FLIP_OPEN
-    // TEST-ONLY (never in production): party 2 flips its share of the first sacrifice
-    // difference and sends it to everyone.
-    if (party_ == 2) mine[(size_t)n_cut] ^= 1;
-#endif
+    [[maybe_unused]] bool king_split = false;
+    if constexpr (kTestHooks) {
+      // TEST-ONLY (hook cnc_flip_open): party 2 flips its share of the first sacrifice
+      // difference and sends it to everyone.
+      if (hooks().cnc_flip_open && party_ == 2) mine[(size_t)n_cut] ^= 1;
+      // TEST-ONLY (hook cnc_king_split): open_'s split, on the cut and sacrifice openings.
+      king_split = hooks().cnc_king_split;
+    }
     std::vector<uint8_t> shares[nP + 1];   // all to all: what each peer sent
-#ifdef EMP_AG_TEST_CNC_KING_SPLIT
-    open_(mine.data(), n_open, opened.data(), shares, /*split=*/true);
-#else
-    open_(mine.data(), n_open, opened.data(), shares);
-#endif
+    open_(mine.data(), n_open, opened.data(), shares, king_split);
 
     // Sacrifice residual pr (pair h, k): L = c_h ^ c_k ^ rho b_k ^ sigma a_k, which a
     // correct pair, or a pair with equal errors, opens to rho sigma.
@@ -516,11 +514,11 @@ private:
       parallel_for(pool_, (int)n_res, [&](int lo, int hi) {
         for (int pr = lo; pr < hi; ++pr) own[(size_t)pr] = res_bit(pr);
       });
-#ifdef EMP_AG_TEST_CNC_FLIP_RESIDUAL
-      // TEST-ONLY (never in production): party 2 sends everyone a wrong share of the first
-      // sacrifice residual.
-      if (party_ == 2) own[0] ^= 1;
-#endif
+      if constexpr (kTestHooks) {
+        // TEST-ONLY (hook cnc_flip_residual): party 2 sends everyone a wrong share of the
+        // first sacrifice residual.
+        if (hooks().cnc_flip_residual && party_ == 2) own[0] ^= 1;
+      }
       open_(own.data(), n_res, sum.data(), res_shares);
       for (int64_t pr = 0; pr < n_res; ++pr)
         res_sums_ok = res_sums_ok && sum[(size_t)pr] == (rho(pr) & sigma(pr));
@@ -694,5 +692,5 @@ AndPrepFactory<nP> cut_and_choose_prep(int64_t batch, int64_t batches = 0) {
           }};
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_TRIPLE_CUT_AND_CHOOSE_TRIPLES_H__

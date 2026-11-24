@@ -1,38 +1,38 @@
 // Adversarial test for the input/output integrity checks.
 //
-// Each variant defines ONE corruption hook (compiled in ONLY for that TU):
-//   EMP_AG_TEST_FLIP_LAMBDA -- a malicious P1 flips one broadcast AND-output Lambda
+// Each variant turns on ONE corruption hook (backend/common/test_hooks.h):
+//   flip_lambda -- a malicious P1 flips one broadcast AND-output Lambda
 //     (open_and_masks). Exercises the certify-ALL property: every honest party aborts, and
 //     at nP=3 the two GARBLERS (not just the evaluator) catch a P1 flip.
-//   EMP_AG_TEST_FLIP_AGG (nP>=3) -- the garbler-row-aggregation ring tail corrupts one
+//   flip_agg (nP>=3) -- the garbler-row-aggregation ring tail corrupts one
 //     aggregate row (garble/passes/garble.h) -> wrong Lambda_gamma. Confirms ring corruption is caught.
-//   EMP_AG_TEST_FLIP_AGG_MID (nP>=4) -- a MIDDLE ring node corrupts a row (not just the tail).
-//   EMP_AG_TEST_FLIP_B (nP==2) -- a malicious garbler flips one transmitted designated bit b
+//   flip_agg_mid (nP>=4) -- a MIDDLE ring node corrupts a row (not just the tail).
+//   flip_b (nP==2) -- a malicious garbler flips one transmitted designated bit b
 //     -> wrong Lambda_gamma; c_gamma is the sole 2-party malicious-garbler guard.
-//   EMP_AG_TEST_FLIP_LAAND -- a malicious party corrupts a derived two-party leaky-AND
+//   flip_laand -- a malicious party corrupts a derived two-party leaky-AND
 //     value, or every row party 2 ships to party 1 at nP>=3 -> the consistency check aborts
 //     during PREPROCESSING (abort message contains "LaAND").
-//   EMP_AG_TEST_FLIP_LAAND_HIGH -- corrupt the highest retained check coordinate,
+//   flip_laand_high -- corrupt the highest retained check coordinate,
 //     including the final partial byte at ssp=39/40. Must abort in preprocessing.
-//   EMP_AG_TEST_FLIP_D / EMP_AG_TEST_FLIP_XY -- a malicious party 2 flips its share of one
+//   flip_d / flip_xy -- a malicious party 2 flips its share of one
 //     opened bucket d-bit / Beaver x and sends it to everyone, keeping it itself, so every
 //     party computes from the same wrong value; the open check must abort in preprocessing
 //     (abort message contains "open check"). Built with the default open checker and,
 //     via EMP_AG_OPEN_CHECK_PAIRWISE / _SYMMETRIC, with the other one.
-//   EMP_AG_TEST_FLIP_BW (nP>=3) -- party 2 sends party 3 a different aShare consistency
+//   flip_bw (nP>=3) -- party 2 sends party 3 a different aShare consistency
 //     value bw than everyone else, with the tag on the right one. Party 3's check of the
 //     tag aborts in preprocessing, under either open checker ("cheat aShare").
-//   EMP_AG_TEST_TAMPER_PREFIX -- party 1 flips one bit of the first correction it sends to
+//   tamper_prefix -- party 1 flips one bit of the first correction it sends to
 //     party 2 inside the 128-COT bootstrap prefix (backend/common/netmp.h's TamperNetIO). Party 2's
 //     check of the prefix must abort during setup, before the reverse direction's base OTs
 //     are derived from it ("SoftSpoken subspace VOLE check failed").
-//   EMP_AG_TEST_CNC_* (with EMP_AG_CUT_AND_CHOOSE_BATCH) -- the cut-and-choose triple
-//     generator: a wrong product correction (FLIP_PRODUCT), z ^ r opening (FLIP_ZR) or
-//     sacrifice difference (FLIP_OPEN), sent to everyone; a z ^ r opening (SPLIT_ZR) or, as
-//     a king, an opened value (KING_SPLIT) sent to party 3 alone. Each must abort while the
+//   cnc_* (with EMP_AG_CUT_AND_CHOOSE_BATCH) -- the cut-and-choose triple
+//     generator: a wrong product correction (cnc_flip_product), z ^ r opening (cnc_flip_zr) or
+//     sacrifice difference (cnc_flip_open), sent to everyone; a z ^ r opening (cnc_split_zr) or, as
+//     a king, an opened value (cnc_king_split) sent to party 3 alone. Each must abort while the
 //     triples are generated (backend/triple/cut_and_choose_triples.h).
-// A wrong public value -> the c_gamma MACCheck aborts (FLIP_LAAND aborts earlier, in preproc).
-// (The input-Lambda equivocation hook EMP_AG_TEST_FLIP_INPUT_LAMBDA is exercised by the sibling
+// A wrong public value -> the c_gamma MACCheck aborts (flip_laand aborts earlier, in preproc).
+// (The input-Lambda equivocation hook flip_input_lambda is exercised by the sibling
 // agmpc_input_equiv.cpp; the aShare consistency check on a circuit with no AND, by
 // agmpc_share_consistency.cpp.)
 //
@@ -42,6 +42,7 @@
 // nonzero return (and no "cheat" line), which fails the regex.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
+#include "../test_args.h"
 #include <optional>
 #include <vector>
 using namespace std;
@@ -50,16 +51,15 @@ using namespace emp;
 #ifndef CHEAT_NP
 #define CHEAT_NP 2
 #endif
-#ifndef CHEAT_SSP
-#define CHEAT_SSP 40
-#endif
 const static int nP = CHEAT_NP;
+static_assert(ag::kTestHooks, "a fault-injection test needs a hooks build (EMP_AG_TEST_HOOKS)");
 
 int main(int argc, char **argv) {
   int party = parse_party(argv, nP);
   if (party > nP) return 0;
+  const TestArgs args(argc, argv, {"ssp", "depth2"});
   ThreadPool pool(ag::default_pool_size(nP));
-  AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool, CHEAT_SSP);
+  AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool, (int)args.num("ssp", 40));
   using Ctx = typename AGMPCSession<nP>::ctx_t;
   using Bit = Bit_T<Ctx>;
 
@@ -73,14 +73,14 @@ int main(int argc, char **argv) {
   }
   batch.finish();
   Bit acc = sess.template input<Bit>(PUBLIC, false);
-#ifdef CHEAT_DEPTH2
-  // Depth 2: a second AND reads each first one's output, so under Auth::WRK a label P1
-  // recovers wrong at the first is caught by P1's own check of the second, not only when
-  // P1 hands the garblers the output's Lambda.
-  for (int i = 0; i < 8; ++i) acc = acc ^ ((a[i] & b[i]) & a[(i + 1) % 8]);
-#else
-  for (int i = 0; i < 8; ++i) acc = acc ^ (a[i] & b[i]);
-#endif
+  if (args.has("depth2")) {
+    // Depth 2: a second AND reads each first one's output, so under Auth::WRK a label P1
+    // recovers wrong at the first is caught by P1's own check of the second, not only when
+    // P1 hands the garblers the output's Lambda.
+    for (int i = 0; i < 8; ++i) acc = acc ^ ((a[i] & b[i]) & a[(i + 1) % 8]);
+  } else {
+    for (int i = 0; i < 8; ++i) acc = acc ^ (a[i] & b[i]);
+  }
 
   // Reveal to everyone: every honest party runs the MACCheck and must abort on the flip.
   std::optional<bool> out = sess.reveal(acc, PUBLIC);

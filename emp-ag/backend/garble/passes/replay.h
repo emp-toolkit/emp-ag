@@ -30,8 +30,9 @@
 #include <memory>
 #include <unordered_map>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 struct LoweredUnit {
   struct Run { circuit::Op op; uint32_t n; };
@@ -174,5 +175,5 @@ inline void replay_composed(const ComposedLayout &L, Pass &pass) {
   }
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_PASSES_REPLAY_H__

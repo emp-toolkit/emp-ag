@@ -52,8 +52,9 @@
 #include <cstring>
 #include <memory>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 template <int nP, class OpenCheck = DefaultOpenCheck<nP>>
 class LeakyAndPrep : public AndPrep<nP> {
@@ -146,12 +147,12 @@ public:
 #ifdef AG_PROFILE
     uint64_t _b0 = agmpc_now_ns();
 #endif
-#ifdef EMP_AG_TEST_FLIP_D
-    // TEST-ONLY (never in production): a malicious party 2 flips its share of the
-    // first difference and sends the flipped share to everyone, keeping it itself, so
-    // every party combines the same wrong d. The open check must abort.
-    if (party_ == 2 && D > 0) d_[party_][0] ^= 1;
-#endif
+    if constexpr (kTestHooks) {
+      // TEST-ONLY (hook flip_d): a malicious party 2 flips its share of the first
+      // difference and sends the flipped share to everyone, keeping it itself, so every
+      // party combines the same wrong d. The open check must abort.
+      if (hooks().flip_d && party_ == 2 && D > 0) d_[party_][0] ^= 1;
+    }
     // Lane-split: a plain bit-vector (no keying, no coin reads it), combined below on
     // the assembled d_[] after the one join.
     mesh_.fan_out(D,
@@ -316,5 +317,5 @@ AndPrepFactory<nP> leaky_and_prep() {
           [](int64_t n, int ssp) { return LeakyAndPrep<nP>::draws(n, ssp); }};
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_TRIPLE_LEAKY_AND_PREP_H__

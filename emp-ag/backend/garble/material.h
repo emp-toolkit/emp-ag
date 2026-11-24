@@ -15,8 +15,9 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // One flattened binding entry per circuit input wire.  owner[w] == 0 means that
 // wire is soldered from an already-authenticated source; owner[w] in [1,nP]
@@ -78,6 +79,6 @@ struct PreparedMaterial {
   }
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 
 #endif  // EMP_AG_BACKEND_GARBLE_MATERIAL_H__

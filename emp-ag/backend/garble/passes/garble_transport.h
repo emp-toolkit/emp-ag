@@ -23,14 +23,9 @@
 #include <cstring>
 #include <thread>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
-
-// TEST-ONLY: the garbler that the EMP_AG_TEST_FLIP_P1_ROW / _G / _DIRECT hooks below make
-// cheat (default the last).
-#ifndef EMP_AG_TEST_FLIP_PARTY
-#define EMP_AG_TEST_FLIP_PARTY nP
-#endif
+EMP_AG_NAMESPACE_BEGIN
 
 // WRK: pack n rows toward P1 to their low `bits` bits, and back.
 inline void pack_p1_rows(unsigned char *dst, const block *rows, int64_t n, int bits) {
@@ -63,11 +58,13 @@ void ship_garbling(NetIOMP<nP> *io, int party, chunk_pipe<GarbleChunk> &pipe,
   constexpr bool wrk = Cfg::auth == Auth::WRK;
   std::vector<unsigned char> tpk(p1_row_bytes<Cfg>(cap, bits));   // this garbler's packed T
   auto pack_t = [&](GarbleChunk *c) {
-#ifdef EMP_AG_TEST_FLIP_P1_ROW
-    // TEST-ONLY (never in production): a garbler flips a bit of its unconditional row
-    // toward P1 at the chunk's first gate. P1's check of that gate must fail.
-    if (party == EMP_AG_TEST_FLIP_PARTY && c->n > 0) c->T[2] = c->T[2] ^ makeBlock(0, 4);
-#endif
+    if constexpr (kTestHooks) {
+      // TEST-ONLY (hook flip_p1_row): a garbler (test_flip_party) flips a bit of its
+      // unconditional row toward P1 at the chunk's first gate. P1's check of that gate
+      // must fail.
+      if (hooks().flip_p1_row && party == test_flip_party(nP) && c->n > 0)
+        c->T[2] = c->T[2] ^ makeBlock(0, 4);
+    }
     pack_p1_rows(tpk.data(), c->T.data(), (int64_t)3 * c->n, bits);
   };
   GarbleChunk *c;
@@ -76,22 +73,21 @@ void ship_garbling(NetIOMP<nP> *io, int party, chunk_pipe<GarbleChunk> &pipe,
     // id order (none at nP = 2), then b (KRRW, P2 only) or T (WRK).
     while ((c = pipe.consumer_slot()) != nullptr) {
       const size_t cn = (size_t)c->n;
-#ifdef EMP_AG_TEST_FLIP_G
-      // TEST-ONLY (never in production): a garbler flips every half-gate row of the
-      // chunk, each by a different bit, so the labels P1 recovers are wrong unless every
-      // gate's masked inputs are both 0 (probability 4^-n), and the errors cannot cancel
-      // in an XOR of outputs.
-      if (party == EMP_AG_TEST_FLIP_PARTY)
-        for (size_t i = 0; i < 2 * cn; ++i) c->G[i] = c->G[i] ^ makeBlock(0, 4ULL << (i % 60));
-#endif
-#ifdef EMP_AG_TEST_FLIP_DIRECT
-      // TEST-ONLY (never in production): a garbler other than 2 corrupts the unconditional
-      // row it sends toward garbler 2 at the chunk's first gate, which flips bit 1 of the
-      // label P1 recovers for garbler 2, hence (KRRW) P1's Lambda. The check must abort.
-      if constexpr (nP >= 3)
-        if (party == EMP_AG_TEST_FLIP_PARTY && party != 2 && cn > 0)
-          c->S[2][2] = c->S[2][2] ^ makeBlock(0, 2);
-#endif
+      if constexpr (kTestHooks) {
+        // TEST-ONLY (hook flip_g): a garbler (test_flip_party) flips every half-gate row
+        // of the chunk, each by a different bit, so the labels P1 recovers are wrong unless
+        // every gate's masked inputs are both 0 (probability 4^-n), and the errors cannot
+        // cancel in an XOR of outputs.
+        if (hooks().flip_g && party == test_flip_party(nP))
+          for (size_t i = 0; i < 2 * cn; ++i) c->G[i] = c->G[i] ^ makeBlock(0, 4ULL << (i % 60));
+        // TEST-ONLY (hook flip_direct): a garbler (test_flip_party) other than 2 corrupts
+        // the unconditional row it sends toward garbler 2 at the chunk's first gate, which
+        // flips bit 1 of the label P1 recovers for garbler 2, hence (KRRW) P1's Lambda. The
+        // check must abort.
+        if constexpr (nP >= 3)
+          if (hooks().flip_direct && party == test_flip_party(nP) && party != 2 && cn > 0)
+            c->S[2][2] = c->S[2][2] ^ makeBlock(0, 2);
+      }
       io->send_data(1, c->G.data(), 2 * cn * sizeof(block));
       for (int d = 2; d <= nP; ++d)
         if (d != party) io->send_data(1, c->S[d].data(), 3 * cn * sizeof(block));
@@ -99,12 +95,13 @@ void ship_garbling(NetIOMP<nP> *io, int party, chunk_pipe<GarbleChunk> &pipe,
         pack_t(c);
         io->send_data(1, tpk.data(), p1_row_bytes<Cfg>(c->n, bits));
       } else if (party == 2) {
-#ifdef EMP_AG_TEST_FLIP_B
-        // TEST-ONLY (never in production): a malicious 2-party garbler flips one transmitted
-        // designated bit b, so P1 derives a wrong Lambda_gamma. The symmetric c_gamma MACCheck
-        // (the SOLE malicious-garbler guard at nP==2) must abort at every honest party.
-        if (cn > 0) c->b[0] ^= 1;
-#endif
+        if constexpr (kTestHooks) {
+          // TEST-ONLY (hook flip_b): a malicious 2-party garbler flips one transmitted
+          // designated bit b, so P1 derives a wrong Lambda_gamma. The symmetric c_gamma
+          // MACCheck (the SOLE malicious-garbler guard at nP==2) must abort at every honest
+          // party.
+          if (hooks().flip_b && cn > 0) c->b[0] ^= 1;
+        }
         io->send_bool(1, (const bool *)c->b.data(), (int64_t)cn);
       }
       io->flush(1);  // push this chunk now so P1 receives it concurrently
@@ -204,18 +201,18 @@ void ship_garbling(NetIOMP<nP> *io, int party, chunk_pipe<GarbleChunk> &pipe,
         if (head) std::memcpy(t, tpk.data(), tb);
         else for (size_t i = 0; i < tb; ++i) t[i] ^= tpk[i];
       }
-#ifdef EMP_AG_TEST_FLIP_AGG
-      // TEST-ONLY (never in production): the ring tail corrupts one aggregate row
-      // (dest-2, gate-0, unconditional row -> flips bit1 = LSB1 of P1's recovered label,
-      // hence Lambda_gamma). The symmetric SPDZ c_gamma MACCheck must abort at EVERY party.
-      if (party == nP && sz >= 3) agg[2] = agg[2] ^ makeBlock(0, 2);
-#endif
-#ifdef EMP_AG_TEST_FLIP_AGG_MID
-      // TEST-ONLY (nP>=4): a MIDDLE ring node (neither head=2 nor tail=nP) corrupts one
-      // aggregate row; the tail forwards it -> wrong Lambda_gamma -> c_gamma MACCheck aborts.
-      // Complements FLIP_AGG (tail-only): a mid-ring cheater must also be caught.
-      if (party > 2 && party < nP && sz >= 3) agg[2] = agg[2] ^ makeBlock(0, 2);
-#endif
+      if constexpr (kTestHooks) {
+        // TEST-ONLY (hook flip_agg): the ring tail corrupts one aggregate row (dest-2,
+        // gate-0, unconditional row -> flips bit1 = LSB1 of P1's recovered label, hence
+        // Lambda_gamma). The symmetric SPDZ c_gamma MACCheck must abort at EVERY party.
+        if (hooks().flip_agg && party == nP && sz >= 3) agg[2] = agg[2] ^ makeBlock(0, 2);
+        // TEST-ONLY (hook flip_agg_mid, nP>=4): a MIDDLE ring node (neither head=2 nor
+        // tail=nP) corrupts one aggregate row; the tail forwards it -> wrong Lambda_gamma ->
+        // c_gamma MACCheck aborts. Complements flip_agg (tail-only): a mid-ring cheater
+        // must also be caught.
+        if (hooks().flip_agg_mid && party > 2 && party < nP && sz >= 3)
+          agg[2] = agg[2] ^ makeBlock(0, 2);
+      }
 #ifdef AG_PROFILE
       _fold += agmpc_now_ns() - _t;
       _t = agmpc_now_ns();
@@ -303,5 +300,5 @@ void recv_garbling_window(NetIOMP<nP> *io, EvalChunk<nP> &rows, size_t base, int
   if constexpr (wrk) unpack_p1_rows(rows.T.data() + 3 * base, tpk.data(), (int64_t)3 * n, bits);
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_PASSES_GARBLE_TRANSPORT_H__

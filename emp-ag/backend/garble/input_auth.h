@@ -11,8 +11,9 @@
 #include "emp-ag/backend/ashare/open.h"   // open_to_targets
 #include "emp-ag/backend/common/fs_hash.h"  // FsHash (FS/check digests)
 #include "emp-ag/backend/common/protocols.h"   // EchoBC
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 template <int nP, class Cfg>
 std::vector<SecureWires<nP>> AGMPCProtocol<nP, Cfg>::process_inputs(
@@ -187,15 +188,18 @@ void AGMPCProtocol<nP, Cfg>::broadcast_input_masks_(
     for (int p = 1; p <= nP; ++p) if (p != party) {
       int pp = p;
       res.push_back(pool->enqueue([this, &mybuf, mm, pp]() {
-#ifdef EMP_AG_TEST_FLIP_INPUT_LAMBDA
-        // TEST-ONLY: an equivocating owner must still be caught on prepared input.
-        std::vector<unsigned char> b = mybuf;
-        int victim = (party == 1) ? 2 : 1;
-        if (mm > 0 && pp == victim) b[0] ^= 1;
-        io->send_bool(pp, (const bool *)b.data(), mm);
-#else
+        if constexpr (kTestHooks) {
+          // TEST-ONLY (hook flip_input_lambda): an owner equivocates, sending one peer a
+          // flipped bit. It must still be caught on prepared input.
+          if (hooks().flip_input_lambda && pp == ((party == 1) ? 2 : 1)) {
+            std::vector<unsigned char> b = mybuf;
+            b[0] ^= 1;
+            io->send_bool(pp, (const bool *)b.data(), mm);
+            io->flush(pp);
+            return;
+          }
+        }
         io->send_bool(pp, (const bool *)mybuf.data(), mm);
-#endif
         io->flush(pp);
       }));
     }
@@ -629,11 +633,11 @@ void AGMPCProtocol<nP, Cfg>::deliver_output_masks_to_(
         active[k] = out.eval_label[i][pos[k]];
       }
       FsHash::hash_once(h, active.data(), (size_t)m * sizeof(block));
-#ifdef EMP_AG_TEST_FLIP_DELIVERED_LAMBDA
-      // TEST-ONLY (never in production): garbler 2 gets its first Lambda flipped,
-      // with the honest hash. Garbler 2's check must fail.
-      if (i == 2) lam[0] ^= 1;
-#endif
+      if constexpr (kTestHooks) {
+        // TEST-ONLY (hook flip_delivered_lambda): garbler 2 gets its first Lambda
+        // flipped, with the honest hash. Garbler 2's check must fail.
+        if (hooks().flip_delivered_lambda && i == 2) lam[0] ^= 1;
+      }
       io->send_bool(i, (const bool *)lam.data(), m);
       io->send_data(i, h, FsHash::DIGEST_SIZE);
       io->flush(i);
@@ -656,5 +660,5 @@ void AGMPCProtocol<nP, Cfg>::deliver_output_masks_to_(
   for (int k = 0; k < m; ++k) out.Lambda[pos[k]] = (unsigned char)(lam[k] & 1);
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_INPUT_AUTH_H__

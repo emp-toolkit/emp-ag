@@ -8,8 +8,9 @@
 #include "emp-ag/backend/common/netmp.h"
 #include "emp-ag/backend/common/runtime.h"   // lane_range
 #include <algorithm>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 template <int nP>
 struct LaneMesh {
@@ -59,5 +60,5 @@ struct LaneMesh {
   NetIO *recv_ch(int src) const { return src < party ? io->ios[src] : io->ios2[src]; }
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_COMMON_LANE_MESH_H__

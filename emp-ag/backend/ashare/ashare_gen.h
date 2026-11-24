@@ -20,8 +20,9 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // The mint for a Cot and, for SilentFerret, its LPN set (cot.h). What a mint offers is in
 // softspoken_mint.h.
@@ -603,34 +604,33 @@ class AShareGen final : public AShareSource<nP> {
 		// Open bw to every peer, with no echo of its own (see above), and its tag.
 		block out_to[nP + 1];
 		for (int peer = 1; peer <= nP; ++peer) out_to[peer] = bw;
-#ifdef EMP_AG_TEST_FLIP_BW
-		// TEST-ONLY (never in production): party 2 sends party 3 a different bw than it
-		// sends everyone else. Party 3's check of party 2's tag must abort.
-		if constexpr (nP >= 3) if (party == 2) out_to[3] = out_to[3] ^ makeBlock(0, 1);
-#endif
-#ifdef EMP_AG_TEST_TWO_WORLD
-		// TEST-ONLY (never in production): party 2, built with EMP_AG_TEST_SPLIT_CHOICE so
-		// that its bits toward party 3 differ from those toward everyone else, sends each
-		// peer the fold of the bits it holds toward that peer. Every tag then passes; only
-		// the agreement on the view catches it.
-		if (party == 2) {
-			PRG q(&seed);
-			for (int peer = 1; peer <= nP; ++peer) out_to[peer] = zero_block;
-			for (int s = 0; s < nsegs; ++s)
-				for (int64_t k = 0; k < segs[s].n; ++k) {
-					block c;
-					q.random_block(&c, 1);
-					for (int peer = 1; peer <= nP; ++peer) if (peer != party)
-						out_to[peer] = out_to[peer] ^ (c & select_mask[getLSB(segs[s].mac[peer][k])]);
-				}
-			for (int s = 0; s < nsegs; ++s)
-				for (int k = 0; k < kCheck2Pad; ++k) {
-					const block c = gadget_power_(k);
-					for (int peer = 1; peer <= nP; ++peer) if (peer != party)
-						out_to[peer] = out_to[peer] ^ (c & select_mask[getLSB(segs[s].pad_mac[peer][k])]);
-				}
+		if constexpr (kTestHooks) {
+			// TEST-ONLY (hook flip_bw): party 2 sends party 3 a different bw than it sends
+			// everyone else. Party 3's check of party 2's tag must abort.
+			if constexpr (nP >= 3)
+				if (hooks().flip_bw && party == 2) out_to[3] = out_to[3] ^ makeBlock(0, 1);
+			// TEST-ONLY (hook two_world): party 2, run with split_choice so that its bits toward
+			// party 3 differ from those toward everyone else, sends each peer the fold of the
+			// bits it holds toward that peer. Every tag then passes; only the agreement on the
+			// view catches it.
+			if (hooks().two_world && party == 2) {
+				PRG q(&seed);
+				for (int peer = 1; peer <= nP; ++peer) out_to[peer] = zero_block;
+				for (int s = 0; s < nsegs; ++s)
+					for (int64_t k = 0; k < segs[s].n; ++k) {
+						block c;
+						q.random_block(&c, 1);
+						for (int peer = 1; peer <= nP; ++peer) if (peer != party)
+							out_to[peer] = out_to[peer] ^ (c & select_mask[getLSB(segs[s].mac[peer][k])]);
+					}
+				for (int s = 0; s < nsegs; ++s)
+					for (int k = 0; k < kCheck2Pad; ++k) {
+						const block c = gadget_power_(k);
+						for (int peer = 1; peer <= nP; ++peer) if (peer != party)
+							out_to[peer] = out_to[peer] ^ (c & select_mask[getLSB(segs[s].pad_mac[peer][k])]);
+					}
+			}
 		}
-#endif
 		block bw_recv[nP + 1], tag_recv[nP + 1];
 		vector<future<void>> res;
 		for (int peer = 1; peer <= nP; ++peer) if (peer != party) {
@@ -714,14 +714,14 @@ class AShareGen final : public AShareSource<nP> {
 		gfmul(y_global[party - 1], Delta, &tD);
 		z[party] = tD;
 		for (int i = 1; i <= nP; ++i) if (i != party) z[party] ^= Kx[i];
-#if defined(EMP_AG_TEST_SPLIT_DELTA) && defined(EMP_AG_TEST_ADAPT_CHECK1)
-		// TEST-ONLY (never in production): party 2, whose global key toward party 3
-		// differs (test_split_delta flips its bit 7), answers as if every party's tail
-		// bits were one value toward all its peers. Then y_p ⊕ y_2 = x^p ⊕ x^2, so it reads
-		// every x^p off the y's and picks z^2_2 to cancel its column under the key each peer
-		// holds. With tail bits of their own per peer the reads are wrong and check1 aborts.
-		if constexpr (nP >= 3) {
-			if (party == 2) {
+		if constexpr (kTestHooks && nP >= 3) {
+			// TEST-ONLY (hook adapt_check1, with split_delta): party 2, whose global key toward
+			// party 3 differs (test_split_delta flips its bit 7), answers as if every party's
+			// tail bits were one value toward all its peers. Then y_p ⊕ y_2 = x^p ⊕ x^2, so it
+			// reads every x^p off the y's and picks z^2_2 to cancel its column under the key
+			// each peer holds. With tail bits of their own per peer the reads are wrong and
+			// check1 aborts.
+			if (hooks().adapt_check1 && hooks().split_delta && party == 2) {
 				const block x2 = xv[1];
 				z[2] = zero_block;
 				for (int p = 1; p <= nP; ++p) if (p != 2) {
@@ -733,7 +733,6 @@ class AShareGen final : public AShareSource<nP> {
 				}
 			}
 		}
-#endif
 
 		struct DigestT { char d[FsHash::DIGEST_SIZE]; };
 		DigestT z_dgst[nP + 1];
@@ -814,5 +813,5 @@ class AShareGen final : public AShareSource<nP> {
 	}
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif // EMP_AG_BACKEND_ASHARE_ASHARE_GEN_H__

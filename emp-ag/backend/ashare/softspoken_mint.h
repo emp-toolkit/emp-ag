@@ -42,8 +42,9 @@
 #include <memory>
 #include <utility>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 
 // SoftSpoken<k>: k tunes compute against bandwidth. A larger k sends fewer bytes per COT
@@ -141,17 +142,16 @@ class SoftSpokenMint {
 				uint8_t *dout = nfix > 0 ? fix_out_[peer].data() + lo : nullptr;
 				const uint8_t *xme = nfix > 0 ? xme_all + lo : nullptr;
 				bool split = false;
-#ifdef EMP_AG_TEST_SPLIT_CHOICE
-				// TEST-ONLY (never in production): party 2 holds the complement of its
-				// bits toward party 3 -- it applies and sends the flipped correction --
-				// so its shares disagree across peers while every MAC stays valid. The
+#ifdef EMP_AG_TEST_HOOKS
+				// TEST-ONLY (hook split_choice): party 2 holds the complement of its bits
+				// toward party 3 -- it applies and sends the flipped correction -- so its
+				// shares disagree across peers while every MAC stays valid. The
 				// share-consistency check must abort.
-				split = (party == 2 && peer == 3);
-#ifdef EMP_AG_TEST_SPLIT_FIRST_DRAW
-				// TEST-ONLY: only the session's first draw is split (the input masks), so
-				// the triples stay consistent and only that draw's check2 views disagree.
-				split = split && test_draws_ == 0;
-#endif
+				split = hooks().split_choice && party == 2 && peer == 3;
+				// TEST-ONLY (hook split_first_draw): only the session's first draw is split
+				// (the input masks), so the triples stay consistent and only that draw's
+				// check2 views disagree.
+				if (hooks().split_first_draw) split = split && test_draws_ == 0;
 #endif
 				res.push_back(pool->enqueue([otS, chS, KEYp, n, din, nfix, dxor]() {
 					otS->next_n(KEYp, n);
@@ -172,7 +172,7 @@ class SoftSpokenMint {
 			}
 		joinNclean(res);
 		cots_minted_since_check = true;
-#if defined(EMP_AG_TEST_SPLIT_CHOICE) && defined(EMP_AG_TEST_SPLIT_FIRST_DRAW)
+#ifdef EMP_AG_TEST_HOOKS
 		++test_draws_;
 #endif
 	}
@@ -216,7 +216,7 @@ class SoftSpokenMint {
 	block Delta_;   // Δ_me, as the sender streams hold it
 	// Fix exchange scratch (grow-only): the corrections sent to and received from each peer.
 	std::vector<uint8_t> fix_out_[nP + 1], fix_in_[nP + 1];
-#if defined(EMP_AG_TEST_SPLIT_CHOICE) && defined(EMP_AG_TEST_SPLIT_FIRST_DRAW)
+#ifdef EMP_AG_TEST_HOOKS
 	int test_draws_ = 0;   // TEST-ONLY: draws so far
 #endif
 	bool cot_sessions_open = false;
@@ -392,11 +392,12 @@ class SoftSpokenMint {
 					if (planned_receiver_cots >= 0) abit2[peer]->begin(planned_receiver_cots);
 					else                            abit2[peer]->begin();
 					ch_recv->flush();
-#ifdef EMP_AG_TEST_TAMPER_PREFIX
-					// TEST-ONLY (never in production): party 1 flips one bit of the first
-					// prefix correction it sends to party 2. Party 2's check of the prefix
-					// must abort before anything is derived from it.
-					if (party == 1 && peer == 2) static_cast<TamperNetIO *>(ch_recv)->arm();
+#ifdef EMP_AG_TEST_HOOKS
+					// TEST-ONLY (hook tamper_prefix): party 1 flips one bit of the first prefix
+					// correction it sends to party 2. Party 2's check of the prefix must abort
+					// before anything is derived from it.
+					if (hooks().tamper_prefix && party == 1 && peer == 2)
+						static_cast<TamperNetIO *>(ch_recv)->arm();
 #endif
 					abit2[peer]->next_n(primary[(size_t)peer].data(), K); ch_recv->flush();
 					abit2[peer]->check(); ch_recv->flush();
@@ -496,5 +497,5 @@ class SoftSpokenMint {
 	}
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_ASHARE_SOFTSPOKEN_MINT_H__

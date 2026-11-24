@@ -33,8 +33,9 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 struct CotExtensionFactory {
   std::string id;
@@ -68,5 +69,5 @@ inline block bind_cot_extension(block session_id, const std::string &id) {
   return RO("emp-ag:cot-extension", session_id).absorb(std::string_view(id)).squeeze_block();
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_ASHARE_COT_EXTENSION_FACTORY_H__

@@ -17,8 +17,9 @@
 #include "emp-tool/runtime/crypto/prg.h"
 #include "emp-tool/runtime/crypto/ro.h"
 #include <cstring>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 struct BucketCoin2PC {
   block mine = zero_block, peer = zero_block;
@@ -31,11 +32,11 @@ inline void bucket_coin_commit(BucketCoin2PC &c, PRG &prg, block session_id, int
   prg.random_block(&c.mine, 1);
   role_bound_commitment(c.com_mine, session_id, "emp-ag:bucket-seed", party, &c.mine,
                         sizeof(block));
-#ifdef EMP_AG_TEST_FLIP_BUCKET_SEED
-  // TEST-ONLY (never in production): a malicious party 2 opens a seed other than the one
-  // it committed to. The opening check must abort.
-  if (party == 2) c.mine = c.mine ^ makeBlock(0, 1);
-#endif
+  if constexpr (kTestHooks) {
+    // TEST-ONLY (hook flip_bucket_seed): a malicious party 2 opens a seed other than the
+    // one it committed to. The opening check must abort.
+    if (hooks().flip_bucket_seed && party == 2) c.mine = c.mine ^ makeBlock(0, 1);
+  }
 }
 
 // The coin, once both seeds are in: aborts unless the peer's seed opens its commitment.
@@ -50,5 +51,5 @@ inline block bucket_coin_open(const BucketCoin2PC &c, block session_id, int part
   return RO("emp-ag:bucket-coin", session_id).absorb(s1).absorb(s2).squeeze_block();
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_COMMON_BUCKET_COIN_H__

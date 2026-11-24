@@ -8,8 +8,9 @@
 //
 #include "emp-tool/emp-tool.h"
 #include <cstdint>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // A table row's stride in blocks for K streams: K, padded to whole 64-byte lines once a
 // row passes one line, so no row straddles a line it does not need.
@@ -56,5 +57,5 @@ inline void lpn_fold_rows(block *const o[K], const uint32_t *w, int64_t n_rows,
 	}
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_ASHARE_JOINT_LPN_H__

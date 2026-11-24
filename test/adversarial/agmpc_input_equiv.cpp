@@ -1,7 +1,6 @@
 // Adversarial: input-Lambda equivocation.
 //
-// Built with EMP_AG_TEST_FLIP_INPUT_LAMBDA (the production-guarded hook in
-// backend/garble/input_auth.h): a malicious OWNER broadcasts a DIFFERENT input Lambda to one peer.
+// Run with the flip_input_lambda test hook (backend/garble/input_auth.h): a malicious OWNER broadcasts a DIFFERENT input Lambda to one peer.
 // The circuit is PURE-LINEAR (c = a ^ b, no AND gate), so the c_gamma MACCheck has nothing to
 // bind -- ONLY the input-Lambda echo agreement can catch the split, and every honest party must
 // abort with "input Lambda equivocation" (fired inside process_inputs, before the circuit).
@@ -21,6 +20,7 @@ using namespace emp;
 #define EQUIV_NP 3
 #endif
 const static int nP = EQUIV_NP;
+static_assert(ag::kTestHooks, "a fault-injection test needs a hooks build (EMP_AG_TEST_HOOKS)");
 
 int main(int argc, char **argv) {
   int party = parse_party(argv, nP);

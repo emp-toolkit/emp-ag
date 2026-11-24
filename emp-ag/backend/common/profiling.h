@@ -13,8 +13,9 @@
 #include <cstdio>
 #include <cstdint>
 #include <sys/resource.h>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // This party's send+recv bytes spent in COT extension and half-gate phi
 // exchange. Producers increment these counters; draw_and_seed (garble/passes/draw_beaver.h)
@@ -50,7 +51,7 @@ inline long agmpc_peak_rss_kib() {
 #endif
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 
 // Requires NetIOMP<nP> *io and int party in the call-site scope.
 #define AG_PHASE_BEGIN()                                                     \

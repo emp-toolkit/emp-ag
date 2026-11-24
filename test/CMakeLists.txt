@@ -3,6 +3,12 @@
 # the build's bin/ for a uniform ./bin/test_X path.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+# The tests are built with emp-ag's test hooks (backend/common/test_hooks.h) unless
+# EMP_AG_TEST_HOOKS is OFF; the library, examples and benches are never built with them.
+if(EMP_AG_TEST_HOOKS)
+    add_compile_definitions(EMP_AG_TEST_HOOKS)
+endif()
+
 # Tests that need multiple parties depend on the repo-root `run` / `runN` helpers that spawn
 # the right number of processes. The shared helpers _apply_strict_memaccess and add_np_variant
 # live in cmake/AgTestHelpers.cmake (included at the top level, so in scope here and in
@@ -124,7 +130,7 @@ add_np_variant(agmpc_cut_and_choose_np2 agmpc_cut_and_choose.cpp 2 DEFS CNC_NP=2
 add_np_variant(agmpc_cut_and_choose_np3 agmpc_cut_and_choose.cpp 3 DEFS CNC_NP=3 EMP_AG_DEBUG_CHECKS)
 add_np_variant(agmpc_cut_and_choose_np4 agmpc_cut_and_choose.cpp 4 DEFS CNC_NP=4 EMP_AG_DEBUG_CHECKS)
 add_np_variant(agmpc_cut_and_choose_over_declared_np2 agmpc_cut_and_choose.cpp 2
-               DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS CNC_OVER_DECLARED PASS_RE "more batches than declared")
+               DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS ARGS over_declared PASS_RE "more batches than declared")
 add_np_variant(agmpc_cut_and_choose_symmetric_np2 agmpc_cut_and_choose.cpp 2
                DEFS CNC_NP=2 EMP_AG_DEBUG_CHECKS EMP_AG_OPEN_CHECK_SYMMETRIC)
 add_np_variant(agmpc_cut_and_choose_pairwise_np3 agmpc_cut_and_choose.cpp 3
@@ -154,7 +160,7 @@ add_np_variant(agmpc_linear_np3 agmpc_linear.cpp 3  DEFS LIN_NP=3)
 # path; nP=3 covers stored aggregate rows plus input-Lambda EchoBC.
 add_np_variant(agmpc_prepared_np2 agmpc_prepared.cpp 2 DEFS PREP_NP=2)
 add_np_variant(agmpc_prepared_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3)
-add_np_variant(agmpc_prepared_adopt_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3 PREP_ADOPT_ABOVE_TWO
+add_np_variant(agmpc_prepared_adopt_np3 agmpc_prepared.cpp 3 DEFS PREP_NP=3 ARGS adopt_above_two
                PASS_RE "authenticated inputs need two parties")
 # A long offline phase as the session's first work: every receiver of a party must
 # already be aligned when the draws run past the first COT chunk (see the source).
@@ -170,31 +176,26 @@ add_np_variant(agmpc_long_offline_np4 agmpc_long_offline.cpp 4 DEFS LONG_NP=4)
 add_np_variant(agmpc_cot_extension_factory_np2 agmpc_cot_extension_factory.cpp 2 DEFS COT_FACTORY_NP=2)
 add_np_variant(agmpc_cot_extension_factory_np3 agmpc_cot_extension_factory.cpp 3 DEFS COT_FACTORY_NP=3)
 add_np_variant(agmpc_cot_extension_factory_lanes agmpc_cot_extension_factory.cpp 2
-               DEFS COT_FACTORY_NP=2 COT_FACTORY_CASE=1 PASS_RE "supplied streams run on one lane")
+               DEFS COT_FACTORY_NP=2 ARGS case=1 PASS_RE "supplied streams run on one lane")
 add_np_variant(agmpc_cot_extension_factory_noid agmpc_cot_extension_factory.cpp 2
-               DEFS COT_FACTORY_NP=2 COT_FACTORY_CASE=2 PASS_RE "supplied factory needs an id")
+               DEFS COT_FACTORY_NP=2 ARGS case=2 PASS_RE "supplied factory needs an id")
 add_np_variant(agmpc_cot_extension_factory_owndelta agmpc_cot_extension_factory.cpp 2
-               DEFS COT_FACTORY_NP=2 COT_FACTORY_CASE=3 PASS_RE "does not run under the Delta it was given")
+               DEFS COT_FACTORY_NP=2 ARGS case=3 PASS_RE "does not run under the Delta it was given")
 # The AND gates' protocol a session is given: an id without a protocol, or a protocol
 # without an id, is refused before any traffic.
-add_np_variant(agmpc_and_prep_factory_noprotocol agmpc_and_prep_factory.cpp 2
-               DEFS AND_PREP_CASE=1 PASS_RE "an id without a protocol")
-add_np_variant(agmpc_and_prep_factory_noid agmpc_and_prep_factory.cpp 2
-               DEFS AND_PREP_CASE=2 PASS_RE "a supplied protocol needs an id")
+add_np_variant(agmpc_and_prep_factory_noprotocol agmpc_and_prep_factory.cpp 2 ARGS case=1 PASS_RE "an id without a protocol")
+add_np_variant(agmpc_and_prep_factory_noid agmpc_and_prep_factory.cpp 2 ARGS case=2 PASS_RE "a supplied protocol needs an id")
 # A computation's Party slot bound to authenticated bundles made from one-way draw_cots()
 # COTs, and the opening's MAC check catching a false claim.
 add_np_variant(agmpc_computation_authenticated agmpc_computation_authenticated.cpp 2)
-add_np_variant(agmpc_computation_authenticated_cheat agmpc_computation_authenticated.cpp 2
-               DEFS AUTH_CASE=1 PASS_RE "share-MAC hash mismatch")
+add_np_variant(agmpc_computation_authenticated_cheat agmpc_computation_authenticated.cpp 2 ARGS case=1 PASS_RE "share-MAC hash mismatch")
 # Above two parties, nothing checks a supplied bundle across receivers: refused.
 add_np_variant(agmpc_computation_authenticated_np3 agmpc_computation_authenticated.cpp 3
-               DEFS AUTH_CASE=2 PASS_RE "authenticated slots need two parties")
+               DEFS AUTH_NP=3 PASS_RE "authenticated slots need two parties")
 # While the job is outstanding, the share pool refuses its own draws and COT check: they go
 # through the job (draw_cots(job, ...), check_cots(job)).
-add_np_variant(agmpc_computation_authenticated_draw agmpc_computation_authenticated.cpp 2
-               DEFS AUTH_CASE=3 PASS_RE "draw through AGMPCSession::draw_cots")
-add_np_variant(agmpc_computation_authenticated_check agmpc_computation_authenticated.cpp 2
-               DEFS AUTH_CASE=4 PASS_RE "check through AGMPCSession::check_cots")
+add_np_variant(agmpc_computation_authenticated_draw agmpc_computation_authenticated.cpp 2 ARGS case=3 PASS_RE "draw through AGMPCSession::draw_cots")
+add_np_variant(agmpc_computation_authenticated_check agmpc_computation_authenticated.cpp 2 ARGS case=4 PASS_RE "check through AGMPCSession::check_cots")
 # A session's COT plan (AGMPCSession::planned_cots) is exactly what its streams draw: the
 # leaky ANDs, cut-and-choose over several batches, no AND gates, job draws at nP = 2, the
 # B13 LPN set on SilentFerret streams, share mode planned from its draws, and a slot bound at
@@ -202,13 +203,11 @@ add_np_variant(agmpc_computation_authenticated_check agmpc_computation_authentic
 add_np_variant(agmpc_planned_cots_np2 agmpc_planned_cots.cpp 2 DEFS PLANNED_NP=2)
 add_np_variant(agmpc_planned_cots_np3 agmpc_planned_cots.cpp 3 DEFS PLANNED_NP=3)
 add_np_variant(agmpc_independent_triples_direct_np2 agmpc_independent_triples.cpp 2)
-add_np_variant(agmpc_independent_triples_prepared_np2 agmpc_independent_triples.cpp 2
-               DEFS INDEPENDENT_TRIPLES_PREPARED=1)
+add_np_variant(agmpc_independent_triples_prepared_np2 agmpc_independent_triples.cpp 2 ARGS prepared)
 # SilentFerret takes a plan as the size of its prepaid batch and prepays another batch
 # when a stream runs past it, so only the other backends reject the extra COT.
 if(NOT EMP_AG_OT_BACKEND STREQUAL "SilentFerret")
-  add_np_variant(agmpc_independent_triples_short_np2 agmpc_independent_triples.cpp 2
-                 DEFS INDEPENDENT_TRIPLES_PREPARED=1 INDEPENDENT_TRIPLES_SHORT=1
+  add_np_variant(agmpc_independent_triples_short_np2 agmpc_independent_triples.cpp 2 ARGS prepared short
                  PASS_RE "exceeds declared element count")
 endif()
 
@@ -274,19 +273,19 @@ foreach(_np 2 3 4)
         endforeach()
     endforeach()
 endforeach()
-add_np_variant(agmpc_computation_ssp60_np3 agmpc_computation.cpp 3 DEFS COMP_NP=3 COMP_SSP=60)
+add_np_variant(agmpc_computation_ssp60_np3 agmpc_computation.cpp 3 DEFS COMP_NP=3 ARGS ssp=60)
 add_np_variant(agmpc_computation_wrk_ssp60_np2 agmpc_computation.cpp 2
-               DEFS COMP_NP=2 COMP_SSP=60 EMP_AG_GARBLE_AUTH=WRK)
-add_np_variant(agmpc_computation_busy_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 COMP_BUSY
+               DEFS COMP_NP=2 EMP_AG_GARBLE_AUTH=WRK ARGS ssp=60)
+add_np_variant(agmpc_computation_busy_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 ARGS busy
                PASS_RE "a Computation job is outstanding")
-add_np_variant(agmpc_computation_bad_owner_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 COMP_BAD_OWNER
+add_np_variant(agmpc_computation_bad_owner_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 ARGS bad_owner
                PASS_RE "an input owner is above the party count")
-add_np_variant(agmpc_computation_full_reuse_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 COMP_FULL_REUSE
+add_np_variant(agmpc_computation_full_reuse_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 ARGS full_reuse
                PASS_RE "WireReuse::Full is not supported")
-add_np_variant(agmpc_computation_ssp_skew_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 COMP_SSP_SKEW=20
+add_np_variant(agmpc_computation_ssp_skew_np2 agmpc_computation.cpp 2 DEFS COMP_NP=2 ARGS ssp_skew=20
                PASS_RE "check failed")
 add_np_variant(agmpc_computation_composed_full_np2 agmpc_computation.cpp 2
-               DEFS COMP_NP=2 COMP_COMPOSED_FULL_UNIT
+               DEFS COMP_NP=2 ARGS composed_full_unit
                PASS_RE "WireReuse::Full composition unit not supported")
 
 # Share mode (authenticated GMW) against the circuits evaluated in the clear, at nP = 2, 3, 4
@@ -296,7 +295,7 @@ foreach(_np 2 3 4)
 endforeach()
 add_np_variant(agmpc_share_eval_tag80_np3 agmpc_share_eval.cpp 3
                DEFS SHARE_NP=3 EMP_AG_SHARE_TAG_BYTES=10)
-add_np_variant(agmpc_share_eval_no_bank_np2 agmpc_share_eval.cpp 2 DEFS SHARE_NP=2 SHARE_NO_BANK
+add_np_variant(agmpc_share_eval_no_bank_np2 agmpc_share_eval.cpp 2 DEFS SHARE_NP=2 ARGS no_bank
                PASS_RE "keeps no triple bank")
 # Openings the caller checks itself (share_opening, absorb_expected_macs), at nP = 2 and 3; a
 # flipped bit must fail the caller's digest check.
@@ -304,7 +303,7 @@ foreach(_np 2 3)
     add_np_variant(agmpc_share_opening_np${_np} agmpc_share_opening.cpp ${_np} DEFS SHARE_OPEN_NP=${_np})
 endforeach()
 add_np_variant(agmpc_share_opening_flip_np3 agmpc_share_opening.cpp 3
-               DEFS SHARE_OPEN_NP=3 SHARE_OPEN_FLIP PASS_RE "a peer's bits do not match its MACs")
+               DEFS SHARE_OPEN_NP=3 ARGS flip PASS_RE "a peer's bits do not match its MACs")
 
 # Party slots bound at prepare to share-mode values (prepare_computation(art, bound)), against
 # the circuits in the clear: at nP = 2, 3, 4 under each Auth, WRK with direct delivery, and on
@@ -332,6 +331,8 @@ add_np_variant(agmpc_computation_bound_key_closed_np2 agmpc_computation_bound.cp
                DEFS BOUND_NP=2 BOUND_MISUSE=4 EMP_AG_GARBLE_AUTH=WRK
                PASS_RE "AGMPCSession::expert_output_key")
 
-# Fault-injection / adversarial tests: compile the production-guarded EMP_AG_TEST_FLIP_*
-# hooks and assert the protocol aborts.
-add_subdirectory(adversarial)
+# Fault-injection / adversarial tests: turn on the test hooks and assert the protocol
+# aborts. They need a hooks build.
+if(EMP_AG_TEST_HOOKS)
+    add_subdirectory(adversarial)
+endif()

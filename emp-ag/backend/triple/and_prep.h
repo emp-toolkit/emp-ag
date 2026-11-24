@@ -83,8 +83,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // What a protocol gets from its session, once, after setup.
 template <int nP>
@@ -175,5 +176,5 @@ inline block bind_and_prep(block session_id, const std::string &id) {
   return RO("emp-ag:and-prep", session_id).absorb(std::string_view(id)).squeeze_block();
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_TRIPLE_AND_PREP_H__

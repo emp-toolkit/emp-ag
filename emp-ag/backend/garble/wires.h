@@ -9,8 +9,9 @@
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/core/block_vector.h"
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // Per-wire authenticated-share + half-gate state. Notation (Pi = local):
 //   wire_bundle[w]   = (M_j[λ_w^i], K_i[λ_w^j]) for j ≠ i, AoS-by-wire.
@@ -69,5 +70,5 @@ template <int nP> struct SecureWires {
   }
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_WIRES_H__

@@ -9,8 +9,9 @@
 //
 #include "emp-ag/backend/ashare/share.h"            // AShareBundle, AShareBundleVec (-> block, BlockVec)
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // Per-call scratch shared across the protocol-step methods. The heavy arrays size to
 // num_slots (slot-reuse, see garble/passes/liveness.h), not num_wire; WIRE / LABEL / EVAL
@@ -75,5 +76,5 @@ struct ComputeCtx {
   unsigned char &MASK(int w) { return mask_input[SLOT(w)]; }
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_GARBLE_STATE_H__

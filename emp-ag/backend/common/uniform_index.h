@@ -3,8 +3,9 @@
 
 #include "emp-tool/runtime/crypto/prg.h"
 #include <cstdint>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 // An exactly uniform integer in [0, bound). A plain `word % bound` is biased unless bound
 // divides the word range; the bucketing proof assumes uniform rotations. Threshold
@@ -25,5 +26,5 @@ inline int64_t uniform_index(PRG &prg, int64_t bound) {
   return (int64_t)(raw % n);
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_COMMON_UNIFORM_INDEX_H__

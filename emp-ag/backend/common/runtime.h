@@ -15,8 +15,9 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 using std::future;
 using std::max;
@@ -174,5 +175,5 @@ inline void parallel_for(ThreadPool *pool, int n, F body) {
   joinNclean(r);
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif // EMP_AG_BACKEND_COMMON_RUNTIME_H__

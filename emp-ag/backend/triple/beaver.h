@@ -31,8 +31,9 @@
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/core/block_vector.h"
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 template <int nP, class OpenCheck, bool kBIsBeta = false>
 class Beaver {
@@ -105,12 +106,12 @@ public:
           y[party_][i] = (unsigned char)(in_.beta_bit[i] ^ getLSB(t.mac[1][any_peer][i]));
       }
     });
-#ifdef EMP_AG_TEST_FLIP_XY
-    // TEST-ONLY (never in production): a malicious party 2 flips its share of the first
-    // x and sends it to everyone, keeping it itself, so every party forms the same
-    // wrong x and a validly authenticated σ ⊕ λ_β. The open check must abort.
-    if (party_ == 2) x[party_][0] ^= 1;
-#endif
+    if constexpr (kTestHooks) {
+      // TEST-ONLY (hook flip_xy): a malicious party 2 flips its share of the first x and
+      // sends it to everyone, keeping it itself, so every party forms the same wrong x and
+      // a validly authenticated σ ⊕ λ_β. The open check must abort.
+      if (hooks().flip_xy && party_ == 2) x[party_][0] ^= 1;
+    }
     // x's and y's tags: x's MAC under a peer's key is the XOR of the two MACs.
     if constexpr (OpenCheck::kTagRidesBits) {
       ag::parallel_for(mesh_.pool, L, [&](int lo, int hi) {
@@ -134,11 +135,12 @@ public:
         if constexpr (OpenCheck::kTagRidesBits)
           if (ch == mesh_.io) {
             block tag = check.tag(peer);
-#ifdef EMP_AG_TEST_FLIP_TAG
-            // TEST-ONLY (never in production): party 2 flips the last byte of the tag it
-            // sends to P1, which P1 must catch at any tag width.
-            if (party_ == 2 && peer == 1) ((unsigned char *)&tag)[check.tag_bytes() - 1] ^= 1;
-#endif
+            if constexpr (kTestHooks) {
+              // TEST-ONLY (hook flip_tag): party 2 flips the last byte of the tag it sends
+              // to P1, which P1 must catch at any tag width.
+              if (hooks().flip_tag && party_ == 2 && peer == 1)
+                ((unsigned char *)&tag)[check.tag_bytes() - 1] ^= 1;
+            }
             ch->send_data(peer, &tag, (size_t)check.tag_bytes());
           }
         ch->flush(peer);
@@ -252,5 +254,5 @@ private:
   block peer_tag_[nP + 1] = {};
 };
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_TRIPLE_BEAVER_H__

@@ -4,11 +4,12 @@
 // party's two streams per peer, its id is bound into the session id, and the session
 // computes correctly over the streams.
 //
-// COT_FACTORY_CASE selects a misuse the session must refuse instead: 1 asks for two lanes
+// The case=<n> argument (test_args.h) selects a misuse the session must refuse instead: 1 asks for two lanes
 // (supplied streams run on one), 2 leaves the id empty, 3 supplies primary sender streams
 // that keep a Delta of their own in place of the one they are given.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
+#include "test_args.h"
 #include "emp-ot/base_ot/base_ot_select.h"
 #include <algorithm>
 #include <atomic>
@@ -19,9 +20,6 @@ using namespace emp;
 #ifndef COT_FACTORY_NP
 #define COT_FACTORY_NP 2
 #endif
-#ifndef COT_FACTORY_CASE
-#define COT_FACTORY_CASE 0
-#endif
 static const int nP = COT_FACTORY_NP;
 // The supplied streams need the SoftSpoken mint, whatever the build's default.
 using Cfg = ag::GarbleConfig<ag::Auth::EMP_AG_GARBLE_AUTH, ag::Delivery::EMP_AG_GARBLE_DELIVERY,
@@ -29,7 +27,7 @@ using Cfg = ag::GarbleConfig<ag::Auth::EMP_AG_GARBLE_AUTH, ag::Delivery::EMP_AG_
 using AgSession = AGMPCSession<nP, Cfg>;
 using UInt32 = UInt_T<AgSession::ctx_t, 32>;
 
-// COT_FACTORY_CASE 3: a sender stream that flips one bit of the Delta it is given.
+// case=3: a sender stream that flips one bit of the Delta it is given.
 struct OwnDelta final : ag::SoftSpokenCot {
   using ag::SoftSpokenCot::SoftSpokenCot;
   void set_delta(const bool *bits) override {
@@ -44,13 +42,14 @@ int main(int argc, char **argv) {
   const int party = parse_party(argv, nP);
   const int port = peer_port();
   if (party > nP) return 0;
+  const int cot_case = (int)TestArgs(argc, argv, {"case"}).num("case", 0);
 
   std::atomic<int> primaries{0}, reverses{0};
   ag::CotExtensionFactory cot;
-  cot.id = COT_FACTORY_CASE == 2 ? "" : "test:softspoken-over-bmm";
+  cot.id = cot_case == 2 ? "" : "test:softspoken-over-bmm";
   cot.primary = [&](int role, NetIO *ch) -> std::unique_ptr<OTExtension> {
     ++primaries;
-    if (COT_FACTORY_CASE == 3 && role == ALICE)
+    if (cot_case == 3 && role == ALICE)
       return std::make_unique<OwnDelta>(role, ch, /*malicious=*/true, make_base_ot(BaseOtKind::BMM, ch));
     return std::make_unique<ag::SoftSpokenCot>(role, ch, /*malicious=*/true,
                                                make_base_ot(BaseOtKind::BMM, ch));
@@ -62,7 +61,7 @@ int main(int argc, char **argv) {
 
   ThreadPool pool(ag::default_pool_size(nP));
   const block given = makeBlock(0x636f74ULL, 0x666163746f7279ULL);
-  if (COT_FACTORY_CASE == 1) {
+  if (cot_case == 1) {
     AgSession sess(party, port, nullptr, &pool, 40, /*lanes=*/2, given, BaseOtKind::CSW, -1, -1,
                    {}, cot);
     return 1;   // unreachable: the session refuses two lanes

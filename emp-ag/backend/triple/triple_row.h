@@ -9,8 +9,9 @@
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/core/block_vector.h"
 #include <cstdint>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 template <int nP>
 struct TripleRow {
@@ -32,5 +33,5 @@ TripleRow<nP> strided_row(BlockVec mac[nP + 1], BlockVec key[nP + 1], int64_t of
   return t;
 }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_TRIPLE_TRIPLE_ROW_H__

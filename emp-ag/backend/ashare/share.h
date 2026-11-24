@@ -9,8 +9,9 @@
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/core/block_vector.h"
 #include <vector>
+#include "emp-ag/backend/common/test_hooks.h"
 
-namespace emp::ag {
+EMP_AG_NAMESPACE_BEGIN
 
 //
 // Per-wire authenticated-share storage — the single physical share type the whole stack
@@ -108,5 +109,5 @@ inline void add_public_one(int party, const block &Delta, Mac &&mac, Key &&key) 
 // (AShareBundle, above).
 inline uint8_t LSB1(const block &b) { return getBit(b, 1); }
 
-}  // namespace emp::ag
+EMP_AG_NAMESPACE_END
 #endif  // EMP_AG_BACKEND_ASHARE_SHARE_H__

@@ -32,6 +32,8 @@ option(EMP_AG_BUILD_TESTS    "Build emp-ag tests" ${PROJECT_IS_TOP_LEVEL})
 option(EMP_AG_BUILD_BENCHES  "Build emp-ag benchmarks (opt-in; not run by ctest)" OFF)
 option(EMP_AG_BUILD_EXAMPLES "Build emp-ag examples" ${PROJECT_IS_TOP_LEVEL})
 option(EMP_AG_DEBUG         "Enable internal MAC / correctness checks" OFF)
+option(EMP_AG_TEST_HOOKS
+       "Build the tests with fault-injection hooks; the adversarial tests need them" ON)
 option(EMP_AG_PROFILE       "Enable protocol timing / communication profiling" OFF)
 option(EMP_AG_INSTALL
        "Generate install / find_package(emp-ag) export rules" ${PROJECT_IS_TOP_LEVEL})
