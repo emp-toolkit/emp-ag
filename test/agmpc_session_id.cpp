@@ -87,6 +87,8 @@ int main(int argc, char **argv) {
     const block want = ag::bind_and_prep(base, ag::cut_and_choose_prep<nP>(1024).id);
     expecting(cmpBlock(&bound, &want, 1) && !cmpBlock(&bound, &base, 1),
               "agmpc_session_id: cut-and-choose triples did not bind the id");
+    expecting(ag::cut_and_choose_prep<nP>(1024, 4).id != ag::cut_and_choose_prep<nP>(1024).id,
+              "agmpc_session_id: a declared batch count is not in the protocol's id");
   }
   {
     // SilentFerret's LPN set: B13 binds the id beyond what SilentFerret itself binds, and

@@ -2,7 +2,10 @@
 // protocol layer: take triples through the bank across several batches, then check that
 // every triple is consistently authenticated (check_MAC, which sends Delta in the clear:
 // white-box, EMP_AG_DEBUG_CHECKS) and correct (a * b == c on the opened shares), and that
-// the bank and the batch count behave as specified. One source; the party count via CNC_NP.
+// the bank and the batch count behave as specified. A second bank declares 2^20 batches and
+// runs two, both at the declared target (2^-ssp / 2^20 each), which needs larger buckets
+// than the per-batch schedule's first batches; with CNC_OVER_DECLARED a bank that declares
+// one batch refuses a second. One source; the party count via CNC_NP.
 #include "emp-ag/backend/triple/cut_and_choose_triples.h"
 #include <cstdio>
 #include <vector>
@@ -66,6 +69,26 @@ int main(int argc, char **argv) {
   ok = ok && cnc.batches() == 4 && cnc.outputs() == 4 * kBatch;
   cnc.take(0, mac, key);
   ok = ok && cnc.batches() == 4;
+
+  // Declared batches, each bank on a session id of its own.
+#ifdef CNC_OVER_DECLARED
+  CutAndChooseTriples<nP> one(&io, &pool, party, abit, sid ^ makeBlock(0, 1), 40, kBatch, nullptr, 1);
+  one.take(kBatch + 1, mac, key);   // the second batch
+  return 1;
+#endif
+  constexpr int64_t kDeclared = int64_t(1) << 20;
+  const CutAndChooseParams second = cut_and_choose_params(kBatch, cut_and_choose_batch_target(40, 2));
+  const CutAndChooseParams declared =
+      cut_and_choose_params(kBatch, cut_and_choose_declared_target(40, kDeclared));
+  CutAndChooseTriples<nP> many(&io, &pool, party, abit, sid ^ makeBlock(0, 2), 40, kBatch, nullptr,
+                               kDeclared);
+  many.take(1500, mac, key);
+  ok = check_triples(&io, abit, mac, key, 1500) && ok;
+  const CutAndChooseParams &D = many.last_params();
+  ok = ok && many.batches() == 2 && D.pop == declared.pop && D.B == declared.B &&
+       D.T == declared.T && declared.B > second.B;
+  const std::vector<int64_t> want = {3 * declared.pop, 3 * declared.pop};
+  ok = ok && CutAndChooseTriples<nP>::draws(1500, 40, kBatch, kDeclared) == want;
 
   if (party == 1) {
     const CutAndChooseParams &P = cnc.last_params();
