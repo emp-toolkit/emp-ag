@@ -58,9 +58,10 @@ jobs:
 
       - name: Build
         # Bounded parallelism: the nP-templated test/adversarial binaries are
-        # memory-heavy, and an unbounded -j OOMs the hosted runners. The macOS
-        # runners have three cores, and three of their compiles fit in memory.
-        run: cmake --build build -j ${{ runner.os == 'macOS' && 3 || 2 }}
+        # memory-heavy, and an unbounded -j OOMs the hosted runners. The Linux
+        # runners have four cores and the macOS runners three, and that many
+        # compiles fit in memory on each.
+        run: cmake --build build -j ${{ runner.os == 'macOS' && 3 || 4 }}
 
       - name: Test
         # macOS Debug runs the suite several times slower than any other job, so
