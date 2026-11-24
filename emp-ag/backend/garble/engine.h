@@ -27,16 +27,19 @@
 #include "emp-tool/ir/visit.h"                      // for_each_gate
 #include "emp-tool/ir/validate.h"                   // circuit::validate_program
 #include "emp-ag/backend/garble/protocol.h"                 // AGMPCProtocol<nP> (+ its ComputeCtx alias) + SecureWires<nP>
+#include "emp-ag/backend/garble/output_key.h"               // output_label_key
 #include "emp-ag/backend/garble/passes/liveness.h"           // AGMPCLivenessPass (dense-path liveness)
 #include "emp-ag/backend/garble/passes/pass.h"                 // emp::ag::run_pass
 #include "emp-ag/backend/garble/passes/replay.h"           // emp::ag::LoweredUnit / replay_lowered
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <cstdint>
 #include <cstring>
 #include <exception>
 #include <memory>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -238,12 +241,16 @@ class AGMPCEngine {
   // position this party's bit where it is a recipient, 0 elsewhere.
   // `source` and `from_source` (optional): input wires bound to authenticated sources
   // instead of their owners' broadcasts (AGMPCProtocol::bind_computation_inputs_).
+  // `keys` (optional): at P1, (*keys)[k][j] is its key from garbler j's label on output
+  // position key_positions[k] (output_key.h); left empty at the garblers.
   std::vector<unsigned char> run_computation(
       Material &material, const std::vector<int> &owner,
       const std::vector<unsigned char> &lambda,
       const std::vector<std::vector<int>> &open_to,
       const AShareBundle<nP> *source = nullptr,
-      const std::vector<unsigned char> *from_source = nullptr) {
+      const std::vector<unsigned char> *from_source = nullptr,
+      const std::vector<int> *key_positions = nullptr, std::string_view key_domain = {},
+      std::vector<std::array<block, nP + 1>> *keys = nullptr) {
     expecting(material.live(), "run_computation: prepared material was already consumed");
     expecting(owner.size() == (size_t)material.ctx.num_in &&
                   lambda.size() == owner.size(),
@@ -271,6 +278,19 @@ class AGMPCEngine {
                                  : open_output_masks_(material.output_static.wire_bundle, open_to);
 
     Wires out = evaluate_stored_(material, /*linear_masks=*/false);
+    if (keys != nullptr) {
+      keys->clear();
+      if (party == 1) {
+        keys->resize(key_positions->size());
+        for (size_t k = 0; k < key_positions->size(); ++k) {
+          const int pos = (*key_positions)[k];
+          (*keys)[k][0] = (*keys)[k][1] = zero_block;
+          for (int j = 2; j <= nP; ++j)
+            (*keys)[k][(size_t)j] = output_label_key(mpc->session_id, key_domain, (uint64_t)pos,
+                                                     (uint64_t)j, out.eval_label[j][(size_t)pos]);
+        }
+      }
+    }
     if constexpr (Cfg::auth == Auth::KRRW)
       mask = open_output_masks_(out.wire_bundle, open_to);
     if constexpr (Cfg::auth == Auth::WRK) {

@@ -13,13 +13,16 @@
 //      leaky ANDs (BOUND_LEAKY: the only case there, as share_evaluate needs a bank);
 //   5. a composed Computation with a bound slot;
 //   6. under WRK (BOUND_EXPERT), the output masks opened between prepare and run
-//      (expert_open_output_masks), every output an AND gate on a Public bit.
+//      (expert_open_output_masks), every output an AND gate on a Public bit; the keys from
+//      output labels (expert_output_key, run_computation with keys) agree exactly for
+//      the output's value, compared in share mode.
 // test/CMakeLists.txt builds it at nP = 2, 3, 4 under each Auth; the BOUND_MISUSE cases
 // are refused before any traffic.
 #include "emp-tool/emp-tool.h"
 #include "emp-ag/emp-ag.h"
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <random>
@@ -43,6 +46,15 @@ static void check(bool ok, const char *what, int party) {
     std::printf("  [FAIL] P%d: %s\n", party, what);
     ++fails;
   }
+}
+
+// A key's 128 bits.
+static Bits bits_of_block(const block &k) {
+  uint64_t w[2];
+  std::memcpy(w, &k, sizeof(w));
+  Bits v(128);
+  for (int i = 0; i < 128; ++i) v[(size_t)i] = (uint8_t)((w[i / 64] >> (i % 64)) & 1);
+  return v;
 }
 
 static Bits random_bits(std::mt19937_64 &rng, size_t n) {
@@ -128,7 +140,8 @@ int main(int argc, char **argv) {
 #ifdef BOUND_MISUSE
   {
     // BOUND_MISUSE = 1: a bound value of the wrong width; 2: a bound Public slot;
-    // 3: wires another session built. Sessions over one mesh, one at a time.
+    // 3: wires another session built; 4 (WRK): a key from output labels before the masks
+    // are open, which P1 may not take at all. Sessions over one mesh, one at a time.
     NetIOMP<nP> io(party, peer_port());
     Builder bl(2 * W);
     for (uint32_t k = 0; k < W; ++k) bl.p.outputs.push_back(bl.gate(Op::Xor, k, W + k));
@@ -152,6 +165,9 @@ int main(int argc, char **argv) {
 #elif BOUND_MISUSE == 2
     v = sess.share_random(W);
     (void)sess.prepare_computation(art, {nullptr, &v});
+#elif BOUND_MISUSE == 4
+    auto job = sess.prepare_computation(art);
+    (void)sess.expert_output_key(job, 0, 1, "misuse");
 #else
     (void)sess.prepare_computation(art, {&v, nullptr});
 #endif
@@ -359,8 +375,28 @@ int main(int argc, char **argv) {
       std::printf("P1 reached the run\n");
       std::fflush(stdout);
     }
-    check_outputs(io, sess.run_computation(std::move(job), b), party, "masks opened ahead of the run",
-                  want);
+    // Keys from output labels on position 0, a Public output: each garbler's for both
+    // values before the run, P1's from every garbler after it.
+    const std::string_view dom = "agmpc_computation_bound";
+    block gk[2] = {zero_block, zero_block};
+    if (party != 1)
+      for (int v = 0; v < 2; ++v) gk[v] = sess.expert_output_key(job, 0, v, dom);
+    std::vector<std::array<block, nP + 1>> pk;
+    check_outputs(io, sess.run_computation(std::move(job), b, {0}, dom, pk), party,
+                  "masks opened ahead of the run", want);
+    check(party == 1 ? pk.size() == 1 : pk.empty(), "keys at P1 only", party);
+    // In share mode: P1's key from garbler j equals j's key for the output's value, and
+    // differs from j's key for the other value.
+    const int z = want[0][0];
+    for (int j = 2; j <= nP; ++j) {
+      const Wires a = sess.share_input(1, party == 1 ? bits_of_block(pk[0][(size_t)j]) : Bits(128, 0));
+      const Wires same = sess.share_input(j, party == j ? bits_of_block(gk[z]) : Bits(128, 0));
+      const Wires other = sess.share_input(j, party == j ? bits_of_block(gk[1 - z]) : Bits(128, 0));
+      const std::optional<Bits> d0 = sess.share_reveal(a ^ same, PUBLIC);
+      const std::optional<Bits> d1 = sess.share_reveal(a ^ other, PUBLIC);
+      check(d0.has_value() && *d0 == Bits(128, 0), "P1's key matches the output's value", party);
+      check(d1.has_value() && *d1 != Bits(128, 0), "and not the other value", party);
+    }
   }
 #endif
 
