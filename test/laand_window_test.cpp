@@ -35,12 +35,36 @@ int main() {
           const int want = b < bits ? (source[i * stride + b / 8] >> (b % 8)) & 1 : 0;
           if (((unpacked[i * stride + b / 8] >> (b % 8)) & 1) != want) return 4;
         }
+      // The block forms: the same stream from rows in blocks whose bytes past the row are
+      // junk, and back into zero-extended blocks.
+      std::vector<emp::block> blocks(n), unblocked(n);
+      for (int64_t i = 0; i < n; ++i) {
+        std::array<unsigned char, 16> b{};
+        std::memcpy(b.data(), source.data() + i * stride, stride);
+        for (int j = stride; j < 16; ++j) b[j] = static_cast<unsigned char>(i * 31 + j * 7 + 1);
+        std::memcpy(&blocks[i], b.data(), sizeof(emp::block));
+      }
+      std::vector<unsigned char> wire2(size + 2, 0xa5);
+      pack_laand_blocks(wire2.data() + 1, blocks.data(), n, bits);
+      if (wire2.front() != 0xa5 || wire2.back() != 0xa5 ||
+          !std::equal(oracle.begin(), oracle.end(), wire2.begin() + 1)) return 6;
+      if (!unpack_laand_blocks(unblocked.data(), oracle.data(), n, bits)) return 7;
+      for (int64_t i = 0; i < n; ++i) {
+        std::array<unsigned char, 16> b{};
+        std::memcpy(b.data(), &unblocked[i], sizeof(emp::block));
+        for (int bit = 0; bit < 128; ++bit) {
+          const int want = bit < bits ? (source[i * stride + bit / 8] >> (bit % 8)) & 1 : 0;
+          if (((b[bit / 8] >> (bit % 8)) & 1) != want) return 8;
+        }
+      }
       if (n * bits % 8 != 0) {
         oracle.back() |= 1u << (n * bits % 8);
         if (unpack_laand_rows(unpacked.data(), oracle.data(), n, bits)) return 5;
+        if (unpack_laand_blocks(unblocked.data(), oracle.data(), n, bits)) return 9;
       }
     }
   }
-  std::puts("laand_window_test: all widths, boundary rows, projection and padding passed");
+  std::puts("laand_window_test: all widths, boundary rows, projection and padding passed, "
+            "byte and block forms");
   return 0;
 }

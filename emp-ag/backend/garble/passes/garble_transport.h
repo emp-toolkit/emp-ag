@@ -34,20 +34,11 @@ namespace emp::ag {
 
 // WRK: pack n rows toward P1 to their low `bits` bits, and back.
 inline void pack_p1_rows(unsigned char *dst, const block *rows, int64_t n, int bits) {
-  const int stride = (bits + 7) / 8;
-  std::vector<unsigned char> tmp((size_t)n * stride);
-  for (int64_t i = 0; i < n; ++i) std::memcpy(&tmp[(size_t)i * stride], &rows[i], stride);
-  pack_laand_rows(dst, tmp.data(), n, bits);
+  pack_laand_blocks(dst, rows, n, bits);
 }
 inline void unpack_p1_rows(block *rows, const unsigned char *src, int64_t n, int bits) {
-  const int stride = (bits + 7) / 8;
-  std::vector<unsigned char> tmp((size_t)n * stride);
-  expecting(unpack_laand_rows(tmp.data(), src, n, bits),
+  expecting(unpack_laand_blocks(rows, src, n, bits),
             "WRK: a garbled row toward P1 has nonzero padding");
-  for (int64_t i = 0; i < n; ++i) {
-    rows[i] = zero_block;
-    std::memcpy(&rows[i], &tmp[(size_t)i * stride], stride);
-  }
 }
 
 // Bytes of one window's T rows on the wire (0 under KRRW).

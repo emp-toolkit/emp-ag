@@ -196,7 +196,7 @@ public:
         // Sender: row = H(K) ^ H(K ^ Delta) ^ phi on its key of peer's a, low gw bits.
         tasks.push_back(pool->enqueue([&, ch, peer, lane, lo, hi]() {
           const int len = hi - lo;
-          std::vector<unsigned char> gbuf((size_t)std::min(hg_chunk, len) * gb);
+          BlockVec rowbuf(std::min(hg_chunk, len));
           std::vector<unsigned char> packed(ag::laand_row_wire_bytes(std::min(hg_chunk, len), gw));
           block pad[16];
           for (int layer = 0; layer < B; ++layer) {
@@ -215,9 +215,8 @@ public:
                 mitc.hash_cir<8, 2>(pad);
                 for (int j = 0; j < batch; ++j) {
                   const int k = k0 + j;
-                  const block row =
+                  rowbuf[k - st] =
                       pad[2 * j] ^ pad[2 * j + 1] ^ phi(r, layer, k, (size_t)layer * L + k);
-                  memcpy(gbuf.data() + (size_t)(k0 + j - st) * gb, &row, gb);
                 }
               }
 #ifdef EMP_AG_TEST_FLIP_LAAND
@@ -232,9 +231,9 @@ public:
               // would cancel whenever nP-1 is even (nP = 3 here), a false negative.
               if constexpr (nP > 2)
                 if (party_ == 2 && peer == 1)
-                  for (int q = 0; q < ed - st; ++q) gbuf[(size_t)q * gb] ^= 0x1;
+                  for (int q = 0; q < ed - st; ++q) rowbuf[q] = rowbuf[q] ^ bit0_mask;
 #endif
-              ag::pack_laand_rows(packed.data(), gbuf.data(), ed - st, gw);
+              ag::pack_laand_blocks(packed.data(), rowbuf.data(), ed - st, gw);
               ch->send_data(peer, packed.data(), ag::laand_row_wire_bytes(ed - st, gw));
             }
           }
@@ -247,7 +246,6 @@ public:
         // the local terms, giving the whole value.
         tasks.push_back(pool->enqueue([&, ch, peer, lane, lo, hi]() {
           const int len = hi - lo;
-          std::vector<unsigned char> gbuf((size_t)std::min(hg_chunk, len) * gb);
           std::vector<unsigned char> packed(ag::laand_row_wire_bytes(std::min(hg_chunk, len), gw));
           BlockVec wire(std::min(hg_chunk, len));
           block pad[16];
@@ -259,12 +257,8 @@ public:
             for (int st = lo; st < hi; st += hg_chunk) {
               const int ed = std::min(st + hg_chunk, hi);
               ch->recv_data(peer, packed.data(), ag::laand_row_wire_bytes(ed - st, gw));
-              expecting(ag::unpack_laand_rows(gbuf.data(), packed.data(), ed - st, gw),
+              expecting(ag::unpack_laand_blocks(wire.data(), packed.data(), ed - st, gw),
                         "LaAND row has nonzero padding");
-              for (int q = 0; q < ed - st; ++q) {
-                wire[q] = zero_block;
-                memcpy(&wire[q], gbuf.data() + (size_t)q * gb, gb);
-              }
               for (int k0 = st; k0 < ed; k0 += 8) {
                 const int batch = std::min(8, ed - k0);
                 for (int j = 0; j < 8; ++j) {

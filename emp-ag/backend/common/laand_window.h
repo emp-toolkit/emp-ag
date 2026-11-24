@@ -5,6 +5,7 @@
 #include "emp-tool/runtime/core/block.h"
 #include "emp-ag/backend/common/runtime.h"     // ThreadPool, joinNclean
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <future>
@@ -37,6 +38,51 @@ inline block laand_bits_mask(int bits) {
 }
 inline block laand_window_mask(int ssp) { return laand_bits_mask(laand_window_bits(ssp)); }
 
+// Rows narrower than 64 bits on a little-endian host move a word at a time (row(i) gives
+// or takes row i's low 64 bits): pack through a 128-bit accumulator that writes the
+// stream eight bytes at a time, unpack by one load per row at its first stream byte.
+// Wider rows and other hosts take the byte loops; both give the same stream.
+inline bool laand_word_rows(int bits) {
+  return std::endian::native == std::endian::little && bits < 64;
+}
+template <class Row>
+inline void pack_laand_words_(unsigned char* dst, int64_t rows, int bits, Row row) {
+  const uint64_t mask = (uint64_t(1) << bits) - 1;
+  unsigned __int128 acc = 0;
+  int n = 0;   // bits held in acc, below 64 between rows
+  int64_t o = 0;
+  for (int64_t i = 0; i < rows; ++i) {
+    acc |= (unsigned __int128)(row(i) & mask) << n;
+    n += bits;
+    if (n >= 64) {
+      const uint64_t w = (uint64_t)acc;
+      std::memcpy(dst + o, &w, 8);
+      o += 8;
+      acc >>= 64;
+      n -= 64;
+    }
+  }
+  for (; n > 0; n -= 8, acc >>= 8) dst[o++] = (unsigned char)acc;
+}
+template <class Row>
+inline void unpack_laand_words_(const unsigned char* src, int64_t rows, int bits, Row row) {
+  const int64_t size = laand_row_wire_bytes(rows, bits);
+  const uint64_t mask = (uint64_t(1) << bits) - 1;
+  for (int64_t i = 0; i < rows; ++i) {
+    const int64_t pos = i * bits, byte = pos >> 3;
+    unsigned __int128 w = 0;
+    if (byte + 16 <= size) std::memcpy(&w, src + byte, 16);
+    else std::memcpy(&w, src + byte, (size_t)(size - byte));
+    row(i, (uint64_t)(w >> (pos & 7)) & mask);
+  }
+}
+// A local row is read or written as eight bytes when its buffer has them from the row's
+// start: every row before this one, in order, so a later row's own bytes overwrite an
+// earlier write's spill. The rest move as their own `stride` bytes.
+inline int64_t laand_rows_with_8_bytes(int64_t rows, int stride) {
+  return rows - (8 + stride - 1) / stride + 1;
+}
+
 // Canonical little-endian bit stream: row i starts at bit i*bits. Unused
 // bits in the last wire byte are zero; unused bits of each local row are ignored.
 inline void pack_laand_rows(unsigned char* dst, const unsigned char* src,
@@ -45,6 +91,16 @@ inline void pack_laand_rows(unsigned char* dst, const unsigned char* src,
   const int64_t size = laand_row_wire_bytes(rows, bits);
   if (size == 0) return;
   if (bits % 8 == 0) { std::memcpy(dst, src, size); return; }
+  if (laand_word_rows(bits)) {
+    const int64_t whole = laand_rows_with_8_bytes(rows, stride);
+    pack_laand_words_(dst, rows, bits, [&](int64_t i) {
+      uint64_t v = 0;
+      if (i < whole) std::memcpy(&v, src + i * stride, 8);
+      else std::memcpy(&v, src + i * stride, (size_t)stride);
+      return v;
+    });
+    return;
+  }
   std::fill_n(dst, size, static_cast<unsigned char>(0));
   for (int64_t i = 0; i < rows; ++i) {
     for (int j = 0; j < stride; ++j) {
@@ -69,6 +125,14 @@ inline bool unpack_laand_rows(unsigned char* dst, const unsigned char* src,
   const int used = (rows * bits) % 8;
   if (used != 0 && (src[size - 1] >> used) != 0) return false;
   if (bits % 8 == 0) { std::memcpy(dst, src, size); return true; }
+  if (laand_word_rows(bits)) {
+    const int64_t whole = laand_rows_with_8_bytes(rows, stride);
+    unpack_laand_words_(src, rows, bits, [&](int64_t i, uint64_t v) {
+      if (i < whole) std::memcpy(dst + i * stride, &v, 8);
+      else std::memcpy(dst + i * stride, &v, (size_t)stride);
+    });
+    return true;
+  }
   for (int64_t i = 0; i < rows; ++i) {
     for (int j = 0; j < stride; ++j) {
       const int64_t pos = i * bits + 8 * j;
@@ -79,6 +143,60 @@ inline bool unpack_laand_rows(unsigned char* dst, const unsigned char* src,
       dst[i * stride + j] = static_cast<unsigned char>(v &
           (j == stride - 1 ? laand_last_byte_mask(bits) : 0xffu));
     }
+  }
+  return true;
+}
+
+// The same stream from rows held as blocks, each row's bits the low bits of its block. A
+// whole-byte width is each row's low bytes in order; other wide widths are staged.
+inline void pack_laand_blocks(unsigned char* dst, const block* rows, int64_t n, int bits) {
+  if (laand_row_wire_bytes(n, bits) == 0) return;
+  if (laand_word_rows(bits)) {
+    pack_laand_words_(dst, n, bits, [&](int64_t i) {
+      uint64_t v;
+      std::memcpy(&v, &rows[i], 8);
+      return v;
+    });
+    return;
+  }
+  const int stride = (bits + 7) / 8;
+  if (bits == 128) { std::memcpy(dst, rows, (size_t)n * sizeof(block)); return; }
+  if (bits % 8 == 0) {
+    for (int64_t i = 0; i < n; ++i) std::memcpy(dst + i * stride, &rows[i], stride);
+    return;
+  }
+  std::vector<unsigned char> tmp((size_t)n * stride);
+  for (int64_t i = 0; i < n; ++i) std::memcpy(&tmp[(size_t)i * stride], &rows[i], stride);
+  pack_laand_rows(dst, tmp.data(), n, bits);
+}
+// Its inverse, each row zero-extended into its block; false on noncanonical padding.
+inline bool unpack_laand_blocks(block* rows, const unsigned char* src, int64_t n, int bits) {
+  const int64_t size = laand_row_wire_bytes(n, bits);
+  if (size == 0) return true;
+  if (laand_word_rows(bits)) {
+    const int used = (n * bits) % 8;
+    if (used != 0 && (src[size - 1] >> used) != 0) return false;
+    unpack_laand_words_(src, n, bits, [&](int64_t i, uint64_t v) {
+      block b = zero_block;
+      std::memcpy(&b, &v, 8);
+      rows[i] = b;
+    });
+    return true;
+  }
+  const int stride = (bits + 7) / 8;
+  if (bits == 128) { std::memcpy(rows, src, (size_t)n * sizeof(block)); return true; }
+  if (bits % 8 == 0) {   // whole bytes: no padding to check
+    for (int64_t i = 0; i < n; ++i) {
+      rows[i] = zero_block;
+      std::memcpy(&rows[i], src + i * stride, stride);
+    }
+    return true;
+  }
+  std::vector<unsigned char> tmp((size_t)n * stride);
+  if (!unpack_laand_rows(tmp.data(), src, n, bits)) return false;
+  for (int64_t i = 0; i < n; ++i) {
+    rows[i] = zero_block;
+    std::memcpy(&rows[i], &tmp[(size_t)i * stride], stride);
   }
   return true;
 }
