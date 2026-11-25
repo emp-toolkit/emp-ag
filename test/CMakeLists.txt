@@ -223,20 +223,20 @@ add_np_variant(lane_np3 lane.cpp 3 DEFS LANE_NP=3)
 
 # Wire-byte-identity oracle (NOT a ctest: build-only, run manually via ./run or ./runN to
 # dump per-channel wire digests, then diff before/after -- the committed reference for the
-# DEFAULT (SHA) build is test/trace_np2.golden). It needs a test-mode build: configure
-# against emp-tool + emp-ot built with -DEMP_TEST_MODE=ON (a build option; no environment
-# variable enables it). Valid at nP==2 only -- at nP>=3 the aggregation ring's concurrent
-# sends make the per-channel digest thread-schedule-dependent. One source, two party
-# counts via TRACE_NP. These are the ONLY targets allowed to run in a test-mode build
-# (they diff wire digests), so they opt past the AShareGen production guard via
-# EMP_AG_ALLOW_TEST_MODE.
+# DEFAULT (SHA) build is test/trace_np2.golden). It needs a deterministic-mode build:
+# configure against an emp-tool built with -DEMP_DETERMINISTIC_MODE=ON (a build option; no
+# environment variable enables it) and an emp-ot built against it. Valid at nP==2 only --
+# at nP>=3 the aggregation ring's concurrent sends make the per-channel digest
+# thread-schedule-dependent. One source, two party counts via TRACE_NP. These are the ONLY
+# targets allowed to run in a deterministic-mode build (they diff wire digests), so they
+# opt past the AShareGen production guard via EMP_AG_ALLOW_DETERMINISTIC_MODE.
 add_executable(test_trace_np2 trace_digest.cpp)
 target_link_libraries(test_trace_np2 PRIVATE emp-ag::emp-ag)
-target_compile_definitions(test_trace_np2 PRIVATE TRACE_NP=2 EMP_AG_ALLOW_TEST_MODE)
+target_compile_definitions(test_trace_np2 PRIVATE TRACE_NP=2 EMP_AG_ALLOW_DETERMINISTIC_MODE)
 _apply_strict_memaccess(test_trace_np2)
 add_executable(test_trace_np3 trace_digest.cpp)
 target_link_libraries(test_trace_np3 PRIVATE emp-ag::emp-ag)
-target_compile_definitions(test_trace_np3 PRIVATE TRACE_NP=3 EMP_AG_ALLOW_TEST_MODE)
+target_compile_definitions(test_trace_np3 PRIVATE TRACE_NP=3 EMP_AG_ALLOW_DETERMINISTIC_MODE)
 _apply_strict_memaccess(test_trace_np3)
 
 # 2-party network tests on AGMPCSession<2>. Each runs as 2 processes via runN 2

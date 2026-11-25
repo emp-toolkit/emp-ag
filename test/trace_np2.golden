@@ -1,14 +1,15 @@
-# Per-channel wire digests for test_trace_np2 (DEFAULT SHA build, test-mode build:
-# emp-tool and emp-ot configured with -DEMP_TEST_MODE=ON, emp-ag configured against them).
+# Per-channel wire digests for test_trace_np2 (DEFAULT SHA build, deterministic-mode
+# build: emp-tool configured with -DEMP_DETERMINISTIC_MODE=ON, emp-ot and emp-ag
+# configured against it).
 # Regenerate: TRACE_PREFIX=/tmp/t ./runN 2 ./build/bin/test_trace_np2
 # then compare /tmp/t.np2.p1.txt + p2 against the blocks below. A diff means the
 # wire transcript changed: intended only for protocol-visible changes (update this
 # file in the same commit, stating why); anything else is a regression.
-# Reference toolchain: emp-tool 0b7e788, emp-ot 17e5c7a.
+# Reference toolchain: emp-tool 1b756fc, emp-ot 33ae1be.
 
 == p1 ==
-peer 2 ios  send=fc5fdc5d53badf45e3eb9df171c2dab8 recv=ea53c3a95466aa0a99c54fc0a7eaec28
-peer 2 ios2 send=6e61d7358863274f6a6728d8881b7515 recv=989ee735f7bab4b9521485ecc2752e76
+peer 2 ios  send=41cb5b22de8b629a260d98132b9cd894 recv=77bc7bd2701433f6ccb45bfa4095ab1c
+peer 2 ios2 send=55dde1ca1cbbfae47e42ceb18d26d2b4 recv=6df685f35e008e2bbbc1b774f1cde4a0
 == p2 ==
-peer 1 ios  send=ea53c3a95466aa0a99c54fc0a7eaec28 recv=fc5fdc5d53badf45e3eb9df171c2dab8
-peer 1 ios2 send=989ee735f7bab4b9521485ecc2752e76 recv=6e61d7358863274f6a6728d8881b7515
+peer 1 ios  send=77bc7bd2701433f6ccb45bfa4095ab1c recv=41cb5b22de8b629a260d98132b9cd894
+peer 1 ios2 send=6df685f35e008e2bbbc1b774f1cde4a0 recv=55dde1ca1cbbfae47e42ceb18d26d2b4

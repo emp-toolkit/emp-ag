@@ -7,12 +7,12 @@
 // direction) to a per-party file $TRACE_PREFIX.np<NP>.p<party>.txt.
 //
 // This is emp-tool's documented wire-equivalence mechanism (trace_io.h): in a
-// test-mode build (emp-tool and emp-ot configured with -DEMP_TEST_MODE=ON, this
-// tree configured against them) all randomness is deterministic, so the digests
-// are stable run-to-run and a refactor that preserves the wire bytes leaves every
-// digest unchanged. (NetIOMP stores concrete NetIO*, so TraceIO byte-teeing would
-// need a production type change; the per-channel FS digest gives the same
-// SHA-256-of-wire guarantee with no production edit.)
+// deterministic-mode build (emp-tool configured with -DEMP_DETERMINISTIC_MODE=ON,
+// emp-ot and this tree configured against it) all randomness is deterministic, so
+// the digests are stable run-to-run and a refactor that preserves the wire bytes
+// leaves every digest unchanged. (NetIOMP stores concrete NetIO*, so TraceIO
+// byte-teeing would need a production type change; the per-channel FS digest gives
+// the same SHA-256-of-wire guarantee with no production edit.)
 //
 // VALID ONLY AT nP==2. The digests are stable run-to-run at 2 parties, so np2 is a
 // sound byte-identity gate. At nP>=3 they are NOT stable: the garbler-row aggregation
@@ -23,7 +23,7 @@
 // keep test_trace_np3 only for a coarse "did a whole channel appear/vanish" eyeball.
 //
 // Usage (2 parties via "runN 2", 3 via ./run), from a build configured against a
-// test-mode emp-tool + emp-ot install:
+// deterministic-mode emp-tool + emp-ot install:
 //   TRACE_PREFIX=/tmp/before ./runN 2 ./build/bin/test_trace_np2
 //   TRACE_PREFIX=/tmp/before ./run  ./build/bin/test_trace_np3
 //   ...refactor, rebuild...
