@@ -535,6 +535,14 @@ public:
     }
   }
 
+  // nP == 2: the same check when the caller carried the nonces on a flight of its own
+  // (feq2.nonce out, the peer's nonce in), after both commitments were exchanged.
+  void finish_check_2pc(const FeqSymmetric2PC &feq2, block peer_nonce) const {
+    static_assert(nP == 2, "the carried F_eq opening is the two-party check");
+    feq_check_symmetric_2pc(sid_, "emp-ag:laand", party_, feq2, peer_nonce,
+                            "AGMPC LaAND F_eq: leaky-AND check failed");
+  }
+
 private:
   // b's MACs and keys at candidates k0 .. k0 + n - 1 of a layer toward p: one read_run
   // when the reader has it, else n reads of each.

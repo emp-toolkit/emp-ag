@@ -181,7 +181,9 @@ public:
     g_ag_tp_bkt_ns += agmpc_now_ns() - _b0;
 #endif
 
-    // 4. The leaky ANDs' check over every row.
+    // 4. The leaky ANDs' check over every row. It completes before x is opened: this
+    //    preparation also runs after inputs are bound (the direct path), where an x sent
+    //    on a run whose check then fails could pair with what the guesses revealed.
     laand_.finish_check(cprg, feq2_);
 
 #ifdef AG_PROFILE

@@ -91,7 +91,11 @@ public:
   // shares go to every peer in one flight, lane-split. With OpenCheck::kTagRidesBits, x's
   // (and y's) tags are folded first and this party's tag toward each peer goes out with its
   // bits on mesh 0, so every earlier value's sent() must be merged before this call.
-  void open(OpenCheck &check, const Runs &runs, const TripleRow<nP> &t, int L) {
+  // carry_out, when given, is one block this party sends every peer on mesh 0 ahead of
+  // its x, and carry_in[peer] receives the peer's: a caller's message that rides this
+  // flight (at nP == 2, the leaky ANDs' F_eq opening).
+  void open(OpenCheck &check, const Runs &runs, const TripleRow<nP> &t, int L,
+            const block *carry_out = nullptr, block *carry_in = nullptr) {
     const int any_peer = (party_ == 1) ? 2 : 1;
     std::vector<unsigned char>(&x)[nP + 1] = x_;
     std::vector<unsigned char>(&y)[nP + 1] = y_;
@@ -129,7 +133,8 @@ public:
     // Lane-split; the combine in finish() runs on the assembled x[]/y[]. Both x and y
     // ride the same slice on each mesh, so P1's window cannot desync.
     mesh_.fan_out(L,
-      [this, &x, &y, &check](NetIOMP<nP> *ch, int peer, int lo, int hi) {
+      [this, &x, &y, &check, carry_out](NetIOMP<nP> *ch, int peer, int lo, int hi) {
+        if (carry_out && ch == mesh_.io) ch->send_data(peer, carry_out, sizeof(block));
         ch->send_bool(peer, (const bool *)(x[party_].data() + lo), hi - lo);
         if constexpr (!kBIsBeta) ch->send_bool(peer, (const bool *)(y[party_].data() + lo), hi - lo);
         if constexpr (OpenCheck::kTagRidesBits)
@@ -145,7 +150,8 @@ public:
           }
         ch->flush(peer);
       },
-      [this, &x, &y, &check](NetIOMP<nP> *ch, int peer, int lo, int hi) {
+      [this, &x, &y, &check, carry_in](NetIOMP<nP> *ch, int peer, int lo, int hi) {
+        if (carry_in && ch == mesh_.io) ch->recv_data(peer, &carry_in[peer], sizeof(block));
         ch->recv_bool(peer, (bool *)(x[peer].data() + lo), hi - lo);
         if constexpr (!kBIsBeta) ch->recv_bool(peer, (bool *)(y[peer].data() + lo), hi - lo);
         if constexpr (OpenCheck::kTagRidesBits)

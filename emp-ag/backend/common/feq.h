@@ -112,11 +112,24 @@ inline FeqSymmetric2PC feq_prepare_symmetric_2pc(
   return state;
 }
 
-// Complete the second flight after both commitments are fixed. Only the nonce
-// is needed: equality requires the peer to have committed to our own digest.
+// The check of the second flight, given the peer's nonce. Only the nonce is
+// needed: equality requires the peer to have committed to our own digest.
 // Checking that expected opening combines commitment verification and equality,
 // so the digest itself never crosses the wire; the check binds role, session
 // and purpose.
+inline void feq_check_symmetric_2pc(block session_id, const char *purpose, int party,
+                                    const FeqSymmetric2PC &state, block peer_nonce,
+                                    const char *fail_msg) {
+  char expected[FsHash::DIGEST_SIZE];
+  feq_symmetric_commitment_2pc(expected, session_id, purpose, 3 - party,
+                               state.digest, peer_nonce);
+  expecting(memcmp(expected, state.peer_commitment, FsHash::DIGEST_SIZE) == 0,
+            fail_msg);
+}
+
+// Complete the second flight after both commitments are fixed: send this party's
+// nonce, receive the peer's and check it. A caller that carries the nonce on a
+// flight of its own sends state.nonce there and calls feq_check_symmetric_2pc.
 inline void feq_finish_symmetric_2pc(
     IOChannel *send_io, IOChannel *recv_io, block session_id, const char *purpose,
     int party, const FeqSymmetric2PC &state, const char *fail_msg) {
@@ -125,12 +138,7 @@ inline void feq_finish_symmetric_2pc(
 
   block peer_nonce;
   recv_io->recv_data(&peer_nonce, sizeof(block));
-
-  char expected[FsHash::DIGEST_SIZE];
-  feq_symmetric_commitment_2pc(expected, session_id, purpose, 3 - party,
-                               state.digest, peer_nonce);
-  expecting(memcmp(expected, state.peer_commitment, FsHash::DIGEST_SIZE) == 0,
-            fail_msg);
+  feq_check_symmetric_2pc(session_id, purpose, party, state, peer_nonce, fail_msg);
 }
 
 EMP_AG_NAMESPACE_END
