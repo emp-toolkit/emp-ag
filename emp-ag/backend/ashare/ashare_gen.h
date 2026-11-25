@@ -2,7 +2,7 @@
 #define EMP_AG_BACKEND_ASHARE_ASHARE_GEN_H__
 #include "emp-ag/backend/common/protocols.h"   // EchoBC, sampleRandom, check_MAC (debug)
 #include "emp-ag/backend/common/runtime.h"            // parallel_for
-#include "emp-tool/runtime/core/test_mode.h"   // emp::is_test_mode (production guard, ctor)
+#include "emp-tool/runtime/core/deterministic_mode.h"   // emp::is_deterministic_mode (production guard, ctor)
 #include "emp-ag/backend/common/feq.h"     // enable_fs_pairs
 #include "emp-ag/backend/common/fzero.h"   // fzero_xor
 #include "emp-ag/backend/common/netmp.h"
@@ -168,18 +168,19 @@ class AShareGen final : public AShareSource<nP> {
 			expecting(grp_in == nullptr || (grp_in->size() >= 1 && &grp_in->mesh(0) == io),
 			          "AShareGen: group mesh(0) must equal the pool NetIOMP");
 			grp = grp_in;
-			// A test-mode build (-DEMP_TEST_MODE=ON) makes emp-tool's default-constructed
-			// PRGs deterministic, for wire-byte-identity tests only. If it leaks into a real
-			// run every secret -- Delta, the COT choices, labels, the F_eq nonce --
-			// becomes predictable and the c_gamma soundness (which rests on Delta staying
-			// secret and random) collapses. Every construction path (session and raw backend)
-			// funnels through this ctor, so refuse here unless a build explicitly opts in.
-			// The trace_digest targets set -DEMP_AG_ALLOW_TEST_MODE.
-#ifndef EMP_AG_ALLOW_TEST_MODE
-			expecting(!emp::is_test_mode(),
-			          "emp-ag: EMP_TEST_MODE is enabled -- randomness would be deterministic and "
-			          "all secrets predictable. Refusing to run. This mode is for byte-identity "
-			          "tests only; build with -DEMP_AG_ALLOW_TEST_MODE to override.");
+			// A deterministic-mode build (-DEMP_DETERMINISTIC_MODE=ON) makes emp-tool's
+			// default-constructed PRGs deterministic, for wire-byte-identity tests only. If it
+			// leaks into a real run every secret -- Delta, the COT choices, labels, the F_eq
+			// nonce -- becomes predictable and the c_gamma soundness (which rests on Delta
+			// staying secret and random) collapses. Every construction path (session and raw
+			// backend) funnels through this ctor, so refuse here unless a build explicitly
+			// opts in. The trace_digest targets set -DEMP_AG_ALLOW_DETERMINISTIC_MODE.
+#ifndef EMP_AG_ALLOW_DETERMINISTIC_MODE
+			expecting(!emp::is_deterministic_mode(),
+			          "emp-ag: EMP_DETERMINISTIC_MODE is enabled -- randomness would be "
+			          "deterministic and all secrets predictable. Refusing to run. This mode is "
+			          "for byte-identity tests only; build with "
+			          "-DEMP_AG_ALLOW_DETERMINISTIC_MODE to override.");
 #endif
 			// Enable the IOChannel transcript hash on every pairwise channel and lane
 			// before any COT traffic. The post-commitment coins fold every lane, so a
