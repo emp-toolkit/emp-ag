@@ -8,8 +8,8 @@
 # Reference toolchain: emp-tool 72e1366, emp-ot 33ae1be.
 
 == p1 ==
-peer 2 ios  send=41cb5b22de8b629a260d98132b9cd894 recv=77bc7bd2701433f6ccb45bfa4095ab1c
-peer 2 ios2 send=55dde1ca1cbbfae47e42ceb18d26d2b4 recv=6df685f35e008e2bbbc1b774f1cde4a0
+peer 2 ios  send=26b2469e212e02cdb05ec0796320b11d recv=77bc7bd2701433f6ccb45bfa4095ab1c
+peer 2 ios2 send=55dde1ca1cbbfae47e42ceb18d26d2b4 recv=7d3a2c884e11ac6081bd9496d5d4e87f
 == p2 ==
-peer 1 ios  send=77bc7bd2701433f6ccb45bfa4095ab1c recv=41cb5b22de8b629a260d98132b9cd894
-peer 1 ios2 send=6df685f35e008e2bbbc1b774f1cde4a0 recv=55dde1ca1cbbfae47e42ceb18d26d2b4
+peer 1 ios  send=77bc7bd2701433f6ccb45bfa4095ab1c recv=26b2469e212e02cdb05ec0796320b11d
+peer 1 ios2 send=7d3a2c884e11ac6081bd9496d5d4e87f recv=55dde1ca1cbbfae47e42ceb18d26d2b4

@@ -112,6 +112,12 @@ public:
     FsHash feq;   // nP == 2: the F_eq transcript over every row's windows
     laand_.begin_call();
     const std::vector<TripleRow<nP>> rows = mint_rows_(B, L);
+    // Every COT behind these rows, and behind the walk's earlier draws, passes its
+    // consistency check before any message depends on it. The rows depend on each
+    // sender's Delta. A receiver that saw them before its check could test guesses of
+    // that Delta offline, then answer its check so that it passes. The check's bytes
+    // follow each receiver's corrections, so this adds no round.
+    abit_.maybe_flush_cot_check();
     [[maybe_unused]] BucketCoin2PC seeds;
     typename LeakyAnd<nP>::Carry carry;
     if constexpr (nP == 2) {
