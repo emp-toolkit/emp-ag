@@ -14,6 +14,8 @@
 //     during PREPROCESSING (abort message contains "LaAND").
 //   flip_laand_high -- corrupt the highest retained check coordinate,
 //     including the final partial byte at ssp=39/40. Must abort in preprocessing.
+//     With lanes=1 at nP==2, both leaky-AND hooks run on the single-lane row kernel
+//     instead of the lane-split one.
 //   flip_d / flip_xy -- a malicious party 2 flips its share of one
 //     opened bucket d-bit / Beaver x and sends it to everyone, keeping it itself, so every
 //     party computes from the same wrong value; the open check must abort in preprocessing
@@ -57,10 +59,10 @@ static_assert(ag::kTestHooks, "a fault-injection test needs a hooks build (EMP_A
 int main(int argc, char **argv) {
   int party = parse_party(argv, nP);
   if (party > nP) return 0;
-  const TestArgs args(argc, argv, {"ssp", "depth2", TEST_OPTION_ARGS});
+  const TestArgs args(argc, argv, {"ssp", "depth2", "lanes", TEST_OPTION_ARGS});
   ThreadPool pool(ag::default_pool_size(nP));
   AGMPCSession<nP> sess(party, peer_port(), nullptr, &pool, test_options(args),
-                        (int)args.num("ssp", 40));
+                        (int)args.num("ssp", 40), (int)args.num("lanes", -1));
   using Ctx = typename AGMPCSession<nP>::ctx_t;
   using Bit = Bit_T<Ctx>;
 

@@ -26,6 +26,12 @@ inline int64_t laand_row_wire_bytes(int64_t rows, int bits) {
   return (rows * bits + 7) / 8;
 }
 inline constexpr int kLaandRowChunkRows = 1 << 16;
+// The one-lane 2PC path's chunk (LeakyAnd, laand.h). A multiple of 8 rows is a whole
+// number of wire bytes at any width, so its chunks cut the frames above only at byte
+// boundaries and the stream stays byte for byte the same. Two chunks of 42-bit rows
+// (86 KB) are what that path leaves unread per direction at most.
+inline constexpr int kLaandFusedChunkRows = 1 << 13;
+static_assert(kLaandFusedChunkRows % 8 == 0, "a fused chunk must be whole wire bytes");
 
 // The low `bits` bits of a block.
 inline block laand_bits_mask(int bits) {
@@ -215,9 +221,14 @@ inline constexpr int kFeqStripeElems = 1 << 16;
 // resistance composes across the levels, so this binds exactly the window bytes; both
 // parties use the same stripe constant and derive the same stripe count from the common
 // L. One terminal symmetric F_eq fires per call; the caller owns it.
+// prepare(k0, k1) runs first in each stripe's task and may finish windows k0 .. k1 - 1
+// (only those: stripes run concurrently), so a stripe is hashed right after it is
+// written, while it is still cached. The fold itself does not change.
+template <class Prepare>
 inline void accumulate_leaky_and_window_bytes(FsHash &feq,
                                               const unsigned char *src,
-                                              int L, int gb, ThreadPool *pool) {
+                                              int L, int gb, ThreadPool *pool,
+                                              Prepare &&prepare) {
   const int ns = (L + kFeqStripeElems - 1) / kFeqStripeElems;
   std::vector<char> dg((size_t)ns * FsHash::DIGEST_SIZE);
   vector<future<void>> res;
@@ -225,6 +236,7 @@ inline void accumulate_leaky_and_window_bytes(FsHash &feq,
     res.push_back(pool->enqueue([&, s]() {
       const int k0 = s * kFeqStripeElems;
       const int k1 = std::min(L, k0 + kFeqStripeElems);
+      prepare(k0, k1);
       FsHash::hash_once(dg.data() + (size_t)s * FsHash::DIGEST_SIZE,
                         src + (size_t)k0 * gb,
                         (size_t)(k1 - k0) * gb);
@@ -232,6 +244,11 @@ inline void accumulate_leaky_and_window_bytes(FsHash &feq,
   }
   joinNclean(res);
   feq.put(dg.data(), dg.size());
+}
+inline void accumulate_leaky_and_window_bytes(FsHash &feq,
+                                              const unsigned char *src,
+                                              int L, int gb, ThreadPool *pool) {
+  accumulate_leaky_and_window_bytes(feq, src, L, gb, pool, [](int, int) {});
 }
 
 EMP_AG_NAMESPACE_END

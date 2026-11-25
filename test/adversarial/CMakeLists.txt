@@ -37,6 +37,11 @@ add_np_variant(agmpc_cheat_laand_np3 agmpc_output_cheat.cpp 3  DEFS CHEAT_NP=3 H
 add_np_variant(agmpc_cheat_laand_high_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 HOOKS flip_laand_high PASS_RE "LaAND")
 add_np_variant(agmpc_cheat_laand_high_39_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ARGS ssp=39 HOOKS flip_laand_high PASS_RE "LaAND")
 add_np_variant(agmpc_cheat_laand_high_np3 agmpc_output_cheat.cpp 3 DEFS CHEAT_NP=3 HOOKS flip_laand_high PASS_RE "LaAND")
+# One lane at nP==2 runs the leaky ANDs on the single-lane row kernel; the same faults
+# must abort there.
+add_np_variant(agmpc_cheat_laand_lane1_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ARGS lanes=1 HOOKS flip_laand PASS_RE "LaAND")
+add_np_variant(agmpc_cheat_laand_high_lane1_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ARGS lanes=1 HOOKS flip_laand_high PASS_RE "LaAND")
+add_np_variant(agmpc_cheat_laand_high_39_lane1_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 ARGS ssp=39 lanes=1 HOOKS flip_laand_high PASS_RE "LaAND")
 
 # At nP = 2 the bucket coin is commit-then-open, its commitments riding the half-gate rows and
 # its openings the s-bits: a party that opens a seed other than the one it committed to must
