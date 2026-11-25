@@ -65,30 +65,32 @@ struct MaskWitnessPass : SlotGateMixin<MaskWitnessPass<nP, Cfg>> {
   AGMPCProtocol<nP, Cfg> *P;
   ComputeCtx<nP> &ctx;
   const std::vector<unsigned char> &Lambda_AND;
-  // The RLC fold is kRlcLanes-lane chain-broken (see rlc_fold_mu): lane j = a mod K
-  // carries chi^{a+1} in lane_pow[j] (init chi^{j+1}, stride chi^K), so consecutive
-  // ANDs' gfmuls pipeline instead of serializing on one coeff chain. Byte-identical
-  // to the serial Horner.
-  block powK;
-  block lane_pow[kRlcLanes];
+  // The RLC fold streams forward in kRlcLanes Horner chains (lane j = a mod K), one
+  // multiplication per AND: with beta = chi^{-1}, lane j keeps
+  //   acc_j = XOR over its ANDs a of beta^{a_last(j) - a} * mu_a,
+  // a_last(j) being its last AND, and m() lifts it by chi^{a_last(j) + 1}. The result is
+  // the same field element as XOR_a chi^{a+1} * mu_a (see rlc_fold_mu), and 0 for chi = 0,
+  // since then the lift is 0.
+  block chi;
+  block betaK;   // chi^{-K}
   block acc[kRlcLanes];
   uint32_t wid;
   int ai = 0;
   int c0_ = -1, c1_ = -1;
   MaskWitnessPass(AGMPCProtocol<nP, Cfg> *p, ComputeCtx<nP> &c,
                   const std::vector<unsigned char> &la, block chi_)
-      : P(p), ctx(c), Lambda_AND(la), powK(gf_pow(chi_, kRlcLanes)),
-        wid((uint32_t)c.num_in) {
-    block pw = chi_;
-    for (int j = 0; j < kRlcLanes; ++j) {
-      lane_pow[j] = pw;
-      acc[j] = zero_block;
-      if (j + 1 < kRlcLanes) gfmul(pw, chi_, &pw);
-    }
+      : P(p), ctx(c), Lambda_AND(la), chi(chi_),
+        betaK(gf_pow(gf_inv(chi_), kRlcLanes)), wid((uint32_t)c.num_in) {
+    for (int j = 0; j < kRlcLanes; ++j) acc[j] = zero_block;
   }
   block m() const {
     block r = zero_block;
-    for (int j = 0; j < kRlcLanes; ++j) r = r ^ acc[j];
+    for (int j = 0; j < kRlcLanes && j < ai; ++j) {
+      const int last = j + kRlcLanes * ((ai - 1 - j) / kRlcLanes);   // lane j's last AND
+      block lift;
+      gfmul(acc[j], gf_pow(chi, (uint64_t)last + 1), &lift);
+      r = r ^ lift;
+    }
     return r;
   }
   Wire public_bit(bool v) {
@@ -117,10 +119,9 @@ struct MaskWitnessPass : SlotGateMixin<MaskWitnessPass<nP, Cfg>> {
     block mu = ag::collapse_cgamma_from_records(La, Lb, Lg, ctx.cgamma_s0[a],
                                                 ctx.cgamma_s1[a], ctx.cgamma_s2[a],
                                                 P->Delta);
-    const int j = a & (kRlcLanes - 1);                        // lane a mod K
-    block prod; gfmul(mu, lane_pow[j], &prod);                // chi^{a+1} * mu_a
-    acc[j] = acc[j] ^ prod;
-    gfmul(lane_pow[j], powK, &lane_pow[j]);                   // -> chi^{a+K+1}
+    const int j = a & (kRlcLanes - 1);   // lane a mod K
+    gfmul(acc[j], betaK, &acc[j]);       // the lane's earlier ANDs move one step down
+    acc[j] = acc[j] ^ mu;
     return id;
   }
 };

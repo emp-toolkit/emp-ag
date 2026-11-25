@@ -68,15 +68,28 @@ inline block gf_pow(block x, uint64_t e) {
   return r;
 }
 
-// Lanes per RLC fold: splits the coeff <- coeff*chi gfmul dependency chain so the
-// carryless multiplies pipeline (throughput-1, latency-several cycles). Purely local
-// ILP — the folded VALUE is byte-identical to the serial Horner (every term
-// reduce(mu_a * chi^{a+1}) is the same field element, and XOR of the same set of
-// blocks is order-independent), so lane counts never need cross-party agreement.
+// x^{-1} = x^(2^128 - 2) by Fermat, and 0 for x = 0. Each step takes x^(2^k - 1) to
+// x^(2^(k+1) - 1) with one square and one multiply. Used once per check.
+inline block gf_inv(block x) {
+  block y = x;   // x^(2^1 - 1)
+  for (int k = 1; k < 127; ++k) {
+    gfmul(y, y, &y);
+    gfmul(y, x, &y);
+  }
+  gfmul(y, y, &y);   // x^(2^128 - 2)
+  return y;
+}
+
+// Lanes per RLC fold: K independent Horner chains, so the carryless multiplies pipeline
+// (throughput-1, latency-several cycles). Purely local ILP — the folded VALUE is the same
+// field element as the serial sum (every term is mu_a * chi^{a+1}, and field arithmetic is
+// exact), so lane counts never need cross-party agreement.
 inline constexpr int kRlcLanes = 8;
 
-// m = XOR_a chi^{a+1} * mu_a over mu[0, n): width-split across the pool, K-lane
-// chain-broken within each worker. Byte-identical to the serial fold (see above).
+// m = XOR_a chi^{a+1} * mu_a over mu[0, n): width-split across the pool. Within a worker's
+// range [a0, a1), lane j takes a0 + j + K*t and runs Horner from its last row down,
+// acc_j = XOR_t chi^{K t} * mu[a0 + j + K t], one multiplication per term; it is then
+// lifted by chi^{a0 + j + 1} once.
 inline block rlc_fold_mu(const block *mu, int n, block chi, ThreadPool *pool) {
   if (n <= 0) return zero_block;
   const int W = std::max(1, (int)pool->size());
@@ -89,30 +102,25 @@ inline block rlc_fold_mu(const block *mu, int n, block chi, ThreadPool *pool) {
     const int a1 = std::min(a0 + width, n);
     res.push_back(pool->enqueue([&part, mu, chi, a0, a1, t]() {
       constexpr int K = kRlcLanes;
-      block powK = gf_pow(chi, K);
-      block lane_pow[K], acc[K];
-      block p = gf_pow(chi, (uint64_t)a0 + 1);
-      for (int j = 0; j < K; ++j) {
-        lane_pow[j] = p;
-        acc[j] = zero_block;
-        if (j + 1 < K) gfmul(p, chi, &p);
-      }
-      int a = a0;
-      for (; a + K <= a1; a += K) {
+      const block powK = gf_pow(chi, K);
+      block acc[K];
+      for (int j = 0; j < K; ++j) acc[j] = zero_block;
+      const int rows = (a1 - a0 + K - 1) / K;
+      for (int r = rows - 1; r >= 0; --r) {
+        const int base = a0 + K * r;
+        const int len = std::min(K, a1 - base);   // the last row may be short
         for (int j = 0; j < K; ++j) {
-          block prod;
-          gfmul(mu[a + j], lane_pow[j], &prod);
-          acc[j] = acc[j] ^ prod;
-          gfmul(lane_pow[j], powK, &lane_pow[j]);
+          gfmul(acc[j], powK, &acc[j]);
+          if (j < len) acc[j] = acc[j] ^ mu[base + j];
         }
       }
-      for (int j = 0; a + j < a1; ++j) {   // tail: lane_pow[j] already points at a+j
-        block prod;
-        gfmul(mu[a + j], lane_pow[j], &prod);
-        acc[j] = acc[j] ^ prod;
+      block p = gf_pow(chi, (uint64_t)a0 + 1), m = zero_block;
+      for (int j = 0; j < K; ++j) {   // lane j's terms carry chi^{a0 + j + 1} on top
+        block lift;
+        gfmul(acc[j], p, &lift);
+        m = m ^ lift;
+        gfmul(p, chi, &p);
       }
-      block m = zero_block;
-      for (int j = 0; j < K; ++j) m = m ^ acc[j];
       part[t] = m;
     }));
   }
