@@ -194,11 +194,15 @@ public:
     std::shared_ptr<const circuit::IoSignature> io_;   // the Computation's slots
     std::vector<unsigned char> mask_;   // per input wire: its mask where opened to this party
     std::vector<unsigned char> bound_;  // per input slot: set where bound at prepare (empty: none)
+    // per input slot: set where declared at prepare to take an authenticated value at the
+    // run (empty: none)
+    std::vector<unsigned char> authenticated_;
 
     ComputationJob(JobSlot_ slot, std::shared_ptr<const circuit::IoSignature> io,
-                   std::vector<unsigned char> mask, std::vector<unsigned char> bound)
+                   std::vector<unsigned char> mask, std::vector<unsigned char> bound,
+                   std::vector<unsigned char> authenticated)
         : slot_(std::move(slot)), io_(std::move(io)), mask_(std::move(mask)),
-          bound_(std::move(bound)) {}
+          bound_(std::move(bound)), authenticated_(std::move(authenticated)) {}
 
   public:
     ComputationJob(ComputationJob &&) noexcept = default;
@@ -555,14 +559,22 @@ public:
   // is opened for the slot, the garblers send P1 its labels here, offline, and the run
   // takes no bits for it (its owner's entry is ignored). A bound slot draws no masks
   // (planned_cots).
+  //
+  // `authenticated` (optional, per input slot): the Party slots the run will bind to
+  // authenticated values (run_computation with `authenticated`). Their masks are not
+  // opened here: the run opens d = value ^ mask under its MAC check instead, so nothing
+  // after the garbling waits on an offline opening. The run must then supply a value for
+  // every slot declared here, and for no other. Two parties only, as for the run.
   job_t prepare_computation(std::shared_ptr<const circuit::ComputationArtifact> art,
-                            const std::vector<const SharedWires *> &bound) {
+                            const std::vector<const SharedWires *> &bound,
+                            const std::vector<unsigned char> &authenticated = {}) {
     expecting(art != nullptr, "AGMPCSession::prepare_computation: null computation");
     validate_computation_(*art);
     std::shared_ptr<const circuit::IoSignature> io(art, &art->io);
-    return prepare_computation_(std::move(io), bound, [&](const ag::PreparedBound<nP> *pb) {
-      return engine_.prepare_program(art->program, pb);
-    });
+    return prepare_computation_(std::move(io), bound, authenticated,
+                                [&](const ag::PreparedBound<nP> *pb) {
+                                  return engine_.prepare_program(art->program, pb);
+                                });
   }
 
   // A composed Computation: the circuit as the frontend records it (emp-tool ComposeCtx,
@@ -574,13 +586,15 @@ public:
   job_t prepare_computation(std::shared_ptr<const ComposePlan> plan, circuit::IoSignature io) {
     return prepare_computation(std::move(plan), std::move(io), {});
   }
-  // A composed Computation with some Party slots bound, as above.
+  // A composed Computation with some Party slots bound, and some declared authenticated,
+  // as above.
   job_t prepare_computation(std::shared_ptr<const ComposePlan> plan, circuit::IoSignature io,
-                            const std::vector<const SharedWires *> &bound) {
+                            const std::vector<const SharedWires *> &bound,
+                            const std::vector<unsigned char> &authenticated = {}) {
     expecting(plan != nullptr, "AGMPCSession::prepare_computation: null composed program");
     validate_computation_(*plan, io);
     return prepare_computation_(std::make_shared<const circuit::IoSignature>(std::move(io)), bound,
-                                [&](const ag::PreparedBound<nP> *pb) {
+                                authenticated, [&](const ag::PreparedBound<nP> *pb) {
                                   return engine_.prepare_composed(std::move(plan), pb);
                                 });
   }
@@ -620,6 +634,9 @@ public:
   // passing its own. Such a slot takes no bits, and its owner's entry in `b` is ignored:
   // in place of the owner's broadcast of x ^ mask, every party opens d = value ^ mask
   // under a MAC check, so the computation's input is exactly the authenticated value.
+  // The slots must be exactly those prepare_computation declared (its `authenticated`
+  // argument), whose masks were opened to no one: an owner that held a slot's mask would
+  // learn the value from d.
   // Two parties only: above two, nothing would check that a supplied bundle shares the
   // same bit toward every peer, which the session's own shares get from check2.
   session::RawResult run_computation(job_t &&job, const session::RawBindings &b,
@@ -709,7 +726,8 @@ private:
   // garbling) and the round that opens the input masks.
   template <class Prepare>
   job_t prepare_computation_(std::shared_ptr<const circuit::IoSignature> io,
-                             const std::vector<const SharedWires *> &bound, Prepare &&prepare) {
+                             const std::vector<const SharedWires *> &bound,
+                             const std::vector<unsigned char> &authenticated, Prepare &&prepare) {
     for (const circuit::InputRole &r : io->inputs)
       expecting(r.kind == circuit::InputKind::Public || r.owner <= nP,
                 "AGMPCSession::prepare_computation: an input owner is above the party count");
@@ -750,12 +768,34 @@ private:
       }
     }
 
+    // The slots declared to take an authenticated value at the run, per input wire.
+    std::vector<unsigned char> at_run;
+    if (!authenticated.empty()) {
+      expecting(authenticated.size() == io->inputs.size(),
+                "AGMPCSession::prepare_computation: one authenticated entry per input slot");
+      const std::vector<uint32_t> off = circuit::input_slot_offsets(*io);
+      size_t total = 0;
+      for (const circuit::InputRole &r : io->inputs) total += r.width;
+      for (size_t s = 0; s < authenticated.size(); ++s) {
+        if (authenticated[s] == 0) continue;
+        expecting(nP == 2, "AGMPCSession::prepare_computation: authenticated slots need two parties");
+        expecting(io->inputs[s].kind == circuit::InputKind::Party,
+                  "AGMPCSession::prepare_computation: an authenticated slot must be a Party slot");
+        expecting(bound_slots.empty() || bound_slots[s] == 0,
+                  "AGMPCSession::prepare_computation: a slot bound at prepare takes no authenticated value");
+        if (at_run.empty()) at_run.assign(total, 0);
+        for (uint32_t k = 0; k < io->inputs[s].width; ++k) at_run[(size_t)off[s] + k] = 1;
+      }
+    }
+
     std::unique_ptr<typename Engine::Material> material =
         prepare(bound_slots.empty() ? nullptr : &pb);
     std::vector<int> owner = computation_input_owners_(*io);
-    std::vector<unsigned char> mask = engine_.open_input_masks(*material, owner);
+    std::vector<unsigned char> mask =
+        engine_.open_input_masks(*material, owner, at_run.empty() ? nullptr : &at_run);
     return job_t(begin_job_(JobKind::Computation, std::move(material)), std::move(io),
-                 std::move(mask), std::move(bound_slots));
+                 std::move(mask), std::move(bound_slots),
+                 at_run.empty() ? std::vector<unsigned char>{} : authenticated);
   }
 
   session::RawResult run_computation_(job_t &&job, const session::RawBindings &b_in,
@@ -779,12 +819,22 @@ private:
         if (is_bound(s) && session::binds(io_sig.inputs[s], me))   // bound at prepare: no bits
           b.inputs[s] = session::Bits(io_sig.inputs[s].width, 0);
     }
+    // A slot declared authenticated at prepare had its mask opened to no one, so only an
+    // authenticated value can fill it.
+    for (size_t s = 0; s < job.authenticated_.size(); ++s)
+      expecting(job.authenticated_[s] == 0 ||
+                    (authenticated != nullptr && s < authenticated->size() && (*authenticated)[s] != nullptr),
+                "AGMPCSession::run_computation: a slot declared authenticated at prepare needs an authenticated value");
     if (authenticated != nullptr) {
       expecting(authenticated->size() == io_sig.inputs.size(),
                 "AGMPCSession::run_computation: one authenticated entry per input slot");
       if (b.inputs.size() < io_sig.inputs.size()) b.inputs.resize(io_sig.inputs.size());
       for (size_t s = 0; s < io_sig.inputs.size(); ++s) {
         if (!is_authenticated(s)) continue;
+        // Undeclared, its mask was opened to its owner at prepare, and the owner would
+        // learn the value from d.
+        expecting(!job.authenticated_.empty() && job.authenticated_[s] != 0,
+                  "AGMPCSession::run_computation: a slot takes an authenticated value only if prepare_computation declared it");
         expecting(!is_bound(s),
                   "AGMPCSession::run_computation: a slot bound at prepare takes no authenticated value");
         expecting(nP == 2, "AGMPCSession::run_computation: authenticated slots need two parties");

@@ -213,12 +213,16 @@ class AGMPCEngine {
   // or PUBLIC.  Offline, after prepare_program: open each Party input's mask to
   // its owner and each Public input's to every party.  Returns per input wire
   // the mask where it was opened to this party.
+  // `at_run` (optional, per input wire): wires whose slot takes an authenticated value at
+  // the run; their masks stay closed here.
   std::vector<unsigned char> open_input_masks(Material &material,
-                                              const std::vector<int> &owner) {
+                                              const std::vector<int> &owner,
+                                              const std::vector<unsigned char> *at_run = nullptr) {
     expecting(material.live(), "open_input_masks: prepared material was already consumed");
     expecting(owner.size() == (size_t)material.ctx.num_in,
               "open_input_masks: owner count differs from the circuit input width");
-    return mpc->open_computation_input_masks_(material.target_inputs, owner, &material.bound);
+    return mpc->open_computation_input_masks_(material.target_inputs, owner, &material.bound,
+                                              at_run);
   }
 
   // Under WRK only: open a prepared Computation's output masks to their recipients now,

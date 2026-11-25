@@ -336,16 +336,19 @@ void AGMPCProtocol<nP, Cfg>::bind_prepared_inputs_(
 // garbled: open each Party input's target mask to its owner and each Public
 // input's to every party, in one MAC-checked round.  A Public input's mask then
 // is public, and its masked value b ^ lambda follows from the public bit at every
-// party; no owner broadcast is needed for it online.
+// party; no owner broadcast is needed for it online.  A wire in a slot declared to
+// take an authenticated value (at_run) is skipped: its mask is never opened alone.
 template <int nP, class Cfg>
 std::vector<unsigned char> AGMPCProtocol<nP, Cfg>::open_computation_input_masks_(
     SecureWires<nP> &target, const std::vector<int> &owner,
-    const std::vector<unsigned char> *bound) {
+    const std::vector<unsigned char> *bound, const std::vector<unsigned char> *at_run) {
   const int n = (int)owner.size();
   expecting(target.wire_bundle.size() == (size_t)n,
             "open_computation_input_masks: target width mismatch");
   expecting(bound == nullptr || bound->empty() || bound->size() == (size_t)n,
             "open_computation_input_masks: bound flags differ in width");
+  expecting(at_run == nullptr || at_run->size() == (size_t)n,
+            "open_computation_input_masks: authenticated flags differ in width");
   std::vector<unsigned char> mine((size_t)n, 0);
   if (n == 0) return mine;
   auto is_bound = [&](int w) { return bound != nullptr && !bound->empty() && (*bound)[(size_t)w] != 0; };
@@ -354,6 +357,7 @@ std::vector<unsigned char> AGMPCProtocol<nP, Cfg>::open_computation_input_masks_
   for (int w = 0; w < n; ++w) {
     expecting(owner[w] == PUBLIC || (owner[w] >= 1 && owner[w] <= nP),
               "open_computation_input_masks: owner must be a party id in [1, nP] or PUBLIC");
+    if (at_run != nullptr && (*at_run)[(size_t)w] != 0) continue;
     if (is_bound(w)) {
       bound_wires.push_back(w);
       continue;

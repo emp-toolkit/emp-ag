@@ -15,7 +15,9 @@
 //
 // case=1 (test_args.h): party 2 claims the other value of k's first bit (bit 0 of its MAC
 // flipped), and the opening's MAC check must abort.
-// AUTH_NP=3: three parties; run_computation refuses the authenticated slot before it
+// The slot is declared at prepare_computation, as the run requires, so its mask is never
+// opened to party 2 on its own.
+// AUTH_NP=3: three parties; prepare_computation refuses the authenticated slot before it
 // sends anything.
 // case=3: the COTs are drawn from the share pool directly while the job is outstanding,
 // which the pool refuses.
@@ -80,7 +82,8 @@ int main(int argc, char **argv) {
     NetIOMP<nP> io(party, port);
     ThreadPool pool(ag::default_pool_size(nP));
     AgSession sess(&io, &pool, party);
-    auto job = sess.prepare_computation(std::make_shared<const ComputationArtifact>(or_computation()));
+    auto job = sess.prepare_computation(std::make_shared<const ComputationArtifact>(or_computation()),
+                                        {}, {1, 0});
     ag::AShareBundleVec<nP> bundles(W);
     emp::session::RawBindings b;
     b.inputs.resize(2);
@@ -97,7 +100,7 @@ int main(int argc, char **argv) {
   ag::AShareSource<nP> &abit = *sess.protocol().abit;
   auto art = std::make_shared<const ComputationArtifact>(or_computation());
 
-  auto job = sess.prepare_computation(art);
+  auto job = sess.prepare_computation(art, {}, {1, 0});   // slot 0 takes an authenticated value
 
   // Party 1 sends on its stream to party 2; party 2 receives on it.
   const bool as_sender = party == 1;

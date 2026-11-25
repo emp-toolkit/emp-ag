@@ -299,10 +299,13 @@ private:
   // from_source[w] set) takes no broadcast: every party opens d = source ^ mask under a
   // MAC check, and Lambda = d. A wire bound at prepare (bound[w] set, PreparedBound) is
   // opened to no one; offline, the garblers send P1 its labels for Lambda = 0, and online
-  // it takes neither a broadcast nor a label.
+  // it takes neither a broadcast nor a label. A wire whose slot was declared at prepare to
+  // take an authenticated value (at_run[w] set) is not opened offline either: its d opens
+  // online, under the MAC check, as above.
   std::vector<unsigned char> open_computation_input_masks_(
       SecureWires<nP> &target, const std::vector<int> &owner,
-      const std::vector<unsigned char> *bound = nullptr);
+      const std::vector<unsigned char> *bound = nullptr,
+      const std::vector<unsigned char> *at_run = nullptr);
   void bind_computation_inputs_(SecureWires<nP> &target,
                                 const std::vector<int> &owner,
                                 const std::vector<unsigned char> &lambda,
