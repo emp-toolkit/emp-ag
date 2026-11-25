@@ -41,8 +41,8 @@
   X(cnc_split_zr) X(corrupt_adopted_share) X(flip_agg) X(flip_agg_mid) X(flip_b)       \
   X(flip_bucket_seed) X(flip_bw) X(flip_d) X(flip_delivered_lambda) X(flip_direct)     \
   X(flip_g) X(flip_input_lambda) X(flip_laand) X(flip_laand_high) X(flip_lambda)       \
-  X(flip_output_share) X(flip_p1_row) X(flip_tag) X(flip_xy) X(split_choice)           \
-  X(split_delta) X(split_first_draw) X(tamper_prefix) X(two_world)
+  X(flip_output_share) X(flip_p1_row) X(flip_tag) X(flip_xy) X(skip_cgamma_check)      \
+  X(split_choice) X(split_delta) X(split_first_draw) X(tamper_prefix) X(two_world)
 
 EMP_AG_NAMESPACE_BEGIN
 

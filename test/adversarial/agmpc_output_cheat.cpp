@@ -9,6 +9,8 @@
 //   flip_agg_mid (nP>=4) -- a MIDDLE ring node corrupts a row (not just the tail).
 //   flip_b (nP==2) -- a malicious garbler flips one transmitted designated bit b
 //     -> wrong Lambda_gamma; c_gamma is the sole 2-party malicious-garbler guard.
+//     With skip_cgamma_check the garbler also answers P1's check value without comparing
+//     it, so the abort can only come from P1's own comparison.
 //   flip_laand -- a malicious party corrupts a derived two-party leaky-AND
 //     value, or every row party 2 ships to party 1 at nP>=3 -> the consistency check aborts
 //     during PREPROCESSING (abort message contains "LaAND").

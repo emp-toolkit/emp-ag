@@ -219,20 +219,46 @@ void AGMPCProtocol<nP, Cfg>::output_check(ComputeCtx &ctx, Source &source) {
 
   // Shared-zero check XOR_i m_i = 0, rush-safe (commit-before-open) + equivocation-safe.
   if constexpr (nP == 2) {
-    // XOR_i m_i = 0  <=>  m_1 == m_2 : a rush-safe equality on H(m_i).
-    char Dme[FsHash::DIGEST_SIZE];
-    FsHash::hash_once(Dme, &m_i, sizeof(block));
-    int peer = (party == 1) ? 2 : 1;
+    // XOR_i m_i = 0  <=>  m_1 == m_2, in two flights. P1 sends H(sid, P1, m_1) in the
+    // flight of Lambda_AND; P2 compares H(sid, P1, m_2) and, only on a match, answers
+    // H(sid, P2, m_2), which P1 compares in turn. The answer is under P2's role, never
+    // the same function of m as P1's message, so a cheating P2 cannot reflect it; and it
+    // leaves P2 only after P2's own check, so P2's output-mask shares, which the caller
+    // sends next in the same flight, never leave before that check. P1 decodes only
+    // after its own.
+    //
+    // The hash hides m. When some gate is wrong, m_1 ^ m_2 = E(chi) * (Delta_1 ^ Delta_2),
+    // with E(chi) the folded gate errors, nonzero unless chi is one of its roots. So m_1
+    // is as unknown to P2, and m_2 to P1, as the other party's Delta: 126 free bits. A
+    // party produces the other role's hash with probability at most q * 2^-126 for q
+    // hash queries, plus the root event. This needs every COT behind the keys to have
+    // passed its check before P1's hash leaves. emp-ag's AND-gate protocols check right
+    // after their draws, and one supplied through the factory must too; the run checks
+    // before its first opening.
+    const int peer = (party == 1) ? 2 : 1;
     NetIO *sch = (party < peer) ? io->ios[peer] : io->ios2[peer];
     NetIO *rch = (peer < party) ? io->ios[peer] : io->ios2[peer];
-    FeqSymmetric2PC eq = feq_prepare_symmetric_2pc(
-        &prg, session_id, "emp-ag:cgamma", party, Dme);
-    sch->send_data(eq.commitment, FsHash::DIGEST_SIZE);
-    sch->flush();
-    rch->recv_data(eq.peer_commitment, FsHash::DIGEST_SIZE);
-    feq_finish_symmetric_2pc(
-        sch, rch, session_id, "emp-ag:cgamma", party, eq,
-        "cheat in c_gamma MACCheck");
+    char mine[FsHash::DIGEST_SIZE], theirs[FsHash::DIGEST_SIZE], expect[FsHash::DIGEST_SIZE];
+    role_bound_commitment(mine, session_id, "emp-ag:cgamma", party, &m_i, sizeof(block));
+    role_bound_commitment(expect, session_id, "emp-ag:cgamma", peer, &m_i, sizeof(block));
+    if (party == 1) {
+      sch->send_data(mine, FsHash::DIGEST_SIZE);
+      sch->flush();
+      rch->recv_data(theirs, FsHash::DIGEST_SIZE);
+      expecting(memcmp(expect, theirs, FsHash::DIGEST_SIZE) == 0, "cheat in c_gamma MACCheck");
+    } else {
+      rch->recv_data(theirs, FsHash::DIGEST_SIZE);
+      bool compare = true;
+      if constexpr (kTestHooks) {
+        // TEST-ONLY (hook skip_cgamma_check): a corrupt garbler answers without
+        // comparing, so P1's own comparison is the one that must abort.
+        if (hooks().skip_cgamma_check) compare = false;
+      }
+      if (compare)
+        expecting(memcmp(expect, theirs, FsHash::DIGEST_SIZE) == 0, "cheat in c_gamma MACCheck");
+      sch->send_data(mine, FsHash::DIGEST_SIZE);
+      sch->flush();
+    }
   } else {
     ag::check_shared_zero<nP>(io, pool, &prg, party, m_i,
                               session_id, "emp-ag:cgamma",

@@ -26,6 +26,9 @@ add_np_variant(agmpc_input_equiv_np3 agmpc_input_equiv.cpp 3 DEFS EQUIV_NP=3 HOO
 # wrong Lambda_gamma. c_gamma is the SOLE malicious-garbler guard at nP==2, so every honest
 # party must abort -- the core 2-party garbler soundness case.
 add_np_variant(agmpc_cheat_b_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 HOOKS flip_b PASS_RE "cheat in c_gamma MACCheck")
+# The same fault with skip_cgamma_check: the garbler answers without comparing, so only
+# P1's comparison, the sole guard against a cheating garbler, can produce the abort.
+add_np_variant(agmpc_cheat_b_p1check_np2 agmpc_output_cheat.cpp 2 DEFS CHEAT_NP=2 HOOKS flip_b skip_cgamma_check PASS_RE "cheat in c_gamma MACCheck")
 
 # flip_laand: corrupt the derived two-party LaAND value (deterministically) / shipped
 # multiparty rows -> the preprocessing consistency check must abort (F_eq at nP==2 /
@@ -155,6 +158,7 @@ add_np_variant(agmpc_prepared_cheat_wrk_p1row_np3 agmpc_prepared_cheat.cpp 3
 # delivered and stored during prepare(), then detected only after online binding;
 # the zero-AND input split is still caught by the shared Lambda echo.
 add_np_variant(agmpc_prepared_cheat_b_np2 agmpc_prepared_cheat.cpp 2 DEFS CHEAT_NP=2 HOOKS flip_b PASS_RE "cheat in c_gamma MACCheck")
+add_np_variant(agmpc_prepared_cheat_b_p1check_np2 agmpc_prepared_cheat.cpp 2 DEFS CHEAT_NP=2 HOOKS flip_b skip_cgamma_check PASS_RE "cheat in c_gamma MACCheck")
 add_np_variant(agmpc_prepared_cheat_agg_np3 agmpc_prepared_cheat.cpp 3 DEFS CHEAT_NP=3 HOOKS flip_agg PASS_RE "cheat in c_gamma MACCheck")
 add_np_variant(agmpc_prepared_cheat_direct_np3 agmpc_prepared_cheat.cpp 3
                DEFS CHEAT_NP=3 ARGS delivery=direct HOOKS flip_direct PASS_RE "cheat in c_gamma MACCheck")
